@@ -980,14 +980,12 @@ function start_worker(out::IO)
     exit(0)
 end
 
-function read_cb_response(io::IO, config::Dict)
-    (host, port) = read_worker_host_port(io)
-    return (io, host, port, host, config)
+function read_cb_responses(io::IO, config::Dict)
+    return [(io, host, port, host, config) for (host,port) in read_workers_host_port(io)]
 end
 
-function read_cb_response(io::IO, host::AbstractString, config::Dict)
-    (bind_addr, port) = read_worker_host_port(io)
-    return (io, bind_addr, port, host, config)
+function read_cb_responses(io::IO, host::AbstractString, config::Dict)
+    return [(io, bind_addr, port, host, config) for (bind_addr, port) in read_workers_host_port(io)]
 end
 
 read_cb_response(io::IO, host::AbstractString, port::Integer, config::Dict) = (io, host, port, host, config)
@@ -1012,9 +1010,10 @@ function start_cluster_workers(np::Integer, config::Dict, manager::ClusterManage
         if length(instance_sets) > 0
             instances = shift!(instance_sets)
             for inst in instances
-                (io, bind_addr, port, pubhost, wconfig) = read_cb_response(inst...)
+	      for (io, bind_addr, port, pubhost, wconfig) in read_cb_responses(inst...)
                 push!(resp_arr, create_worker(bind_addr, port, pubhost, io, wconfig, manager))
                 notify(launched_ntfy)
+	      end
             end
         end
     end
@@ -1022,15 +1021,40 @@ function start_cluster_workers(np::Integer, config::Dict, manager::ClusterManage
     notify(launched_ntfy)
 end
 
-function read_worker_host_port(io::IO)
+function read_workers_host_port(io::IO)
     io.line_buffered = true
-    while true
-        conninfo = readline(io)
-        bind_addr, port = parse_connection_info(conninfo)
+    ncpus = -1
+    while ncpus < 1
+        line = readline(io)
+    	if line==""
+		ncpus=-1
+		break
+	end
+	# legacy support
+        bind_addr, port = parse_connection_info(line)
+	# was there only one line (and no ncpus)?
+	if bind_addr != ""
+	    return [(bind_addr,port)]
+	end
+	ncpus = parse_ncpus(line)
+    end
+    println("found $ncpus CPUs")
+    if ncpus < 1
+    	return [("",ncpus)]
+    end
+
+    i=0
+    r=[]
+    while i<ncpus
+        line = readline(io)
+        bind_addr, port = parse_connection_info(line)
         if bind_addr != ""
-            return bind_addr, port
+            r=[r,(bind_addr, port)]
+	    i+=1
         end
     end
+    println("parsed $i,$ncpus, $r")
+    return r
 end
 
 function create_worker(bind_addr, port, pubhost, stream, config, manager)
@@ -1077,6 +1101,14 @@ function create_worker(bind_addr, port, pubhost, stream, config, manager)
     w
 end
 
+function parse_ncpus(str)
+    m = match(r"^ncpus:(\d+)", str)
+    if m != nothing
+        parseint(Int16, m.captures[1])
+    else
+        int16(-1)
+    end
+end
 
 function parse_connection_info(str)
     m = match(r"^julia_worker:(\d+)#(.*)", str)
@@ -1283,9 +1315,9 @@ end
 function addprocs_internal(np::Integer;
                            tunnel=false, dir=JULIA_HOME,
                            exename=(ccall(:jl_is_debugbuild,Cint,())==0?"./julia":"./julia-debug"),
-                           sshflags::Cmd=``, manager=LocalManager(), exeflags=``, max_parallel=10)
+                           sshflags::Cmd=``, manager=LocalManager(), exeflags=``, max_parallel=10, detect_cores=false)
 
-    config = AnyDict(:dir=>dir, :exename=>exename, :exeflags=>`$exeflags --worker`, :tunnel=>tunnel, :sshflags=>sshflags, :max_parallel=>max_parallel)
+    config = AnyDict(:dir=>dir, :exename=>exename, :exeflags=>`$exeflags --worker`, :tunnel=>tunnel, :sshflags=>sshflags, :max_parallel=>max_parallel, :detect_cores=>detect_cores)
     disable_threaded_libs()
 
     ret = Array(Int, 0)
@@ -1315,7 +1347,9 @@ function addprocs_internal(np::Integer;
         wait(rr)
     end
 
-    assert(length(ret) == np)
+    if !detect_cores
+	    assert(length(ret) == np)
+    end
     ret
 end
 
