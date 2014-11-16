@@ -941,8 +941,8 @@ end
 
 # the entry point for julia worker processes. does not return.
 # argument is descriptor to write listening port # to.
-start_worker() = start_worker(STDOUT)
-function start_worker(out::IO)
+start_worker(ci) = start_worker(STDOUT,ci)
+function start_worker(out::IO,conn_info::Array)
     # we only explicitly monitor worker STDOUT on the console, so redirect
     # stderr to stdout so we can see the output.
     # at some point we might want some or all worker output to go to log
@@ -958,10 +958,19 @@ function start_worker(out::IO)
         sock = listen(LPROC.bind_port)
     end
     sock.ccb = accept_handler
+    if length(conn_info)>0
+      println(out,"ncpus:$(1+length(conn_info))")
+    end
     print(out, "julia_worker:")  # print header
     print(out, "$(dec(LPROC.bind_port))#") # print port
     print(out, LPROC.bind_addr)
     print(out, '\n')
+    for (a,p) in conn_info
+      print(out, "julia_worker:")  # print header
+      print(out, "$(dec(p))#") # print port
+      print(out, a)
+      print(out, '\n')
+    end
     flush(out)
     # close STDIN; workers will not use it
     #close(STDIN)
@@ -988,12 +997,12 @@ function read_cb_responses(io::IO, host::AbstractString, config::Dict)
     return [(io, bind_addr, port, host, config) for (bind_addr, port) in read_workers_host_port(io)]
 end
 
-read_cb_response(io::IO, host::AbstractString, port::Integer, config::Dict) = (io, host, port, host, config)
+read_cb_responses(io::IO, host::AbstractString, port::Integer, config::Dict) = [(io, host, port, host, config)]
 
-read_cb_response(host::AbstractString, port::Integer, config::Dict) = (nothing, host, port, host, config)
+read_cb_responses(host::AbstractString, port::Integer, config::Dict) = [(nothing, host, port, host, config)]
 
 
-function start_cluster_workers(np::Integer, config::Dict, manager::ClusterManager, resp_arr::Array, launched_ntfy::Condition)
+function start_cluster_workers(np::Integer, config::Dict, manager::ClusterManager, resp_arr::Array, conn_info::Array, launched_ntfy::Condition)
     # Get the cluster manager to launch the instance
     instance_sets = []
     instances_ntfy = Condition()
@@ -1011,7 +1020,10 @@ function start_cluster_workers(np::Integer, config::Dict, manager::ClusterManage
             instances = shift!(instance_sets)
             for inst in instances
 	      for (io, bind_addr, port, pubhost, wconfig) in read_cb_responses(inst...)
-                push!(resp_arr, create_worker(bind_addr, port, pubhost, io, wconfig, manager))
+                push!(conn_info, (bind_addr, port))
+                if !config[:orphan_workers]
+	 	    push!(resp_arr, create_worker(bind_addr, port, pubhost, io, wconfig, manager))
+		end
                 notify(launched_ntfy)
 	      end
             end
@@ -1315,18 +1327,19 @@ end
 function addprocs_internal(np::Integer;
                            tunnel=false, dir=JULIA_HOME,
                            exename=(ccall(:jl_is_debugbuild,Cint,())==0?"./julia":"./julia-debug"),
-                           sshflags::Cmd=``, manager=LocalManager(), exeflags=``, max_parallel=10, detect_cores=false)
+                           sshflags::Cmd=``, manager=LocalManager(), exeflags=``, max_parallel=10, orphan_workers=false)
 
-    config = AnyDict(:dir=>dir, :exename=>exename, :exeflags=>`$exeflags --worker`, :tunnel=>tunnel, :sshflags=>sshflags, :max_parallel=>max_parallel, :detect_cores=>detect_cores)
+    config = AnyDict(:dir=>dir, :exename=>exename, :exeflags=>`$exeflags --worker`, :tunnel=>tunnel, :sshflags=>sshflags, :max_parallel=>max_parallel, :orphan_workers=>orphan_workers)
     disable_threaded_libs()
 
     ret = Array(Int, 0)
     rr_join = Array(RemoteRef, 0)
 
     resp_arr = []
+    conn_info = []
     c = Condition()
 
-    t = @schedule start_cluster_workers(np, config, manager, resp_arr, c)
+    t = @schedule start_cluster_workers(np, config, manager, resp_arr, conn_info, c)
 
     while true
         if length(resp_arr) == 0
@@ -1347,10 +1360,10 @@ function addprocs_internal(np::Integer;
         wait(rr)
     end
 
-    if !detect_cores
-	    assert(length(ret) == np)
+    if !orphan_workers
+        assert(length(ret) == np)
     end
-    ret
+    ret,conn_info
 end
 
 addprocs(np::Integer; kwargs...) = addprocs_internal(np; kwargs...)

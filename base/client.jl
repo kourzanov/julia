@@ -206,11 +206,17 @@ function process_options(args::Vector{UTF8String})
     color_set = false
     no_history_file = false
     i = 1
+    conn_info = []
+    parallelism = []
     while i <= length(args)
         if args[i]=="-q" || args[i]=="--quiet"
             quiet = true
         elseif args[i]=="--worker"
-            start_worker()
+	    if !isempty(parallelism)
+	    	_,conn_info=addprocs(orphan_workers=true, parallelism...)
+		parallelism=[]
+	    end
+            start_worker(conn_info)
             # doesn't return
         elseif args[i]=="--bind-to"
             i+=1 # has already been processed
@@ -218,20 +224,36 @@ function process_options(args::Vector{UTF8String})
             repl = false
             i+=1
             splice!(ARGS, 1:length(ARGS), args[i+1:end])
+            if !isempty(parallelism)
+    		addprocs(parallelism...)
+		parallelism=[]
+	    end
             eval(Main,parse_input_line(args[i]))
             break
         elseif args[i]=="-E" || args[i]=="--print"
             repl = false
             i+=1
             splice!(ARGS, 1:length(ARGS), args[i+1:end])
+            if !isempty(parallelism)
+    		addprocs(parallelism...)
+		parallelism=[]
+	    end
             show(eval(Main,parse_input_line(args[i])))
             println()
             break
         elseif args[i]=="-P" || args[i]=="--post-boot"
             i+=1
+            if !isempty(parallelism)
+    		addprocs(parallelism...)
+		parallelism=[]
+	    end
             eval(Main,parse_input_line(args[i]))
         elseif args[i]=="-L" || args[i]=="--load"
             i+=1
+            if !isempty(parallelism)
+    		addprocs(parallelism...)
+		parallelism=[]
+	    end
             require(args[i])
         elseif args[i]=="-p"
             i+=1
@@ -241,11 +263,13 @@ function process_options(args::Vector{UTF8String})
             else
                 np = int(args[i])
             end
-            addprocs(np)
+	    parallelism={np}
+            #_,conn_info=addprocs(np)
         elseif args[i]=="--machinefile"
             i+=1
             machines = load_machine_file(args[i])
-            addprocs(machines)
+	    parallelism={machines}
+            #_,conn_info=addprocs(machines)
         elseif args[i]=="-v" || args[i]=="--version"
             println("julia version ", VERSION)
             exit(0)
@@ -296,6 +320,10 @@ function process_options(args::Vector{UTF8String})
             error("unknown option: ", args[i])
         end
         i += 1
+    end
+    if !isempty(parallelism)
+    	addprocs(parallelism...)
+	parallelism=[]
     end
     return (quiet,repl,startup,color_set,no_history_file)
 end
