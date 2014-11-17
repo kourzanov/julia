@@ -1069,16 +1069,16 @@ Given a dictionary ``D``, the syntax ``D[x]`` returns the value of key ``x`` (if
        "bar" => 42.0
        "foo" => 0.0
 
-     julia> b = Dict("フー" => 17, "バー" => 4711)
+     julia> b = Dict(utf8("baz") => 17, utf8("qux") => 4711)
      Dict{UTF8String,Int64} with 2 entries:
-       "バ… => 4711
-       "フ… => 17
+       "baz" => 17
+       "foo" => 0.0
 
      julia> merge(a, b)
      Dict{UTF8String,Float64} with 4 entries:
+       "qux" => 4711.0
        "bar" => 42.0
-       "バー… => 4711.0
-       "フー… => 17.0
+       "baz" => 17.0
        "foo" => 0.0
 
 .. function:: merge!(collection, others...)
@@ -4132,11 +4132,17 @@ Constructors
 
 .. function:: fill(x, dims)
 
-   Create an array filled with the value ``x``
+   Create an array filled with copies of the value ``x``.
+   For e.g., ``fill(1.0, (10,10))`` returns a  10x10 array of floats, with each
+   element initialized to 1.0
+
+   If ``x`` is an object reference, all elements will refer to the same object.
+   For e.g., ``fill(Foo(), dims)``, will return an array filled with the result of evaluating Foo() once.
 
 .. function:: fill!(A, x)
 
-   Fill the array ``A`` with the value ``x``
+   Fill the array ``A`` with copies of the value ``x``. If ``x`` is an object reference, all elements will refer to the same object.
+   For e.g., ``fill!(A, Foo())``, will return ``A`` filled with the result of evaluating Foo() once.
 
 .. function:: reshape(A, dims)
 
