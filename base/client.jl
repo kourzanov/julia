@@ -263,12 +263,12 @@ function process_options(args::Vector{UTF8String})
             else
                 np = int(args[i])
             end
-	    parallelism={np}
+	    parallelism=Any[np]
             #_,conn_info=addprocs(np)
         elseif args[i]=="--machinefile"
             i+=1
             machines = load_machine_file(args[i])
-	    parallelism={machines}
+	    parallelism=Any[machines]
             #_,conn_info=addprocs(machines)
         elseif args[i]=="-v" || args[i]=="--version"
             println("julia version ", VERSION)
