@@ -1050,7 +1050,6 @@ function read_workers_host_port(io::IO)
 	end
 	ncpus = parse_ncpus(line)
     end
-    println("found $ncpus CPUs")
     if ncpus < 1
     	return [("",ncpus)]
     end
@@ -1065,7 +1064,6 @@ function read_workers_host_port(io::IO)
 	    i+=1
         end
     end
-    println("parsed $i,$ncpus, $r")
     return r
 end
 
@@ -1223,6 +1221,8 @@ function launch_on_machine(manager::SSHManager, config::Dict, resp_arr::Array, m
                            machine::AbstractString, cnt::Integer, plaunch_ntfy::Condition)
     dir = config[:dir]
     exename = config[:exename]
+    shell = config[:shell]
+    shellargs = config[:shellargs]
     exeflags_base = config[:exeflags]
 
     thisconfig = copy(config) # config for this worker
@@ -1245,7 +1245,7 @@ function launch_on_machine(manager::SSHManager, config::Dict, resp_arr::Array, m
 
     # Build up the ssh command
     cmd = `cd $dir && $exename $exeflags` # launch julia
-    cmd = `sh -l -c $(shell_escape(cmd))` # shell to launch under
+    cmd = `$shell $shellargs $(shell_escape(cmd))` # shell to launch under
     cmd = `ssh -T -a -x -o ClearAllForwardings=yes -n $sshflags $host $(shell_escape(cmd))` # use ssh to remote launch
 
     thisconfig[:machine] = host
@@ -1327,9 +1327,9 @@ end
 function addprocs_internal(np::Integer;
                            tunnel=false, dir=JULIA_HOME,
                            exename=(ccall(:jl_is_debugbuild,Cint,())==0?"./julia":"./julia-debug"),
-                           sshflags::Cmd=``, manager=LocalManager(), exeflags=``, max_parallel=10, orphan_workers=false)
+                           sshflags::Cmd=``, manager=LocalManager(), exeflags=``, shell=`sh`, shellargs=`-c`, max_parallel=10, orphan_workers=false)
 
-    config = AnyDict(:dir=>dir, :exename=>exename, :exeflags=>`$exeflags --worker`, :tunnel=>tunnel, :sshflags=>sshflags, :max_parallel=>max_parallel, :orphan_workers=>orphan_workers)
+    config = AnyDict(:dir=>dir, :exename=>exename, :exeflags=>`$exeflags --worker`, :tunnel=>tunnel, :sshflags=>sshflags, :max_parallel=>max_parallel, :orphan_workers=>orphan_workers, :shell=>shell, :shellargs=>shellargs)
     disable_threaded_libs()
 
     ret = Array(Int, 0)
@@ -1361,7 +1361,7 @@ function addprocs_internal(np::Integer;
     end
 
     if !orphan_workers
-        assert(length(ret) == np)
+        assert(length(ret) >= np)
     end
     ret,conn_info
 end
