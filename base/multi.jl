@@ -1247,7 +1247,7 @@ function launch_on_machine(manager::SSHManager, config::Dict, resp_arr::Array, m
     if isempty(dir)
     	cmd = `$exename $exeflags` # launch julia
     else
-    	cmd = `cd $dir && $exename $exeflags` # launch julia
+    	cmd = `cd $dir && exec $exename $exeflags` # launch julia
     end
     cmd = `$shell $shellargs $(shell_escape(cmd))` # shell to launch under
     cmd = `ssh -T -a -x -o ClearAllForwardings=yes -n $sshflags $host $(shell_escape(cmd))` # use ssh to remote launch
