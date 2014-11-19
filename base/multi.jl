@@ -98,7 +98,7 @@ end
 Worker(host::AbstractString, port::Integer, sock::TCPSocket) =
     Worker(host, port, sock, 0)
 function Worker(host::AbstractString, port::Integer)
-    println("worker from $host:$port")
+    #println("worker from $host:$port")
     # Connect to the loopback port if requested host has the same ipaddress as self.
     if host == string(LPROC.bind_addr)
         w = Worker(host, port, connect("127.0.0.1", uint16(port)))
@@ -119,7 +119,7 @@ function Worker(host::AbstractString, port::Integer)
     w
 end
 function Worker(pubhosts::Array, bind_addr::AbstractString, port::Integer, sshflags)
-    println("setting up tunnel for $bind_addr:$port via $pubhosts")
+    #println("setting up tunnel for $bind_addr:$port via $pubhosts")
     w = Worker(bind_addr, port,
                connect("localhost",
                        ssh_tunnel(reverse(pubhosts), bind_addr, uint16(port), sshflags)))
@@ -1022,7 +1022,7 @@ function start_cluster_workers(np::Integer, config::Dict, manager::ClusterManage
             for inst in instances
 	      for (io, bind_addr, port, pubhosts, wconfig) in read_cb_responses(inst...)
                 push!(conn_info, (bind_addr, port))
-		println("pubhosts=$pubhosts")
+		#println("pubhosts=$pubhosts")
                 if !config[:orphan_workers]
 	 	    push!(resp_arr, create_worker(bind_addr, port, pubhosts, io, wconfig, manager))
 		end
@@ -1066,7 +1066,7 @@ function read_workers_host_port(io::IO)
 	    i+=1
         end
     end
-    println("parsed $ncpus,$r")
+    #println("parsed $ncpus,$r")
     return r
 end
 
@@ -1075,7 +1075,7 @@ function create_worker(bind_addr, port, pubhosts, stream, config, manager)
 
     if tunnel
         sshflags = config[:sshflags]
-	println("creating tunneled worker")
+	#println("creating tunneled worker")
         w = Worker(pubhosts, bind_addr, port, sshflags)
     else
         w = Worker(bind_addr, port)
@@ -1144,20 +1144,25 @@ function parse_access(pubhost)
 end
 
 tunnel_port = 9201
+done_index = 1
+last_sshport = 22
+
 # establish an SSH tunnel to a remote worker
 # returns P such that localhost:P connects to host:port
 function ssh_tunnel(pubhosts, bind_addr, port, sshflags)
   global tunnel_port
+  global done_index
+  global last_sshport
+
   localp = tunnel_port::Int
-  println("ssh_tunnel via $pubhosts")
+  #println("ssh_tunnel via $pubhosts")
 
   command=`sleep 60`
   #command=`-N`
   #cmd=`sh -c $(shell_escape(cmd))` # shell to launch under
 
-  ba=""
-  sshport=22
-  for i in 1:length(pubhosts)
+  sshport=last_sshport
+  for i in done_index:length(pubhosts)
     user,host,ba=parse_access(pubhosts[i])
     if i<length(pubhosts)
     	user1,host1,ba1=parse_access(pubhosts[i+1])
@@ -1172,18 +1177,20 @@ function ssh_tunnel(pubhosts, bind_addr, port, sshflags)
 
     while true
         cmd=`ssh -T -a -x -o ExitOnForwardFailure=yes -f $sshflags -p $sshport $(user)@$host -L $localp:$fwd_host:$fwd_port $command`
-    	println("tunnel cmd=$cmd")
+    	#println("tunnel cmd=$cmd")
 	if (success(detach(cmd)) || localp >= 10000) break end
         println("unable to assign a local tunnel port $localp")
         localp += 1
     end
     if localp>=10000 error("unable to assign a local tunnel port between 9201 and 10000") end
 
+    last_sshport=sshport
     sshport=localp
     localp+=1
   end
+  done_index=length(pubhosts)
    
-  println("tunnel success at $sshport, localp=$localp")
+  #println("tunnel success at $sshport, localp=$localp")
   tunnel_port = localp
   sshport
 end
@@ -1269,7 +1276,7 @@ function launch_on_machine(manager::SSHManager, config::Dict, resp_arr::Array, m
 
     thisconfig = copy(config) # config for this worker
 
-  println("machine='$machine'")
+    #println("machine='$machine'")
 
     machines_bind = split(machine)
     mb = split(machines_bind[1],'/')
@@ -1283,11 +1290,11 @@ function launch_on_machine(manager::SSHManager, config::Dict, resp_arr::Array, m
     else
     	cmd = `cd $dir && exec $exename $exeflags` # launch julia
     end
-  println("cmd=$cmd")
+    #println("cmd=$cmd")
     #if (!isempty(shell) || !isempty(dir))
     	cmd = `$shell $shellargs $(shell_escape(cmd))` # shell to launch under
     #end
-  println("cmd=$cmd")
+    #println("cmd=$cmd")
 
   hosts=[]
   for m in machines_bind
@@ -1304,10 +1311,10 @@ function launch_on_machine(manager::SSHManager, config::Dict, resp_arr::Array, m
 
     cmd = `ssh -T -a -x -o ClearAllForwardings=yes -n $sshflags $host $(shell_escape(cmd))` # use ssh to remote launch
     push!(hosts,m)
-    println(hosts)
+    #println(hosts)
    end
 
-    println("cmd=$cmd")
+    #println("cmd=$cmd")
     thisconfig[:machine] = hosts
 
     # start the processes first...
