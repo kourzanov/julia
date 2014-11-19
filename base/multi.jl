@@ -122,7 +122,7 @@ function Worker(pubhosts::Array, bind_addr::AbstractString, port::Integer, sshfl
     println("setting up tunnel for $bind_addr:$port via $pubhosts")
     w = Worker(bind_addr, port,
                connect("localhost",
-                       ssh_tunnel(pubhosts, bind_addr, uint16(port), sshflags)))
+                       ssh_tunnel(reverse(pubhosts), bind_addr, uint16(port), sshflags)))
     w.bind_addr = parseip(bind_addr)
     w
 end
@@ -1120,19 +1120,7 @@ function parse_connection_info(str)
     end
 end
 
-tunnel_port = 9201
-# establish an SSH tunnel to a remote worker
-# returns P such that localhost:P connects to host:port
-function ssh_tunnel(pubhosts, bind_addr, port, sshflags)
-    global tunnel_port
-    localp = tunnel_port::Int
-  println("ssh_tunnel via $pubhosts")
-  cmd=`sleep 60`
-  #cmd=`sh -c $(shell_escape(cmd))` # shell to launch under
-  fwd_host=bind_addr
-  fwd_port=int(port)
-  ba=""
-  for pubhost in pubhosts
+function parse_access(pubhost)
     s = split(pubhost,'@')
     user = ""
     phost = pubhost
@@ -1147,35 +1135,57 @@ function ssh_tunnel(pubhosts, bind_addr, port, sshflags)
         end
     end
     mb = split(phost,'/')
+    ba=""
     if length(mb) > 1
-        ba=mb[2]*":"
-    else
-    	ba=""
+        ba=mb[2]
     end
-    host = mb[1]
-    cmd=`ssh -T -a -x -o ExitOnForwardFailure=yes -f $sshflags $(user)@$host -L $ba$localp:$fwd_host:$fwd_port $(shell_escape(cmd))`
-    if !isempty(ba)
-    	fwd_host=mb[2]
+    host=mb[1]
+    return (user,host,ba)
+end
+
+tunnel_port = 9201
+# establish an SSH tunnel to a remote worker
+# returns P such that localhost:P connects to host:port
+function ssh_tunnel(pubhosts, bind_addr, port, sshflags)
+  global tunnel_port
+  localp = tunnel_port::Int
+  println("ssh_tunnel via $pubhosts")
+
+  command=`sleep 60`
+  #command=`-N`
+  #cmd=`sh -c $(shell_escape(cmd))` # shell to launch under
+
+  ba=""
+  sshport=22
+  for i in 1:length(pubhosts)
+    user,host,ba=parse_access(pubhosts[i])
+    if i<length(pubhosts)
+    	user1,host1,ba1=parse_access(pubhosts[i+1])
+    	fwd_host=!isempty(ba1) ? ba1 : host1
+        fwd_port=int(22)
     else
-    	fwd_host=host
+  	fwd_host=bind_addr
+  	fwd_port=int(port)
     end
-    fwd_port=localp
+
+    if i>1 host="localhost" end
+
+    while true
+        cmd=`ssh -T -a -x -o ExitOnForwardFailure=yes -f $sshflags -p $sshport $(user)@$host -L $localp:$fwd_host:$fwd_port $command`
+    	println("tunnel cmd=$cmd")
+	if (success(detach(cmd)) || localp >= 10000) break end
+        println("unable to assign a local tunnel port $localp")
+        localp += 1
+    end
+    if localp>=10000 error("unable to assign a local tunnel port between 9201 and 10000") end
+
+    sshport=localp
     localp+=1
   end
    
-   println("tunnel cmd=$cmd")
-    while !success(detach(cmd)) && localp < 10000
-        error("unable to assign a local tunnel port between 9201 and 10000")
-        localp += 1
-    end
-
-    if localp >= 10000
-        error("unable to assign a local tunnel port between 9201 and 10000")
-    end
-
-   println("tunnel success at $fwd_port, localp=$localp")
-    tunnel_port = localp
-    fwd_port
+  println("tunnel success at $sshport, localp=$localp")
+  tunnel_port = localp
+  sshport
 end
 
 
