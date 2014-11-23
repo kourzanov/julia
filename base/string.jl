@@ -587,7 +587,8 @@ write{T<:ByteString}(to::IOBuffer, s::SubString{T}) =
     s.endof==0 ? 0 : write_sub(to, s.string.data, s.offset+1, next(s,s.endof)[2]-1)
 print(io::IOBuffer, s::SubString) = write(io, s)
 
-sizeof{T<:ByteString}(s::SubString{T}) = s.endof==0 ? 0 : next(s,s.endof)[2]-1
+sizeof(s::SubString{ASCIIString}) = s.endof
+sizeof(s::SubString{UTF8String}) = s.endof == 0 ? 0 : next(s,s.endof)[2]-1
 
 # TODO: length(s::SubString) = ??
 # default implementation will work but it's slow
@@ -1074,7 +1075,24 @@ macro mstr(s...); triplequoted(s...); end
 ## shell-like command parsing ##
 
 function shell_parse(raw::AbstractString, interp::Bool)
-    s = strip(raw)
+    s = lstrip(raw)
+    #Strips the end but respects the space when the string endswith "\\ "
+    r = RevString(s)
+    i = start(r)
+    c_old = nothing
+    while !done(r,i)
+        c, j = next(r,i)
+        if c == '\\' && c_old == ' '
+            i -= 1
+            break
+        elseif !(c in _default_delims)
+            break
+        end
+        i = j
+        c_old = c
+    end
+    s = s[1:end-i+1]
+
     last_parse = 0:-1
     isempty(s) && return interp ? (Expr(:tuple,:()),last_parse) : ([],last_parse)
 

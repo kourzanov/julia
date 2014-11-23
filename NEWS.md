@@ -24,6 +24,9 @@ New language features
     and macros in packages and user code ([#8791]). Type `?@doc` at the repl
     to see the current syntax and more information.
 
+  * New multidimensional iterators and index types for efficient
+    iteration over general AbstractArrays
+
 Language changes
 ----------------
 
@@ -75,6 +78,8 @@ Library improvements
 
   * New `Dates` module for calendar dates and other time-interval calculations ([#7654]).
 
+  * New implementation of SubArrays with substantial performance and functionality improvements ([#8501]).
+
   * Added generic Cholesky factorization, and the Cholesky factorization is now parametrized on the matrix type ([#7236]).
 
   * Symmetric and Hermitian immutables are now parametrized on matrix type ([#7992]).
@@ -109,11 +114,20 @@ Library improvements
 
   * OpenBLAS 64-bit (ILP64) interface is now compiled with a `64_` suffix ([#8734]) to avoid conflicts with external libraries using a 32-bit BLAS ([#4923]).
 
-  * The `machinefile` now supports an host count ([#7616]).
+  * The `machinefile` now supports a host count ([#7616]).
 
   * Added optional rounding argument to floating-point constructors ([#8845]).
 
   * `code_native` now outputs branch labels ([#8897]).
+
+  * Streamlined random number generation APIs [#8246]. The default
+    `rand` no longer uses global state in the underlying C library,
+    dSFMT, making it closer to being thread-safe ([#8399],
+    [#8380]). All APIs can now take an `AbstractRNG` argument. There
+    are speed improvements across the board ([#8808], [#8941],
+    [#8958], [#9083]).
+
+  * Significantly faster `randn` ([#9126]).
 
 Deprecated or removed
 ---------------------
@@ -1061,8 +1075,12 @@ Too numerous to mention.
 [#8011]: https://github.com/JuliaLang/julia/issues/8011
 [#8089]: https://github.com/JuliaLang/julia/issues/8089
 [#8152]: https://github.com/JuliaLang/julia/issues/8152
+[#8246]: https://github.com/JuliaLang/julia/issues/8246
 [#8297]: https://github.com/JuliaLang/julia/issues/8297
+[#8380]: https://github.com/JuliaLang/julia/issues/8380
+[#8399]: https://github.com/JuliaLang/julia/issues/8399
 [#8423]: https://github.com/JuliaLang/julia/issues/8423
+[#8501]: https://github.com/JuliaLang/julia/issues/8501
 [#8560]: https://github.com/JuliaLang/julia/issues/8560
 [#8578]: https://github.com/JuliaLang/julia/issues/8578
 [#8605]: https://github.com/JuliaLang/julia/issues/8605
@@ -1073,9 +1091,15 @@ Too numerous to mention.
 [#8776]: https://github.com/JuliaLang/julia/issues/8776
 [#8791]: https://github.com/JuliaLang/julia/issues/8791
 [#8792]: https://github.com/JuliaLang/julia/issues/8792
+[#8808]: https://github.com/JuliaLang/julia/issues/8808
 [#8816]: https://github.com/JuliaLang/julia/issues/8816
 [#8827]: https://github.com/JuliaLang/julia/issues/8827
 [#8845]: https://github.com/JuliaLang/julia/issues/8845
 [#8867]: https://github.com/JuliaLang/julia/issues/8867
 [#8872]: https://github.com/JuliaLang/julia/issues/8872
+[#8897]: https://github.com/JuliaLang/julia/issues/8897
 [#8905]: https://github.com/JuliaLang/julia/issues/8905
+[#8941]: https://github.com/JuliaLang/julia/issues/8941
+[#8958]: https://github.com/JuliaLang/julia/issues/8958
+[#9083]: https://github.com/JuliaLang/julia/issues/9083
+[#9126]: https://github.com/JuliaLang/julia/issues/9126

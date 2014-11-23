@@ -286,7 +286,7 @@ endif
 	# Copy icon and .desktop file
 	mkdir -p $(DESTDIR)$(datarootdir)/icons/hicolor/scalable/apps/
 	$(INSTALL_F) contrib/julia.svg $(DESTDIR)$(datarootdir)/icons/hicolor/scalable/apps/
-	-touch --no-create $(DESTDIR)$(datarootdir)/icons/hicolor/
+	-touch -c $(DESTDIR)$(datarootdir)/icons/hicolor/
 	-gtk-update-icon-cache $(DESTDIR)$(datarootdir)/icons/hicolor/
 	mkdir -p $(DESTDIR)$(datarootdir)/applications/
 	$(INSTALL_F) contrib/julia.desktop $(DESTDIR)$(datarootdir)/applications/
@@ -350,6 +350,9 @@ ifeq ($(JULIA_CPU_TARGET), native)
 endif
 
 ifeq ($(OS), WINNT)
+	# If we are running on WINNT, also delete sys.dll until it stops causing issues (#8895, among others)
+	-rm -f $(DESTDIR)$(private_libdir)/sys.$(SHLIB_EXT)
+
 	[ ! -d dist-extras ] || ( cd dist-extras && \
 		cp 7z.exe 7z.dll libexpat-1.dll zlib1.dll $(bindir) && \
 	    mkdir $(DESTDIR)$(prefix)/Git && \

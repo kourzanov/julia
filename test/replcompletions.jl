@@ -73,6 +73,13 @@ c,r = test_latexcomplete(s)
 @test r == 1:length(s)
 @test length(c) == 1
 
+# test latex symbol completions in strings
+s = "\"C:\\\\ \\alpha"
+c,r,res = test_complete(s)
+@test c[1] == "α"
+@test r == 7:12
+@test length(c) == 1
+
 ## Test completion of packages
 #mkp(p) = ((@assert !isdir(p)); mkdir(p))
 #temp_pkg_dir() do
@@ -98,6 +105,9 @@ c,r = test_latexcomplete(s)
 #    rm(Pkg.dir("MyAwesomePackage"))
 #    rm(Pkg.dir("CompletionFooPackage"))
 #end
+
+#This should not throw an error
+c,r = test_scomplete("\$a")
 
 @unix_only begin
     #Assume that we can rely on the existence and accessibility of /tmp
@@ -152,6 +162,28 @@ c,r = test_latexcomplete(s)
     @test "Pkg" in c
     @test r == 6:7
     @test s[r] == "Pk"
+end
+
+let #test that it can auto complete with spaces in file/path
+    path = tempdir()
+    space_folder = randstring() * " r"
+    dir = joinpath(path, space_folder)
+    dir_space = replace(space_folder, " ", "\\ ")
+    mkdir(dir)
+    cd(path) do
+        open(joinpath(space_folder, "space .file"),"w") do f
+            s = @windows? "rm $dir_space\\\\space" : "cd $dir_space/space"
+            c,r = test_scomplete(s)
+            @test r == endof(s)-4:endof(s)
+            @test "space\\ .file" in c
+
+            s = @windows? "cd(\"$dir_space\\\\space" : "cd(\"$dir_space/space"
+            c,r = test_complete(s)
+            @test r == endof(s)-4:endof(s)
+            @test "space\\ .file\"" in c
+        end
+    end
+    rm(dir, recursive=true)
 end
 
 @windows_only begin
