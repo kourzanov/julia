@@ -257,7 +257,10 @@ function process_options(args::Vector{UTF8String})
             require(args[i])
         elseif args[i]=="-p"
             i+=1
-            if i > length(args) || !isdigit(args[i][1])
+	    ns=0
+            if i <= length(args) && isinteger(begin ns=try integer(args[i]) catch _ NaN end end) && ns<0
+                np = Sys.CPU_CORES+ns
+            elseif i > length(args) || !isinteger(ns)
                 np = Sys.CPU_CORES
                 i -= 1
             else
