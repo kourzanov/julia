@@ -104,9 +104,12 @@ subst(t, env) = t
 TupleName = TypeName(:Tuple, AnyT)
 TupleT = TagT(TupleName, (AnyT,), true)
 tupletype(xs...) = inst(TupleName, xs...)
+vatype(xs...) = (t = inst(TupleName, xs...); t.vararg = true; t)
 
 
 # subtype
+
+isequal_type(x::Ty, y::Ty) = issub(x, y) && issub(y, x)
 
 type Bounds
     # record current lower and upper bounds of a Var
@@ -118,48 +121,90 @@ type Bounds
     right::Bool
 end
 
-Base.copy(b::Bounds) = Bounds(b.lb, b.ub, b.depth, b.right)
+type Env
+    vars::Dict{Var,Bounds}
+    depth::Int
 
-# maps Var to Bounds, and `:depth` to current depth
-const Env = Dict{Any,Any}
+    Lunion::Int                # traversal-order index of current union
+    Lunion_sizes::Vector{Int}  # number of elements in each union
+    Lunion_idxs                # indexes representing current combination being tested
+    Runion::Int                ##
+    Runion_sizes::Vector{Int}  ##  same on the right-hand side
+    Runion_idxs                ##
 
-isequal_type(x::Ty, y::Ty) = issub(x, y) && issub(y, x)
+    Env() = new(Dict{Var,Bounds}(), 1, 0, Int[], nothing, 0, Int[], nothing)
+end
 
 function issub(x, y)
     env = Env()
-    env[:depth] = 1
+
     ans = issub(x, y, env)
-    #if ans && !isempty(env)
-    #    println("subject to")
-    #    Base.showdict(env, limit=false); println()
-    #end
-    ans
+
+    if !(isempty(env.Lunion_sizes) && isempty(env.Runion_sizes))
+        # if there were unions, search combinations
+        return forall_exists_issub(x, y, env)
+    end
+
+    return ans
 end
 
-issub(x, y, env) = (x === y)
+function forall_exists_issub(x, y, env)
+    lspace = Base.IteratorsMD.IndexIterator(tuple(env.Lunion_sizes...))
+    rspace = Base.IteratorsMD.IndexIterator(tuple(env.Runion_sizes...))
 
-function union_issub(x::UnionT, t::Ty, env)
-    for tt in x.types
-        if !issub(tt, t, env)
+    # for all combinations of elements from Unions on the left, there must
+    # exist a combination of elements from Unions on the right that makes
+    # issub() true. Unions in invariant position are on both the left and
+    # the right in this formula.
+
+    for forall in lspace
+        env.Lunion_idxs = forall
+        found = false
+        for exists in rspace
+            env.Runion_idxs = exists
+            env.Lunion = env.Runion = 0
+            if issub(x, y, env)
+                found = true; break
+            end
+        end
+        if !found
             return false
         end
     end
     return true
 end
 
+issub(x, y, env) = (x === y)
+
+function union_issub(a::UnionT, t, env)
+    a === BottomT && return true
+    env.Lunion += 1
+    if env.Lunion > length(env.Lunion_sizes)
+        # on the first run through, just record the size of this union
+
+        # TODO: this needs to be generalized to handle nested unions
+
+        push!(env.Lunion_sizes, length(a.types))
+        issub(a.types[1], t, env)  # ???
+        return true
+    else
+        return issub(a.types[env.Lunion_idxs.(env.Lunion)], t, env)
+    end
+end
+
 issub(x::UnionT, t::UnionT, env) = union_issub(x, t, env)
 issub(x::UnionT, t::Ty, env)     = union_issub(x, t, env)
 
-function issub(x::Ty, t::UnionT, env)
-    # TODO: distribute Union over tuple
-    for tt in t.types
-        e′ = Env([ k => copy(v) for (k,v) in env])
-        if issub(x, tt, e′)
-            merge!(env, e′)
-            return true
-        end
+function issub(a::Ty, b::UnionT, env)
+    b === BottomT && return false
+    env.Runion += 1
+    if env.Runion > length(env.Runion_sizes)
+        push!(env.Runion_sizes, length(b.types))
+        issub(a, b.types[1], env)  # ???
+        return true
+    else
+        return issub(a, b.types[env.Runion_idxs.(env.Runion)], env)
     end
-    return false
 end
 
 function issub(a::TagT, b::TagT, env)
@@ -193,26 +238,27 @@ function issub(a::TagT, b::TagT, env)
         end
         @assert false
     else
-        env = copy(env)
-        env[:depth] = env[:depth]+1  # crossing invariant constructor, increment depth
+        env.depth += 1  # crossing invariant constructor, increment depth
         for i = 1:length(a.params)
             ai, bi = a.params[i], b.params[i]
             # use issub in both directions to test equality
             if !(ai===bi || (issub(ai, bi, env) && issub(bi, ai, env)))
+                env.depth -= 1
                 return false
             end
         end
+        env.depth -= 1
     end
     return true
 end
 
 function issub(a::Var, b::Ty, env)
-    aa = env[a]
+    aa = env.vars[a]
     # Vars are fully checked by the "forward" direction of A<:B in
     # invariant position. So just return true when checking the "flipped"
     # direction B<:A.
     aa.right && return true
-    d = env[:depth]
+    d = env.depth
     if d != aa.depth  # && d > 1  ???
         # Var <: non-Var can only be true when there are no invariant
         # constructors between the UnionAll and this occurrence of Var.
@@ -223,10 +269,10 @@ end
 
 function issub(a::Var, b::Var, env)
     a === b && return true
-    aa = env[a]
+    aa = env.vars[a]
     aa.right && return true
-    bb = env[b]
-    d = env[:depth]
+    bb = env.vars[b]
+    d = env.depth
     if aa.depth != bb.depth  # && d > 1  ???
         # Vars must occur at same depth
         return false
@@ -239,7 +285,7 @@ function issub(a::Var, b::Var, env)
             # (L,L) <: (T,S) but not (T,S) <: (R,R)
             return false
         end
-        if !(issub(bb.lb, aa.ub, env) && issub(aa.ub, bb.ub, env))
+        if !(issub(bb.lb, aa.lb, env) && issub(aa.ub, bb.ub, env))
             # make sure equality constraint is within the current bounds of Var
             return false
         end
@@ -257,9 +303,9 @@ function issub(a::Var, b::Var, env)
 end
 
 function issub(a::Ty, b::Var, env)
-    bb = env[b]
+    bb = env.vars[b]
     !bb.right && return true
-    if env[:depth] > bb.depth
+    if env.depth > bb.depth
         if isa(bb.ub,Var)
             return false
         end
@@ -277,16 +323,16 @@ function issub(a::Ty, b::Var, env)
 end
 
 function issub_unionall(a::Ty, b::UnionAllT, env)
-    env[b.var] = Bounds(b.var.lb, b.var.ub, env[:depth], true)
+    env.vars[b.var] = Bounds(b.var.lb, b.var.ub, env.depth, true)
     ans = issub(a, b.T, env)
-    delete!(env, b.var)
+    delete!(env.vars, b.var)
     return ans
 end
 
 function unionall_issub(a::UnionAllT, b::Ty, env)
-    env[a.var] = Bounds(a.var.lb, a.var.ub, env[:depth], false)
+    env.vars[a.var] = Bounds(a.var.lb, a.var.ub, env.depth, false)
     ans = issub(a.T, b, env)
-    delete!(env, a.var)
+    delete!(env.vars, a.var)
     return ans
 end
 
@@ -532,6 +578,31 @@ function test_3()
 
     @test issub(Ty(Array{Array{Int,1},Int}),
                 (@UnionAll T inst(ArrayT,inst(ArrayT,T,1),T)))
+
+    @test  issub(Ty((Integer,Int)), @UnionAll T<:Ty(Integer) @UnionAll S<:T tupletype(T,S))
+    @test !issub(Ty((Integer,Int)), @UnionAll T<:Ty(Int) @UnionAll S<:T tupletype(T,S))
+    @test !issub(Ty((Integer,Int)), @UnionAll T<:Ty(String) @UnionAll S<:T tupletype(T,S))
+
+    @test issub(Ty((Float32,Array{Float32,1})),
+                @UnionAll T<:Ty(Real) @UnionAll S<:inst(AbstractArrayT,T,1) tupletype(T,S))
+
+    @test !issub(Ty((Float32,Array{Float64,1})),
+                 @UnionAll T<:Ty(Real) @UnionAll S<:inst(AbstractArrayT,T,1) tupletype(T,S))
+
+    @test issub(Ty((Float32,Array{Real,1})),
+                @UnionAll T<:Ty(Real) @UnionAll S<:inst(AbstractArrayT,T,1) tupletype(T,S))
+
+    @test !issub(Ty((Number,Array{Real,1})),
+                 @UnionAll T<:Ty(Real) @UnionAll S<:inst(AbstractArrayT,T,1) tupletype(T,S))
+
+    @test issub((@UnionAll Ty(Int)<:T<:Ty(Integer) T), @UnionAll T<:Ty(Real) T)
+    @test issub((@UnionAll Ty(Int)<:T<:Ty(Integer) inst(ArrayT,T,1)),
+                (@UnionAll T<:Ty(Real) inst(ArrayT,T,1)))
+
+    @test issub((@UnionAll Ty(Int)<:T<:Ty(Integer) T),
+                (@UnionAll Ty(Integer)<:T<:Ty(Real) T))
+    @test !issub((@UnionAll Ty(Int)<:T<:Ty(Integer) inst(ArrayT,T,1)),
+                 (@UnionAll Ty(Integer)<:T<:Ty(Real) inst(ArrayT,T,1)))
 end
 
 # level 4: Union
@@ -543,6 +614,8 @@ function test_4()
 
     @test isequal_type(UnionT((Ty(Int),Ty(Integer))), Ty(Integer))
 
+    @test issub((Union(Int,Int8),Int16), Union((Int,Int16),(Int8,Int16)))
+
     @test issub_strict((Int,Int8,Int), (Union(Int,Int8)...,))
     @test issub_strict((Int,Int8,Int), (Union(Int,Int8,Int16)...,))
 end
@@ -552,9 +625,37 @@ function test_5()
     @test issub(Ty((String,Array{Int,1})),
                 (@UnionAll T UnionT((tupletype(T,inst(ArrayT,T,1)),
                                      tupletype(T,inst(ArrayT,Ty(Int),1))))))
+
+    @test issub(Ty((Union(Vector{Int},Vector{Int8}),)),
+                @UnionAll T tupletype(inst(ArrayT,T,1),))
+
+    @test !issub(Ty((Union(Vector{Int},Vector{Int8}),Vector{Int})),
+                 @UnionAll T tupletype(inst(ArrayT,T,1), inst(ArrayT,T,1)))
+
+    @test !issub(Ty((Union(Vector{Int},Vector{Int8}),Vector{Int8})),
+                 @UnionAll T tupletype(inst(ArrayT,T,1), inst(ArrayT,T,1)))
+
+    @test !issub(Ty(Vector{Int}), @UnionAll T>:Ty(Union(Int,Int8)) inst(ArrayT,T,1))
+    @test  issub(Ty(Vector{Integer}), @UnionAll T>:Ty(Union(Int,Int8)) inst(ArrayT,T,1))
+    @test  issub(Ty(Vector{Union(Int,Int8)}), @UnionAll T>:Ty(Union(Int,Int8)) inst(ArrayT,T,1))
+
+    @test issub((@UnionAll Ty(Int)<:T<:Ty(Union(Int,Int8)) inst(ArrayT,T,1)),
+                (@UnionAll Ty(Int)<:T<:Ty(Union(Int,Int8)) inst(ArrayT,T,1)))
+
+    # with varargs
+    @test !issub(inst(ArrayT,tupletype(inst(ArrayT,Ty(Int)),inst(ArrayT,Ty(Vector{Int16})),inst(ArrayT,Ty(Vector{Int})),inst(ArrayT,Ty(Int)))),
+                 @UnionAll T<:(@UnionAll S vatype(UnionT((inst(ArrayT,S),inst(ArrayT,inst(ArrayT,S,1)))))) inst(ArrayT,T))
+
+    @test issub(inst(ArrayT,tupletype(inst(ArrayT,Ty(Int)),inst(ArrayT,Ty(Vector{Int})),inst(ArrayT,Ty(Vector{Int})),inst(ArrayT,Ty(Int)))),
+                 @UnionAll T<:(@UnionAll S vatype(UnionT((inst(ArrayT,S),inst(ArrayT,inst(ArrayT,S,1)))))) inst(ArrayT,T))
+
+    @test !issub(tupletype(inst(ArrayT,Ty(Int)),inst(ArrayT,Ty(Vector{Int16})),inst(ArrayT,Ty(Vector{Int})),inst(ArrayT,Ty(Int))),
+                 @UnionAll S vatype(UnionT((inst(ArrayT,S),inst(ArrayT,inst(ArrayT,S,1))))))
+
+    @test issub(tupletype(inst(ArrayT,Ty(Int)),inst(ArrayT,Ty(Vector{Int})),inst(ArrayT,Ty(Vector{Int})),inst(ArrayT,Ty(Int))),
+                 @UnionAll S vatype(UnionT((inst(ArrayT,S),inst(ArrayT,inst(ArrayT,S,1))))))
 end
 
 # tests that don't pass yet
 function test_failing()
-    @test issub((Union(Int,Int8),Int16), Union((Int,Int16),(Int8,Int16)))
 end
