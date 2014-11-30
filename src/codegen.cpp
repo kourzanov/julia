@@ -1,3 +1,4 @@
+#include "platform.h"
 /*
  * We include <mathimf.h> here, because somewhere below <math.h> is included also.
  * As a result, Intel C++ Composer generates an error. To prevent this error, we
@@ -6,9 +7,6 @@
  * including <math.h> (or rather its content).
  */
 #if defined(_OS_WINDOWS_)
-#include <malloc.h>
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
 #if defined(_COMPILER_INTEL_)
 #include <mathimf.h>
 #else
@@ -16,129 +14,88 @@
 #endif
 #endif
 
-#include "platform.h"
-
 #ifndef __STDC_LIMIT_MACROS
 #define __STDC_LIMIT_MACROS
 #define __STDC_CONSTANT_MACROS
 #endif
-#include "llvm/ExecutionEngine/ExecutionEngine.h"
-#include "llvm/ExecutionEngine/JITEventListener.h"
-#include "llvm/PassManager.h"
-#include "llvm/Target/TargetLibraryInfo.h"
-#include "llvm/Support/TargetRegistry.h"
-#include "llvm/Analysis/Passes.h"
-#include "llvm/Bitcode/ReaderWriter.h"
-#ifdef _OS_DARWIN_
-#include "llvm/Object/MachO.h"
-#endif
-#ifdef _OS_WINDOWS_
-#include "llvm/Object/COFF.h"
-#endif
-#if defined(LLVM_VERSION_MAJOR) && LLVM_VERSION_MAJOR == 3 && LLVM_VERSION_MINOR >= 6
-#define LLVM36 1
+
+#include "llvm-version.h"
+#include <llvm/ExecutionEngine/ExecutionEngine.h>
+#include <llvm/ExecutionEngine/JITEventListener.h>
+#include <llvm/PassManager.h>
+#include <llvm/Target/TargetLibraryInfo.h>
+#include <llvm/Support/TargetRegistry.h>
+#include <llvm/Analysis/Passes.h>
+#include <llvm/Bitcode/ReaderWriter.h>
+#ifdef LLVM35
+#include <llvm/IR/Verifier.h>
+#include <llvm/Object/ObjectFile.h>
+#include <llvm/IR/DIBuilder.h>
+#include <llvm/Target/TargetMachine.h>
+#include <llvm/AsmParser/Parser.h>
 #else
-#include "llvm/ExecutionEngine/JITMemoryManager.h"
+#include <llvm/Assembly/Parser.h>
+#include <llvm/Analysis/Verifier.h>
 #endif
-#if defined(LLVM_VERSION_MAJOR) && LLVM_VERSION_MAJOR == 3 && LLVM_VERSION_MINOR >= 5
-#define LLVM35 1
-#include "llvm/IR/Verifier.h"
-#include "llvm/Object/ObjectFile.h"
-#include "llvm/IR/DIBuilder.h"
-#include "llvm/AsmParser/Parser.h"
-#include "llvm/Target/TargetMachine.h"
+#include <llvm/DebugInfo/DIContext.h>
+#ifdef USE_MCJIT
+#include <llvm/ExecutionEngine/MCJIT.h>
+#include <llvm/ExecutionEngine/SectionMemoryManager.h>
+#include <llvm/ExecutionEngine/ObjectImage.h>
+#include <llvm/ADT/DenseMapInfo.h>
+#include <llvm/Object/ObjectFile.h>
 #else
-#include "llvm/Analysis/Verifier.h"
-#include "llvm/Assembly/Parser.h"
+#include <llvm/ExecutionEngine/JIT.h>
+#include <llvm/ExecutionEngine/JITMemoryManager.h>
 #endif
-#include "llvm/DebugInfo/DIContext.h"
-#if defined(LLVM_VERSION_MAJOR) && LLVM_VERSION_MAJOR == 3 && LLVM_VERSION_MINOR >= 4
-#define LLVM34 1
-#define USE_MCJIT 1
-#include "llvm/ExecutionEngine/MCJIT.h"
-#include "llvm/ExecutionEngine/SectionMemoryManager.h"
-#include "llvm/ExecutionEngine/ObjectImage.h"
-#include "llvm/ADT/DenseMapInfo.h"
-#include "llvm/Object/ObjectFile.h"
+#ifdef LLVM33
+#include <llvm/IR/DerivedTypes.h>
+#include <llvm/IR/LLVMContext.h>
+#include <llvm/IR/Module.h>
+#include <llvm/IR/Intrinsics.h>
+#include <llvm/IR/Attributes.h>
+#include <llvm/IR/IRBuilder.h>
+#include <llvm/IR/MDBuilder.h>
+#include <llvm/IR/Value.h>
 #else
-#include "llvm/ExecutionEngine/JIT.h"
+#include <llvm/DerivedTypes.h>
+#include <llvm/LLVMContext.h>
+#include <llvm/Module.h>
+#include <llvm/Intrinsics.h>
+#include <llvm/Attributes.h>
 #endif
-#if defined(LLVM_VERSION_MAJOR) && LLVM_VERSION_MAJOR == 3 && LLVM_VERSION_MINOR >= 3
-#include "llvm/IR/DerivedTypes.h"
-#include "llvm/IR/LLVMContext.h"
-#include "llvm/IR/Module.h"
-#include "llvm/IR/Intrinsics.h"
-#include "llvm/IR/Attributes.h"
-#include "llvm/IR/IRBuilder.h"
-#include "llvm/IR/MDBuilder.h"
-#define LLVM33 1
-#else
-#include "llvm/DerivedTypes.h"
-#include "llvm/LLVMContext.h"
-#include "llvm/Module.h"
-#include "llvm/Intrinsics.h"
-#include "llvm/Attributes.h"
-#endif
-#if defined(LLVM_VERSION_MAJOR) && LLVM_VERSION_MAJOR == 3 && LLVM_VERSION_MINOR >= 2
+#ifdef LLVM32
 #ifndef LLVM35
-#include "llvm/DebugInfo.h"
-#include "llvm/DIBuilder.h"
+#include <llvm/DebugInfo.h>
+#include <llvm/DIBuilder.h>
 #endif
 #ifndef LLVM33
-#include "llvm/IRBuilder.h"
+#include <llvm/IRBuilder.h>
 #endif
-#define LLVM32 1
-#else
-#include "llvm/Analysis/DebugInfo.h"
-#include "llvm/Analysis/DIBuilder.h"
-#include "llvm/Target/TargetData.h"
-#include "llvm/Support/IRBuilder.h"
+#else // LLVM31 and before
+#include <llvm/Analysis/DebugInfo.h>
+#include <llvm/Analysis/DIBuilder.h>
+#include <llvm/Target/TargetData.h>
+#include <llvm/Support/IRBuilder.h>
 #endif
-#include "llvm/Target/TargetOptions.h"
-#include "llvm/Transforms/Scalar.h"
-#include "llvm/Transforms/Utils/BasicBlockUtils.h"
-#include "llvm/Transforms/Instrumentation.h"
-#if defined(LLVM_VERSION_MAJOR) && LLVM_VERSION_MAJOR == 3 && LLVM_VERSION_MINOR >= 1
-#include "llvm/Transforms/Vectorize.h"
+#include <llvm/Target/TargetOptions.h>
+#include <llvm/Transforms/Scalar.h>
+#include <llvm/Transforms/Utils/BasicBlockUtils.h>
+#include <llvm/Transforms/Instrumentation.h>
+#ifdef LLVM31
+#include <llvm/Transforms/Vectorize.h>
 #endif
-#include "llvm/Support/TargetSelect.h"
-#include "llvm/Support/raw_ostream.h"
-#include "llvm/Support/FormattedStream.h"
-#include "llvm/Support/DynamicLibrary.h"
-#include "llvm/Config/llvm-config.h"
+#include <llvm/Support/Host.h>
+#include <llvm/Support/TargetSelect.h>
+#include <llvm/Support/raw_ostream.h>
+#include <llvm/Support/FormattedStream.h>
+#include <llvm/Support/DynamicLibrary.h>
+#include <llvm/Support/PrettyStackTrace.h>
+#include <llvm/Support/SourceMgr.h>
 #ifdef JL_DEBUG_BUILD
-#include "llvm/Support/CommandLine.h"
+#include <llvm/Support/CommandLine.h>
 #endif
-#include "llvm/Transforms/Utils/Cloning.h"
- // For disasm
-#include "llvm/Support/MachO.h"
-#include "llvm/Support/COFF.h"
-#include "llvm/MC/MCDisassembler.h"
-#include "llvm/MC/MCInst.h"
-#include "llvm/MC/MCStreamer.h"
-#include "llvm/MC/MCSubtargetInfo.h"
-#include "llvm/MC/MCObjectFileInfo.h"
-#include "llvm/MC/MCRegisterInfo.h"
-#include "llvm/MC/MCAsmInfo.h"
-#include "llvm/MC/MCAsmBackend.h"
-#include "llvm/MC/MCCodeEmitter.h"
-#include "llvm/MC/MCInstPrinter.h"
-#include "llvm/MC/MCInstrInfo.h"
-#include "llvm/MC/MCContext.h"
-#ifndef LLVM35
-#include "llvm/ADT/OwningPtr.h"
-#endif
-#include "llvm/ADT/Triple.h"
-#include "llvm/Support/MemoryBuffer.h"
-#include "llvm/Support/MemoryObject.h"
-#include "llvm/Support/SourceMgr.h"
-#include "llvm/Support/TargetRegistry.h"
-#include "llvm/Support/PrettyStackTrace.h"
-#include "llvm/Support/Host.h"
-#include "llvm/Support/raw_ostream.h"
-#ifndef LLVM35
-#include "llvm/Support/system_error.h"
-#endif
+#include <llvm/Transforms/Utils/Cloning.h>
 
 #if defined(_OS_WINDOWS_) && !defined(NOMINMAX)
 #define NOMINMAX
@@ -283,6 +240,13 @@ static GlobalVariable *jlRTLD_DEFAULT_var;
 #ifdef _OS_WINDOWS_
 static GlobalVariable *jlexe_var;
 static GlobalVariable *jldll_var;
+#if defined(_CPU_X86_64_)
+#ifdef USE_MCJIT
+extern RTDyldMemoryManager* createRTDyldMemoryManagerWin(RTDyldMemoryManager *MM);
+#else
+extern JITMemoryManager* createJITMemoryManagerWin();
+#endif
+#endif
 #endif
 
 // important functions
@@ -783,9 +747,23 @@ void jl_extern_c(jl_function_t *f, jl_value_t *rt, jl_value_t *argt, char *name)
 }
 
 // --- native code info, and dump function to IR and ASM ---
+extern void RegisterJuliaJITEventListener();
 
-#include "debuginfo.cpp"
-#include "disasm.cpp"
+extern int jl_get_llvmf_info(size_t fptr, uint64_t *symsize,
+#ifdef USE_MCJIT
+    object::ObjectFile **object);
+#else
+    std::vector<JITEvent_EmittedFunctionDetails::LineStart> *lines);
+#endif
+
+extern "C"
+void jl_dump_function_asm(const char *Fptr, size_t Fsize,
+#ifdef USE_MCJIT
+                          object::ObjectFile *objectfile,
+#else
+                          std::vector<JITEvent_EmittedFunctionDetails::LineStart> lineinfo,
+#endif
+                          formatted_raw_ostream &stream);
 
 const jl_value_t *jl_dump_llvmf(void *f, bool dumpasm)
 {
@@ -797,58 +775,19 @@ const jl_value_t *jl_dump_llvmf(void *f, bool dumpasm)
         llvmf->print(stream);
     }
     else {
+        uint64_t symsize;
 #ifdef USE_MCJIT
         size_t fptr = (size_t)jl_ExecutionEngine->getFunctionAddress(llvmf->getName());
+        object::ObjectFile *object;
 #else
         size_t fptr = (size_t)jl_ExecutionEngine->getPointerToFunction(llvmf);
+        std::vector<JITEvent_EmittedFunctionDetails::LineStart> object;
 #endif
         assert(fptr != 0);
-#ifndef USE_MCJIT
-        std::map<size_t, FuncInfo, revcomp> &fmap = jl_jit_events->getMap();
-        std::map<size_t, FuncInfo, revcomp>::iterator fit = fmap.find(fptr);
-
-        if (fit == fmap.end()) {
+        if (jl_get_llvmf_info(fptr, &symsize, &object))
+            jl_dump_function_asm((char *)fptr, symsize, object, fstream);
+        else
             JL_PRINTF(JL_STDERR, "Warning: Unable to find function pointer\n");
-            return jl_cstr_to_string(const_cast<char*>(""));
-        }
-
-        jl_dump_function_asm((char *)fptr, fit->second.lengthAdr, fit->second.lines, fstream);
-#else // MCJIT version
-        std::map<size_t, ObjectInfo, revcomp> objmap = jl_jit_events->getObjectMap();
-        std::map<size_t, ObjectInfo, revcomp>::iterator fit = objmap.find(fptr);
-
-        if (fit == objmap.end()) {
-            JL_PRINTF(JL_STDERR, "Warning: Unable to find ObjectFile for function\n");
-            return jl_cstr_to_string(const_cast<char*>(""));
-        }
-
-        object::SymbolRef::Type symtype;
-        uint64_t symsize;
-        uint64_t symaddr;
-
-        #ifdef LLVM35
-        for (const object::SymbolRef &sym_iter : fit->second.object->symbols()) {
-            sym_iter.getType(symtype);
-            sym_iter.getAddress(symaddr);
-            if (symtype != object::SymbolRef::ST_Function || symaddr != fptr)
-                continue;
-            sym_iter.getSize(symsize);
-            jl_dump_function_asm((char *)fptr, symsize, fit->second.object, fstream);
-        }
-        #else
-        error_code itererr;
-        object::symbol_iterator sym_iter = fit->second.object->begin_symbols();
-        object::symbol_iterator sym_end = fit->second.object->end_symbols();
-        for (; sym_iter != sym_end; sym_iter.increment(itererr)) {
-            sym_iter->getType(symtype);
-            sym_iter->getAddress(symaddr);
-            if (symtype != object::SymbolRef::ST_Function || symaddr != fptr)
-                continue;
-            sym_iter->getSize(symsize);
-            jl_dump_function_asm((char *)fptr, symsize, fit->second.object, fstream);
-        }
-        #endif // LLVM35
-#endif
         fstream.flush();
     }
     return jl_cstr_to_string(const_cast<char*>(stream.str().c_str()));
@@ -900,6 +839,134 @@ const jl_value_t *jl_dump_function(jl_function_t *f, jl_tuple_t *types, bool dum
     if (llvmf == NULL)
         return jl_cstr_to_string(const_cast<char*>(""));
     return jl_dump_llvmf(llvmf,dumpasm);
+}
+
+// Code coverage
+
+typedef std::map<std::string,std::vector<GlobalVariable*> > logdata_t;
+static logdata_t coverageData;
+
+static void coverageVisitLine(std::string filename, int line)
+{
+    if (filename == "" || filename == "none" || filename == "no file")
+        return;
+    logdata_t::iterator it = coverageData.find(filename);
+    if (it == coverageData.end()) {
+        coverageData[filename] = std::vector<GlobalVariable*>(0);
+    }
+    std::vector<GlobalVariable*> &vec = coverageData[filename];
+    if (vec.size() <= (size_t)line)
+        vec.resize(line+1, NULL);
+    if (vec[line] == NULL)
+        vec[line] = new GlobalVariable(*jl_Module, T_int64, false, GlobalVariable::InternalLinkage,
+                                       ConstantInt::get(T_int64,0), "lcnt");
+    GlobalVariable *v = vec[line];
+    builder.CreateStore(builder.CreateAdd(builder.CreateLoad(v),
+                                          ConstantInt::get(T_int64,1)),
+                        v);
+}
+
+void write_log_data(logdata_t logData, const char *extension)
+{
+    std::string base = std::string(julia_home);
+    base = base + "/../share/julia/base/";
+    logdata_t::iterator it = logData.begin();
+    for (; it != logData.end(); it++) {
+        std::string filename = (*it).first;
+        std::vector<GlobalVariable*> &values = (*it).second;
+        if (values.size() > 1) {
+            if (filename[0] != '/')
+                filename = base + filename;
+            std::ifstream inf(filename.c_str());
+            if (inf.is_open()) {
+                std::string outfile = filename + extension;
+                std::ofstream outf(outfile.c_str(), std::ofstream::trunc | std::ofstream::out);
+                char line[1024];
+                int l = 1;
+                while (!inf.eof()) {
+                    inf.getline(line, sizeof(line));
+                    if (inf.fail() && !inf.bad()) {
+                        // Read through lines longer than sizeof(line)
+                        inf.clear();
+                        inf.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+                    }
+                    int value = -1;
+                    if ((size_t)l < values.size()) {
+                        GlobalVariable *gv = values[l];
+                        if (gv) {
+                            int *p = (int*)jl_ExecutionEngine->getPointerToGlobal(gv);
+                            value = *p;
+                        }
+                    }
+                    outf.width(9);
+                    if (value == -1)
+                        outf<<'-';
+                    else
+                        outf<<value;
+                    outf.width(0);
+                    outf<<" "<<line<<std::endl;
+                    l++;
+                }
+                outf.close();
+                inf.close();
+            }
+        }
+    }
+}
+
+extern "C" void jl_write_coverage_data(void)
+{
+    write_log_data(coverageData, ".cov");
+}
+
+// Memory allocation log (malloc_log)
+
+static logdata_t mallocData;
+
+static void mallocVisitLine(std::string filename, int line)
+{
+    if (filename == "" || filename == "none" || filename == "no file") {
+        sync_gc_total_bytes();
+        return;
+    }
+    logdata_t::iterator it = mallocData.find(filename);
+    if (it == mallocData.end()) {
+        mallocData[filename] = std::vector<GlobalVariable*>(0);
+    }
+    std::vector<GlobalVariable*> &vec = mallocData[filename];
+    if (vec.size() <= (size_t)line)
+        vec.resize(line+1, NULL);
+    if (vec[line] == NULL)
+        vec[line] = new GlobalVariable(*jl_Module, T_int64, false,
+                                       GlobalVariable::InternalLinkage,
+                                       ConstantInt::get(T_int64,0), "bytecnt");
+    GlobalVariable *v = vec[line];
+    builder.CreateStore(builder.CreateAdd(builder.CreateLoad(v, true),
+                                          builder.CreateCall(prepare_call(diff_gc_total_bytes_func))),
+                        v, true);
+}
+
+// Resets the malloc counts. Needed to avoid including memory usage
+// from JITting.
+extern "C" DLLEXPORT void jl_clear_malloc_data(void)
+{
+    logdata_t::iterator it = mallocData.begin();
+    for (; it != mallocData.end(); it++) {
+        std::vector<GlobalVariable*> &bytes = (*it).second;
+        std::vector<GlobalVariable*>::iterator itb;
+        for (itb = bytes.begin(); itb != bytes.end(); itb++) {
+            if (*itb) {
+                int64_t *p = (int64_t*) jl_ExecutionEngine->getPointerToGlobal(*itb);
+                *p = 0;
+            }
+        }
+    }
+    sync_gc_total_bytes();
+}
+
+extern "C" void jl_write_malloc_log(void)
+{
+    write_log_data(mallocData, ".mem");
 }
 
 // --- code gen for intrinsic functions ---
@@ -3598,6 +3665,11 @@ static Function *emit_function(jl_lambda_info_t *lam, bool cstyle)
             AttributeSet::FunctionIndex,*attr));
 #endif
 #endif
+
+#if defined(_OS_WINDOWS_) && defined(_CPU_X86_64_) && LLVM35
+    f->setHasUWTable(); // force NeedsWinEH
+#endif
+
 #ifdef JL_DEBUG_BUILD
 #if LLVM32 && !LLVM33
     f->addFnAttr(Attributes::StackProtectReq);
@@ -4779,8 +4851,12 @@ extern "C" void jl_init_codegen(void)
     EngineBuilder eb = EngineBuilder(engine_module);
 #endif
     eb  .setEngineKind(EngineKind::JIT)
-#if defined(_OS_WINDOWS_) && defined(_CPU_X86_64_) && !defined(USE_MCJIT)
-        .setJITMemoryManager(new JITMemoryManagerWin())
+#if defined(_OS_WINDOWS_) && defined(_CPU_X86_64_)
+#if defined(USE_MCJIT)
+        .setMCJITMemoryManager(createRTDyldMemoryManagerWin(new SectionMemoryManager()))
+#else
+        .setJITMemoryManager(createJITMemoryManagerWin())
+#endif
 #endif
         .setTargetOptions(options)
 #if defined(USE_MCJIT) && !defined(LLVM36)
@@ -4816,8 +4892,7 @@ extern "C" void jl_init_codegen(void)
 
     init_julia_llvm_env(m);
 
-    jl_jit_events = new JuliaJITEventListener();
-    jl_ExecutionEngine->RegisterJITEventListener(jl_jit_events);
+    RegisterJuliaJITEventListener();
 #ifdef JL_USE_INTEL_JITEVENTS
     if (jl_using_intel_jitevents)
         jl_ExecutionEngine->RegisterJITEventListener(
