@@ -1069,10 +1069,11 @@ void sync_gc_total_bytes(void);
 void jl_gc_ephemeral_on(void);
 void jl_gc_ephemeral_off(void);
 DLLEXPORT void jl_gc_collect(void);
-void jl_gc_preserve(jl_value_t *v);
-void jl_gc_unpreserve(void);
-int jl_gc_n_preserved_values(void);
+DLLEXPORT void jl_gc_preserve(jl_value_t *v);
+DLLEXPORT void jl_gc_unpreserve(void);
+DLLEXPORT int jl_gc_n_preserved_values(void);
 DLLEXPORT void jl_gc_add_finalizer(jl_value_t *v, jl_function_t *f);
+DLLEXPORT void jl_finalize(jl_value_t *o);
 DLLEXPORT jl_weakref_t *jl_gc_new_weakref(jl_value_t *value);
 void *jl_gc_managed_malloc(size_t sz);
 void *jl_gc_managed_realloc(void *d, size_t sz, size_t oldsz, int isaligned);
@@ -1334,6 +1335,7 @@ typedef struct {
     int8_t dumpbitcode;
     int int_literals;
     int8_t compile_enabled;
+    int8_t opt_level;
 } jl_compileropts_t;
 
 extern DLLEXPORT jl_compileropts_t jl_compileropts;

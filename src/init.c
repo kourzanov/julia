@@ -8,6 +8,7 @@
 #include <string.h>
 #include <setjmp.h>
 #include <assert.h>
+#include <fcntl.h>
 
 #if defined(__linux__) || defined(__APPLE__) || defined(__FreeBSD__)
 #include <sys/types.h>
@@ -85,7 +86,8 @@ jl_compileropts_t jl_compileropts = { NULL, // build_path
                                       JL_COMPILEROPT_CHECK_BOUNDS_DEFAULT,
                                       JL_COMPILEROPT_DUMPBITCODE_OFF,
                                       0,    // int_literals
-                                      JL_COMPILEROPT_COMPILE_DEFAULT
+                                      JL_COMPILEROPT_COMPILE_DEFAULT,
+                                      0     // opt_level
 };
 
 int jl_boot_file_loaded = 0;
@@ -552,6 +554,14 @@ void *init_stdio_handle(uv_file fd,int readable)
             ((uv_tty_t*)handle)->data=0;
             uv_tty_set_mode((uv_tty_t*)handle,0); //cooked stdio
             break;
+        case UV_UNKNOWN_HANDLE:
+            // dup the descriptor with a new one pointing at the bit bucket ...
+#if defined(_OS_WINDOWS_)
+            _dup2(_open("NUL", O_RDWR | O_BINARY, _S_IREAD | _S_IWRITE), fd);
+#else
+	    dup2(open("/dev/null", O_RDWR, S_IRUSR | S_IWUSR /* 0600 */ | S_IRGRP | S_IROTH /* 0644 */), fd);
+#endif
+	    // ...and continue on as in the UV_FILE case
         case UV_FILE:
             file = (jl_uv_file_t*)malloc(sizeof(jl_uv_file_t));
             file->loop = jl_io_loop;

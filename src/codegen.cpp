@@ -24,6 +24,7 @@
 #include <llvm/ExecutionEngine/JITEventListener.h>
 #include <llvm/PassManager.h>
 #include <llvm/Target/TargetLibraryInfo.h>
+#include <llvm/Target/TargetSubtargetInfo.h>
 #include <llvm/Support/TargetRegistry.h>
 #include <llvm/Analysis/Passes.h>
 #include <llvm/Bitcode/ReaderWriter.h>
@@ -41,12 +42,12 @@
 #ifdef USE_MCJIT
 #include <llvm/ExecutionEngine/MCJIT.h>
 #include <llvm/ExecutionEngine/SectionMemoryManager.h>
-#include <llvm/ExecutionEngine/ObjectImage.h>
 #include <llvm/ADT/DenseMapInfo.h>
 #include <llvm/Object/ObjectFile.h>
 #else
 #include <llvm/ExecutionEngine/JIT.h>
 #include <llvm/ExecutionEngine/JITMemoryManager.h>
+#include <llvm/ExecutionEngine/Interpreter.h>
 #endif
 #ifdef LLVM33
 #include <llvm/IR/DerivedTypes.h>
@@ -195,9 +196,9 @@ static Type *T_pfloat64;
 static Type *T_void;
 
 // type-based alias analysis nodes.  Indentation of comments indicates hierarchy.
-static MDNode* tbaa_user;           // User data
+static MDNode* tbaa_user;           // User data that is mutable
+static MDNode* tbaa_immut;          // User data inside a heap-allocated immutable
 static MDNode* tbaa_value;          // Julia value
-static MDNode* tbaa_immut;          // Data inside a heap-allocated immutable
 static MDNode* tbaa_array;              // Julia array
 static MDNode* tbaa_arrayptr;               // The pointer inside a jl_array_t
 static MDNode* tbaa_arraysize;              // A size in a jl_array_t
@@ -751,7 +752,7 @@ extern void RegisterJuliaJITEventListener();
 
 extern int jl_get_llvmf_info(size_t fptr, uint64_t *symsize,
 #ifdef USE_MCJIT
-    object::ObjectFile **object);
+    const object::ObjectFile **object);
 #else
     std::vector<JITEvent_EmittedFunctionDetails::LineStart> *lines);
 #endif
@@ -759,7 +760,7 @@ extern int jl_get_llvmf_info(size_t fptr, uint64_t *symsize,
 extern "C"
 void jl_dump_function_asm(const char *Fptr, size_t Fsize,
 #ifdef USE_MCJIT
-                          object::ObjectFile *objectfile,
+                          const object::ObjectFile *objectfile,
 #else
                           std::vector<JITEvent_EmittedFunctionDetails::LineStart> lineinfo,
 #endif
@@ -778,7 +779,7 @@ const jl_value_t *jl_dump_llvmf(void *f, bool dumpasm)
         uint64_t symsize;
 #ifdef USE_MCJIT
         size_t fptr = (size_t)jl_ExecutionEngine->getFunctionAddress(llvmf->getName());
-        object::ObjectFile *object;
+        const object::ObjectFile *object;
 #else
         size_t fptr = (size_t)jl_ExecutionEngine->getPointerToFunction(llvmf);
         std::vector<JITEvent_EmittedFunctionDetails::LineStart> object;
@@ -4695,6 +4696,8 @@ static void init_julia_llvm_env(Module *m)
     jl_TargetMachine->addAnalysisPasses(*FPM);
 #endif
     FPM->add(createTypeBasedAliasAnalysisPass());
+    if (jl_compileropts.opt_level>=1)
+        FPM->add(createBasicAliasAnalysisPass());
     // list of passes from vmkit
     FPM->add(createCFGSimplificationPass()); // Clean up disgusting code
     FPM->add(createPromoteMemoryToRegisterPass());// Kill useless allocas
@@ -4740,11 +4743,11 @@ static void init_julia_llvm_env(Module *m)
 #else
     FPM->add(createLoopUnrollPass());           // Unroll small loops
 #endif
-    //FPM->add(createLoopStrengthReducePass());   // (jwb added)
-
-#if LLVM_VERSION_MAJOR == 3 && LLVM_VERSION_MINOR >= 3 && !defined(INSTCOMBINE_BUG)
+#if LLVM33 && !LLVM35 && !defined(INSTCOMBINE_BUG)
     FPM->add(createLoopVectorizePass());        // Vectorize loops
 #endif
+    //FPM->add(createLoopStrengthReducePass());   // (jwb added)
+
 #ifndef INSTCOMBINE_BUG
     FPM->add(createInstructionCombiningPass()); // Clean up after the unroller
 #endif
@@ -4761,8 +4764,20 @@ static void init_julia_llvm_env(Module *m)
 #endif
     FPM->add(createJumpThreadingPass());         // Thread jumps
     FPM->add(createDeadStoreEliminationPass());  // Delete dead stores
+#if LLVM33 && !defined(INSTCOMBINE_BUG)
+    if (jl_compileropts.opt_level>=1)
+        FPM->add(createSLPVectorizerPass());     // Vectorize straight-line code
+#endif
 
     FPM->add(createAggressiveDCEPass());         // Delete dead instructions
+#if LLVM33 && !defined(INSTCOMBINE_BUG)
+    if (jl_compileropts.opt_level>=1)
+        FPM->add(createInstructionCombiningPass());   // Clean up after SLP loop vectorizer
+#endif
+#if LLVM35
+    FPM->add(createLoopVectorizePass());         // Vectorize loops
+    FPM->add(createInstructionCombiningPass());  // Clean up after loop vectorizer
+#endif
     //FPM->add(createCFGSimplificationPass());     // Merge & remove BBs
 
     FPM->doInitialization();
@@ -4846,11 +4861,12 @@ extern "C" void jl_init_codegen(void)
     SmallVector<std::string, 4> MAttrs(mattr, mattr+2);
 #endif
 #ifdef LLVM36
-    EngineBuilder eb = EngineBuilder(std::unique_ptr<Module>(engine_module));
+    EngineBuilder *eb = new EngineBuilder(std::unique_ptr<Module>(engine_module));
 #else
-    EngineBuilder eb = EngineBuilder(engine_module);
+    EngineBuilder *eb = new EngineBuilder(engine_module);
 #endif
-    eb  .setEngineKind(EngineKind::JIT)
+    std::string ErrorStr;
+    eb  ->setEngineKind(EngineKind::JIT)
 #if defined(_OS_WINDOWS_) && defined(_CPU_X86_64_)
 #if defined(USE_MCJIT)
         .setMCJITMemoryManager(createRTDyldMemoryManagerWin(new SectionMemoryManager()))
@@ -4867,7 +4883,7 @@ extern "C" void jl_init_codegen(void)
 #if defined(_OS_WINDOWS_) && defined(USE_MCJIT)
     TheTriple.setObjectFormat(Triple::ELF);
 #endif
-    jl_TargetMachine = eb.selectTarget(
+    jl_TargetMachine = eb->selectTarget(
             TheTriple,
             "",
 #if LLVM35
@@ -4877,7 +4893,19 @@ extern "C" void jl_init_codegen(void)
 #endif
             MAttrs);
     assert(jl_TargetMachine);
-    jl_ExecutionEngine = eb.create(jl_TargetMachine);
+#ifdef LLVM36
+    engine_module->setDataLayout(jl_TargetMachine->getSubtargetImpl()->getDataLayout());
+#elif defined(LLVM35)
+    engine_module->setDataLayout(jl_TargetMachine->getDataLayout());
+#else
+    engine_module->setDataLayout(jl_TargetMachine->getDataLayout()->getStringRepresentation());
+#endif
+    jl_ExecutionEngine = eb->create(jl_TargetMachine);
+    //ios_printf(ios_stderr,"%s\n",jl_ExecutionEngine->getDataLayout()->getStringRepresentation().c_str());
+    if (!jl_ExecutionEngine) {
+        JL_PRINTF(JL_STDERR, "Critical error initializing llvm: ", ErrorStr.c_str());
+        exit(1);
+    }
 #ifdef LLVM35
     jl_ExecutionEngine->setProcessAllSections(true);
 #endif

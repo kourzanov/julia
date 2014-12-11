@@ -779,7 +779,7 @@ export
     setdiff,
     setindex!,
     similar,
-    sizehint,
+    sizehint!,
     splice!,
     symdiff!,
     symdiff,
@@ -870,6 +870,7 @@ export
     repeat,
     replace,
     repr,
+    reverseind,
     rpad,
     rsearch,
     rsearchindex,
@@ -1089,6 +1090,7 @@ export
 
 # RTS internals
     finalizer,
+    finalize,
     gc,
     gc_disable,
     gc_enable,
@@ -1402,6 +1404,7 @@ export
     @label,
     @goto,
     @inline,
+    @noinline,
     @doc,
     @doc_str,
     @doc_mstr
