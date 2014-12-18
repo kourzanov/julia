@@ -1,6 +1,9 @@
 ## IP ADDRESS HANDLING ##
 abstract IPAddr
 
+
+Base.isless{T<:IPAddr}(a::T, b::T) = isless(a.host, b.host)
+
 immutable IPv4 <: IPAddr
     host::UInt32
     IPv4(host::UInt32) = new(host)
@@ -25,6 +28,9 @@ function IPv4(host::Integer)
         return IPv4(uint32(host))
     end
 end
+
+# constructor: ("1.2.3.4")
+IPv4(ipstr::AbstractString) = parseipv4(ipstr)
 
 show(io::IO,ip::IPv4) = print(io,"ip\"",ip,"\"")
 print(io::IO,ip::IPv4) = print(io,dec((ip.host&(0xFF000000))>>24),".",
@@ -66,6 +72,8 @@ function IPv6(host::Integer)
         return IPv6(uint128(host))
     end
 end
+
+IPv6(ipstr::AbstractString) = parseipv6(ipstr)
 
 # Suppress leading '0's and "0x"
 print_ipv6_field(io,field::UInt16) = print(io,hex(field))

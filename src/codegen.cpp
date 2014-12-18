@@ -121,8 +121,11 @@ extern "C" {
 
 #include "builtin_proto.h"
 
-void *__stack_chk_guard = NULL;
-
+#ifdef HAVE_SSP
+extern uintptr_t __stack_chk_guard;
+extern void __stack_chk_fail();
+#else
+uintptr_t __stack_chk_guard = (uintptr_t)0xBAD57ACCBAD67ACC; // 0xBADSTACKBADSTACK
 #if defined(_OS_WINDOWS_) && !defined(_COMPILER_MINGW_)
 void __stack_chk_fail()
 #else
@@ -130,10 +133,30 @@ void __attribute__(()) __stack_chk_fail()
 #endif
 {
     /* put your panic function or similar in here */
-    fprintf(stderr, "warning: stack corruption detected\n");
-    //assert(0 && "stack corruption detected");
-    //abort();
+    fprintf(stderr, "fatal error: stack corruption detected\n");
+    abort(); // end with abort, since the compiler destroyed the stack upon entry to this function
 }
+#endif
+
+#ifdef _OS_WINDOWS_
+#if defined(_CPU_X86_64_)
+#if defined(_COMPILER_MINGW_)
+extern void ___chkstk_ms(void);
+#else
+extern void __chkstk(void);
+#endif
+#else
+#if defined(_COMPILER_MINGW_)
+#undef _alloca
+extern void _alloca(void);
+#else
+extern void _chkstk(void);
+#endif
+#endif
+//void *force_chkstk(void) {
+//    return alloca(40960);
+//}
+#endif
 }
 
 #define DISABLE_FLOAT16
@@ -338,7 +361,7 @@ struct jl_varinfo_t {
 };
 
 // --- helpers for reloading IR image
-static void jl_gen_llvm_gv_array(llvm::Module *mod);
+static void jl_gen_llvm_gv_array(llvm::Module *mod, SmallVector<GlobalVariable*, 8> &globalvars);
 
 extern "C"
 void jl_dump_bitcode(char *fname)
@@ -354,13 +377,17 @@ void jl_dump_bitcode(char *fname)
     std::string err;
     raw_fd_ostream OS(fname, err);
 #endif
+    SmallVector<GlobalVariable*, 8> globalvars;
 #ifdef USE_MCJIT
-    jl_gen_llvm_gv_array(shadow_module);
+    jl_gen_llvm_gv_array(shadow_module, globalvars);
     WriteBitcodeToFile(shadow_module, OS);
 #else
-    jl_gen_llvm_gv_array(jl_Module);
+    jl_gen_llvm_gv_array(jl_Module, globalvars);
     WriteBitcodeToFile(jl_Module, OS);
 #endif
+    for (SmallVectorImpl<GlobalVariable>::iterator *I = globalvars.begin(), *E = globalvars.end(); I != E; ++I) {
+        (*I)->eraseFromParent();
+    }
 }
 
 extern "C"
@@ -418,13 +445,17 @@ void jl_dump_objfile(char *fname, int jit_model)
         jl_error("Could not generate obj file for this target");
     }
 
+    SmallVector<GlobalVariable*, 8> globalvars;
 #ifdef USE_MCJIT
-    jl_gen_llvm_gv_array(shadow_module);
+    jl_gen_llvm_gv_array(shadow_module, globalvars);
     PM.run(*shadow_module);
 #else
-    jl_gen_llvm_gv_array(jl_Module);
+    jl_gen_llvm_gv_array(jl_Module, globalvars);
     PM.run(*jl_Module);
 #endif
+    for (SmallVectorImpl<GlobalVariable>::iterator *I = globalvars.begin(), *E = globalvars.end(); I != E; ++I) {
+        (*I)->eraseFromParent();
+    }
 }
 
 // aggregate of array metadata
@@ -492,10 +523,7 @@ static Type *NoopType;
 
 // --- utilities ---
 
-#define XSTR(x) #x
-#define MSTR(x) XSTR(x)
 extern "C" {
-    const char *jl_cpu_string = MSTR(JULIA_TARGET_ARCH);
     int globalUnique = 0;
 }
 
@@ -869,7 +897,7 @@ static void coverageVisitLine(std::string filename, int line)
 
 void write_log_data(logdata_t logData, const char *extension)
 {
-    std::string base = std::string(julia_home);
+    std::string base = std::string(jl_compileropts.julia_home);
     base = base + "/../share/julia/base/";
     logdata_t::iterator it = logData.begin();
     for (; it != logData.end(); it++) {
@@ -1269,6 +1297,10 @@ static void simple_escape_analysis(jl_value_t *expr, bool esc, jl_codectx_t *ctx
             simple_escape_analysis(jl_exprarg(e,0), esc, ctx);
             simple_escape_analysis(jl_exprarg(e,1), esc, ctx);
             simple_escape_analysis(jl_exprarg(e,2), esc, ctx);
+        }
+        else if (e->head == assign_sym) {
+            // don't consider assignment LHS as a variable "use"
+            simple_escape_analysis(jl_exprarg(e,1), esc, ctx);
         }
         else if (e->head != line_sym) {
             size_t elen = jl_array_dim0(e->args);
@@ -2742,6 +2774,8 @@ static void emit_assignment(jl_value_t *l, jl_value_t *r, jl_codectx_t *ctx)
         }
         else {
             rval = emit_expr(r, ctx, true);
+            if (!vi.used)  // don't actually do the assignment if the var is never read
+                return;
             // Make sure this is already boxed. If not, there was
             // something wrong in the earlier analysis as this should
             // have been alloca'd
@@ -3607,14 +3641,10 @@ static Function *emit_function(jl_lambda_info_t *lam, bool cstyle)
     else {
         m = shadow_module;
     }
-#ifndef LLVM35
-    funcName << ";";
-#endif
 #else
     m = jl_Module;
-    funcName << ";";
 #endif
-    funcName << globalUnique++;
+    funcName << "_" << globalUnique++;
 
     if (specsig) {
         std::vector<Type*> fsig(0);
@@ -4172,10 +4202,12 @@ static Function *emit_function(jl_lambda_info_t *lam, bool cstyle)
 static MDNode *tbaa_make_child( const char *name, MDNode *parent, bool isConstant=false )
 {
     MDNode *n = mbuilder->createTBAANode(name,parent,isConstant);
+#ifndef LLVM36
 #ifdef LLVM35
     n->setValueName( ValueName::Create(name));
 #else
     n->setValueName( ValueName::Create(name, name+strlen(name)));
+#endif
 #endif
     return n;
 }
@@ -4354,7 +4386,7 @@ static void init_julia_llvm_env(Module *m)
         Function::Create(FunctionType::get(T_void, false),
                          Function::ExternalLinkage,
                          "__stack_chk_fail", m);
-    //jl__stack_chk_fail->setDoesNotReturn();
+    jl__stack_chk_fail->setDoesNotReturn();
     add_named_global(jl__stack_chk_fail, (void*)&__stack_chk_fail);
 
     jltrue_var = global_to_llvm("jl_true", (void*)&jl_true, m);
@@ -4563,6 +4595,27 @@ static void init_julia_llvm_env(Module *m)
     resetstkoflw_func = Function::Create(FunctionType::get(T_void, false),
             Function::ExternalLinkage, "_resetstkoflw", m);
     add_named_global(resetstkoflw_func, (void*)&_resetstkoflw);
+#if defined(_CPU_X86_64_)
+#if defined(_COMPILER_MINGW_)
+    Function *chkstk_func = Function::Create(FunctionType::get(T_void, false),
+            Function::ExternalLinkage, "___chkstk_ms", m);
+    add_named_global(chkstk_func, (void*)&___chkstk_ms);
+#else
+    Function *chkstk_func = Function::Create(FunctionType::get(T_void, false),
+            Function::ExternalLinkage, "__chkstk", m);
+    add_named_global(chkstk_func, (void*)&__chkstk);
+#endif
+#else
+#if defined(_COMPILER_MINGW_)
+    Function *chkstk_func = Function::Create(FunctionType::get(T_void, false),
+            Function::ExternalLinkage, "_alloca", m);
+    add_named_global(chkstk_func, (void*)&_alloca);
+#else
+    Function *chkstk_func = Function::Create(FunctionType::get(T_void, false),
+            Function::ExternalLinkage, "_chkstk", m);
+    add_named_global(chkstk_func, (void*)&_chkstk);
+#endif
+#endif
 #endif
 
     std::vector<Type*> lhargs(0);
@@ -4816,7 +4869,6 @@ extern "C" void jl_init_codegen(void)
     jl_setup_module(engine_module,false);
 #endif
 
-
 #if !defined(LLVM_VERSION_MAJOR) || (LLVM_VERSION_MAJOR == 3 && LLVM_VERSION_MINOR == 0)
     jl_ExecutionEngine = EngineBuilder(m).setEngineKind(EngineKind::JIT).create();
 #ifdef JL_DEBUG_BUILD
@@ -4857,6 +4909,9 @@ extern "C" void jl_init_codegen(void)
 #ifdef V128_BUG
         ,"-avx"
 #endif
+#if defined(LLVM35) && defined(_OS_WINDOWS_)
+        ,"-disable-copyprop" // llvm bug 21743
+#endif
     };
     SmallVector<std::string, 4> MAttrs(mattr, mattr+2);
 #endif
@@ -4887,9 +4942,9 @@ extern "C" void jl_init_codegen(void)
             TheTriple,
             "",
 #if LLVM35
-            strcmp(jl_cpu_string,"native") ? jl_cpu_string : sys::getHostCPUName().data(),
+            strcmp(jl_compileropts.cpu_target,"native") ? jl_compileropts.cpu_target : sys::getHostCPUName().data(),
 #else
-            strcmp(jl_cpu_string,"native") ? jl_cpu_string : "",
+            strcmp(jl_compileropts.cpu_target,"native") ? jl_compileropts.cpu_target : "",
 #endif
             MAttrs);
     assert(jl_TargetMachine);

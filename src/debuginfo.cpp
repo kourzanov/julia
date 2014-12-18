@@ -33,6 +33,10 @@
 #include <llvm/Object/COFF.h>
 #endif
 
+#if defined(USE_MCJIT) && !defined(LLVM36) && defined(_OS_DARWIN_)
+#include "../deps/llvm-3.5.0/lib/ExecutionEngine/MCJIT/MCJIT.h"
+#endif
+
 #include "julia.h"
 #include "julia_internal.h"
 
@@ -66,6 +70,9 @@ struct FuncInfo {
 struct ObjectInfo {
     const object::ObjectFile* object;
     size_t size;
+#ifdef _OS_DARWIN_
+    const char *name;
+#endif
 };
 #endif
 
@@ -191,21 +198,21 @@ public:
     virtual void NotifyObjectEmitted(const ObjectImage &obj)
 #endif
     {
-        uint64_t SectAddr, Addr;
+        uint64_t Addr;
         uint64_t Size;
         object::SymbolRef::Type SymbolType;
-#ifndef _OS_LINUX_
 #ifdef LLVM36
         object::section_iterator Section = obj.section_begin();
         object::section_iterator EndSection = obj.section_end();
-        StringRef sName;
 #else
         object::section_iterator Section = obj.begin_sections();
         object::section_iterator EndSection = obj.end_sections();
+        bool isText;
 #endif
+#ifndef _OS_LINUX_
+        StringRef sName;
 #endif
 #ifdef _OS_WINDOWS_
-        StringRef Name;
         uint64_t SectionAddr;
         uint64_t SectionSize;
 #endif
@@ -215,28 +222,36 @@ public:
             sym_iter.getType(SymbolType);
             if (SymbolType != object::SymbolRef::ST_Function) continue;
             sym_iter.getSize(Size);
-            sym_iter.getAddress(SectAddr);
-#ifndef _OS_LINUX_
+            sym_iter.getAddress(Addr);
             sym_iter.getSection(Section);
             if (Section == EndSection) continue;
-            Section = Section->getRelocatedSection();
-            if (Section == EndSection) continue;
-#ifdef LLVM36
+#if defined(LLVM36)
             if (!Section->isText()) continue;
+#else
+            if (Section->isText(isText) || !isText) continue;
+#endif
+#ifdef _OS_DARWIN_
+#if defined(LLVM36)
             Section->getName(sName);
-            Addr = SectAddr + L.getSectionLoadAddress(sName);
+            Addr += L.getSectionLoadAddress(sName);
 #else
-            Addr = SectAddr;
+            sym_iter.getName(sName);
+            Addr = ((MCJIT*)jl_ExecutionEngine)->getSymbolAddress(sName, true);
+            if (!Addr && sName[0] == '_') {
+                sName = sName.substr(1);
+                Addr = ((MCJIT*)jl_ExecutionEngine)->getSymbolAddress(sName, true);
+            }
+            if (!Addr) continue;
 #endif
-#else
-            Addr = SectAddr;
-#endif
-#ifdef _OS_WINDOWS_
-            sym_iter.getName(Name);
+#elif defined(_OS_WINDOWS_)
             Section->getAddress(SectionAddr);
             Section->getSize(SectionSize);
+            sym_iter.getName(sName);
+#ifndef _CPU_X86_
+            if (sName[0] == '_') sName = sName.substr(1);
+#endif
             create_PRUNTIME_FUNCTION(
-                   (uint8_t*)(intptr_t)Addr, (size_t)Size, Name,
+                   (uint8_t*)(intptr_t)Addr, (size_t)Size, sName,
                    (uint8_t*)(intptr_t)SectionAddr, (size_t)SectionSize);
 #endif
             const object::ObjectFile *objfile =
@@ -245,7 +260,11 @@ public:
 #else
                 obj.getObjectFile();
 #endif
-            ObjectInfo tmp = {objfile, (size_t)Size};
+            ObjectInfo tmp = {objfile, (size_t)Size
+#ifdef _OS_DARWIN_
+                ,strdup(sName.data())
+#endif
+            };
             objectmap[Addr] = tmp;
         }
 #else //LLVM34
@@ -278,16 +297,19 @@ public:
 extern "C"
 const char *jl_demangle(const char *name)
 {
-    const char *start = name;
-    const char *end = start;
+    const char *start = name + 6;
+    const char *end = name + strlen(name);
     char *ret;
-    while ((*start++ != '_') && (*start != '\0'));
-    if (*name == '\0') goto done;
-    while ((*end++ != ';') && (*end != '\0'));
-    if (*name == '\0') goto done;
-    ret = (char*)malloc(end-start);
-    memcpy(ret,start,end-start-1);
-    ret[end-start-1] = '\0';
+    if (strncmp(name, "julia_", 6)) goto done;
+    if (*start == '\0') goto done;
+    while (*(--end) != '_') {
+        char c = *end;
+        if (c < '0' || c > '9') goto done;
+    }
+    if (end <= start) goto done;
+    ret = (char*)malloc(end-start+1);
+    memcpy(ret,start,end-start);
+    ret[end-start] = '\0';
     return ret;
  done:
     return strdup(name);
@@ -433,8 +455,6 @@ void jl_getDylibFunctionInfo(const char **name, size_t *line, const char **filen
         } else if (*fromC) {
             // No debug info, use dll name instead
             *filename = fname;
-        } else {
-            *filename = "";
         }
         jl_in_stackwalk = 0;
 #else // ifdef _OS_WINDOWS_
@@ -602,22 +622,26 @@ void jl_getFunctionInfo(const char **name, size_t *line, const char **filename, 
     std::map<size_t, ObjectInfo, revcomp> &objmap = jl_jit_events->getObjectMap();
     std::map<size_t, ObjectInfo, revcomp>::iterator it = objmap.lower_bound(pointer);
 
-    if (it == objmap.end() || (pointer - it->first) > it->second.size)
-        return jl_getDylibFunctionInfo(name,line,filename,pointer,fromC,skipC);
-
-#ifdef LLVM36
-    DIContext *context = DIContext::getDWARFContext(*it->second.object);
+    if (it != objmap.end() && (intptr_t)(*it).first + (*it).second.size > pointer) {
+#if defined(_OS_DARWIN_)
+        *name = jl_demangle((*it).second.name);
+        DIContext *context = NULL; // current versions of MCJIT can't handle MachO relocations
 #else
-    DIContext *context = DIContext::getDWARFContext(const_cast<object::ObjectFile*>(it->second.object));
+#ifdef LLVM36
+        DIContext *context = DIContext::getDWARFContext(*it->second.object);
+#else
+        DIContext *context = DIContext::getDWARFContext(const_cast<object::ObjectFile*>(it->second.object));
 #endif
-    lookup_pointer(context, name, line, filename, pointer, 1, fromC);
+#endif
+        lookup_pointer(context, name, line, filename, pointer, 1, fromC);
+        return;
+    }
 
 #else // !USE_MCJIT
-
 // Without MCJIT we use the FuncInfo structure containing address maps
     std::map<size_t, FuncInfo, revcomp> &info = jl_jit_events->getMap();
     std::map<size_t, FuncInfo, revcomp>::iterator it = info.lower_bound(pointer);
-    if (it != info.end() && (size_t)(*it).first + (*it).second.lengthAdr >= pointer) {
+    if (it != info.end() && (intptr_t)(*it).first + (*it).second.lengthAdr >= pointer) {
         // We do this to hide the jlcall wrappers when getting julia backtraces,
         // but it is still good to have them for regular lookup of C frames.
         if (skipC && (*it).second.lines.empty()) {
@@ -665,11 +689,10 @@ void jl_getFunctionInfo(const char **name, size_t *line, const char **filename, 
         if (*line == (size_t) -1) {
             *line = prev.Loc.getLine();
         }
-    }
-    else {
-        jl_getDylibFunctionInfo(name,line,filename,pointer,fromC,skipC);
+        return;
     }
 #endif // USE_MCJIT
+    jl_getDylibFunctionInfo(name,line,filename,pointer,fromC,skipC);
 }
 
 int jl_get_llvmf_info(size_t fptr, uint64_t *symsize,
@@ -683,22 +706,22 @@ int jl_get_llvmf_info(size_t fptr, uint64_t *symsize,
     std::map<size_t, FuncInfo, revcomp> &fmap = jl_jit_events->getMap();
     std::map<size_t, FuncInfo, revcomp>::iterator fit = fmap.find(fptr);
 
-    if (fit == fmap.end()) {
-        return 0;
+    if (fit != fmap.end()) {
+        *symsize = fit->second.lengthAdr;
+        *lines = fit->second.lines;
+        return 1;
     }
-    *symsize = fit->second.lengthAdr;
-    *lines = fit->second.lines;
-    return 1;
+    return 0;
 #else // MCJIT version
-    std::map<size_t, ObjectInfo, revcomp> objmap = jl_jit_events->getObjectMap();
+    std::map<size_t, ObjectInfo, revcomp> &objmap = jl_jit_events->getObjectMap();
     std::map<size_t, ObjectInfo, revcomp>::iterator fit = objmap.find(fptr);
 
-    if (fit == objmap.end()) {
-        return 0;
+    if (fit != objmap.end()) {
+        *symsize = fit->second.size;
+        *object = fit->second.object;
+        return 1;
     }
-    *symsize = fit->second.size;
-    *object = fit->second.object;
-    return 1;
+    return 0;
 #endif
 }
 

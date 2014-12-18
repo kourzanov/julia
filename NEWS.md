@@ -65,6 +65,8 @@ Compiler improvements
 
   * Accessing fields that are always initialized no longer produces undefined checks ([#8827]).
 
+  * `--depwarn={yes|no}` command line flag added to enable / disable syntax and method deprecation warnings ([#9294]).
+
 Library improvements
 --------------------
 
@@ -97,6 +99,8 @@ Library improvements
     `pq = PriorityQueue(KeyType, ValueType, OrderType)` otherwise ([#8011]).
 
   * Efficient `mean` and `median` for ranges ([#8089]).
+
+  * `graphemes(s)` returns an iterator over grapheme substrings of `s` ([#9261]).
 
   * Character predicates such as `islower()`, `isspace()`, etc. use utf8proc/libmojibake
     to provide uniform cross-platform behavior and up-to-date, locale-independent support
@@ -1130,4 +1134,6 @@ Too numerous to mention.
 [#9133]: https://github.com/JuliaLang/julia/issues/9133
 [#9144]: https://github.com/JuliaLang/julia/issues/9144
 [#9249]: https://github.com/JuliaLang/julia/issues/9249
+[#9261]: https://github.com/JuliaLang/julia/issues/9261
 [#9271]: https://github.com/JuliaLang/julia/issues/9271
+[#9294]: https://github.com/JuliaLang/julia/issues/9294

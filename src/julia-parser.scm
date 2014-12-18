@@ -501,17 +501,18 @@
 ;; --- misc ---
 
 (define (syntax-deprecation-warning s what instead)
-  (io.write
-   *stderr*
-   (string
-    #\newline "WARNING: deprecated syntax \"" what "\""
-    (if (eq? current-filename 'none)
-	""
-	(string " at " current-filename ":" (input-port-line (ts:port s))))
-    "."
-    (if (equal? instead "")
-	""
-	(string #\newline "Use \"" instead "\" instead." #\newline)))))
+  (if *depwarn*
+    (io.write
+     *stderr*
+     (string
+      #\newline "WARNING: deprecated syntax \"" what "\""
+      (if (eq? current-filename 'none)
+	  ""
+	  (string " at " current-filename ":" (input-port-line (ts:port s))))
+      "."
+      (if (equal? instead "")
+	  ""
+	  (string #\newline "Use \"" instead "\" instead." #\newline))))))
 
 ;; --- parser ---
 
@@ -1150,9 +1151,10 @@
 	 (take-token s)
 	 (cond
 	  ((eq? nxt 'end)
-	   (list* 'try try-block catchv catchb (if finalb
-						   (list finalb)
-						   '())))
+	   (list* 'try try-block catchv
+		  ;; default to empty catch block in `try ... end`
+		  (or catchb (if finalb #f '(block)))
+		  (if finalb (list finalb) '())))
 	  ((and (eq? nxt 'catch)
 		(not catchb))
 	   (let ((nl (memv (peek-token s) '(#\newline #\;))))

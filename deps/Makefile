@@ -279,6 +279,7 @@ else
 LLVM_FLAGS += --disable-threads
 endif # USE_INTEL_JITEVENTS
 
+ifeq ($(BUILD_LLDB),1)
 ifeq ($(USECLANG),1)
 LLVM_FLAGS += --enable-cxx11
 else
@@ -287,6 +288,7 @@ endif # USECLANG
 ifeq ($(LLDB_DISABLE_PYTHON),1)
 LLVM_CXXFLAGS += -DLLDB_DISABLE_PYTHON
 endif # LLDB_DISABLE_PYTHON
+endif # BUILD_LLDB
 
 ifeq ($(ARCH), ppc64)
 LLVM_CXXFLAGS += -mminimal-toc
@@ -548,6 +550,11 @@ check-llvm: llvm-$(LLVM_VER)/build_$(LLVM_BUILDTYPE)/checked
 install-llvm: $(LLVM_OBJ_TARGET)
 #todo: LLVM make check target is broken on julia.mit.edu (and really slow elsewhere)
 
+update-llvm:
+	(cd llvm-$(LLVM_VER); git pull --ff-only)
+	([ -d llvm-$(LLVM_VER)/tools/clang ] && (cd llvm-$(LLVM_VER)/tools/clang; git pull --ff-only))
+	([ -d llvm-$(LLVM_VER)/projects/compiler-rt ] && (cd llvm-$(LLVM_VER)/projects/compiler-rt; git pull --ff-only))
+	([ -d llvm-$(LLVM_VER)/tools/lldb ] && (cd llvm-$(LLVM_VER)/tools/lldb; git pull --ff-only))
 
 ## LIBUV ##
 
@@ -1367,6 +1374,7 @@ install-mojibake: $(MOJIBAKE_OBJ_TARGET)
 SUITESPARSE_OBJ_SOURCE = SuiteSparse-$(SUITESPARSE_VER)/UMFPACK/Lib/libumfpack.a
 SUITESPARSE_OBJ_TARGET = $(build_shlibdir)/libspqr.$(SHLIB_EXT)
 
+
 ifeq ($(USE_BLAS64), 1)
 UMFPACK_CONFIG = -DLONGBLAS='long long'
 CHOLMOD_CONFIG = -DLONGBLAS='long long'
@@ -1813,4 +1821,4 @@ install-libgit2: $(LIBGIT2_OBJ_TARGET)
 
 .PHONY: default compile install cleanall distcleanall \
 	get-* configure-* compile-* check-* install-* \
-	clean-* distclean-* reinstall-*
+	clean-* distclean-* reinstall-* update-llvm
