@@ -967,8 +967,8 @@ end
 
 # the entry point for julia worker processes. does not return.
 # argument is descriptor to write listening port # to.
-start_worker(ci) = start_worker(STDOUT,ci)
-function start_worker(out::IO,conn_info::Array)
+start_worker() = start_worker(STDOUT)
+function start_worker(out::IO)
     # we only explicitly monitor worker STDOUT on the console, so redirect
     # stderr to stdout so we can see the output.
     # at some point we might want some or all worker output to go to log
@@ -985,19 +985,10 @@ function start_worker(out::IO,conn_info::Array)
         sock = listen(LPROC.bind_port)
     end
     sock.ccb = accept_handler
-    if length(conn_info)>0
-      println(out,"ncpus:$(1+length(conn_info))")
-    end
     print(out, "julia_worker:")  # print header
     print(out, "$(dec(LPROC.bind_port))#") # print port
     print(out, LPROC.bind_addr)
     print(out, '\n')
-    for (a,p) in conn_info
-      print(out, "julia_worker:")  # print header
-      print(out, "$(dec(p))#") # print port
-      print(out, a)
-      print(out, '\n')
-    end
     flush(out)
     # close STDIN; workers will not use it
     #close(STDIN)
@@ -1158,37 +1149,13 @@ end
 
 function read_worker_host_port(io::IO)
     io.line_buffered = true
-    ncpus = -1
-    while ncpus < 1
-        line = readline(io)
-    	if line==""
-		ncpus=-1
-		break
-	end
-	# legacy support
-        bind_addr, port = parse_connection_info(line)
-	# was there only one line (and no ncpus)?
-	if bind_addr != ""
-	    return [(bind_addr,port)]
-	end
-	ncpus = parse_ncpus(line)
-    end
-    if ncpus < 1
-    	return [("",ncpus)]
-    end
-
-    i=0
-    r=[]
-    while i<ncpus
-        line = readline(io)
-        bind_addr, port = parse_connection_info(line)
+    while true
+        conninfo = readline(io)
+        bind_addr, port = parse_connection_info(conninfo)
         if bind_addr != ""
-            r=[r,(bind_addr, port)]
-	    i+=1
+            return bind_addr, port
         end
     end
-    #println("parsed $ncpus,$r")
-    return r
 end
 
 function parse_connection_info(str)
@@ -1281,6 +1248,19 @@ function connect(manager::ClusterManager, pid::Int, config::WorkerConfig)
 
     tunnel = get(config.tunnel, false)
 
+    s = split(pubhost,'@')
+    user = ""
+    if length(s) > 1
+        user = s[1]
+        pubhost = s[2]
+    else
+        if haskey(ENV, "USER")
+            user = ENV["USER"]
+        elseif tunnel
+            error("USER must be specified either in the environment or as part of the hostname when tunnel option is used")
+        end
+    end
+
     if tunnel
         sshflags = get(config.sshflags)
         (s, bind_addr) = connect_to_worker(pubhost, bind_addr, port, user, sshflags)
@@ -1328,7 +1308,6 @@ function connect_to_worker(host::AbstractString, port::Integer)
     else
         s = connect(host, uint16(port))
     end
-    if localp>=10000 error("unable to assign a local tunnel port between 9201 and 10000") end
 
     # Avoid calling getaddrinfo if possible - involves a DNS lookup
     # host may be a stringified ipv4 / ipv6 address or a dns name
@@ -1421,10 +1400,10 @@ function launch_on_machine(manager::SSHManager, machine, cnt, params, launched, 
 
     host = machine_def[1]
 
+    # Build up the ssh command
+    cmd = `cd $dir && $exename $exeflags` # launch julia
+    cmd = `sh -l -c $(shell_escape(cmd))` # shell to launch under
     cmd = `ssh -T -a -x -o ClearAllForwardings=yes -n $sshflags $host $(shell_escape(cmd))` # use ssh to remote launch
-    push!(hosts,m)
-    #println(hosts)
-   end
 
     # launch
     io, pobj = open(detach(cmd), "r")
