@@ -85,6 +85,8 @@ export
     RoundDown,
     RoundingMode,
     RoundNearest,
+    RoundNearestTiesAway,
+    RoundNearestTiesUp,
     RoundToZero,
     RoundUp,
     Set,
@@ -117,6 +119,7 @@ export
     WeakKeyDict,
     WeakRef,
     Woodbury,
+    WorkerConfig,
     WString,
     Zip,
 

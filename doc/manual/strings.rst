@@ -1,5 +1,7 @@
 .. _man-strings:
 
+.. currentmodule:: Base
+
 *********
  Strings
 *********
@@ -95,9 +97,9 @@ convert an integer value back to a ``Char`` just as easily:
     'x'
 
 Not all integer values are valid Unicode code points, but for
-performance, the ``char`` conversion does not check that every character
+performance, the :func:`char` conversion does not check that every character
 value is valid. If you want to check that each converted value is a
-valid code point, use the ``is_valid_char`` function:
+valid code point, use the :func:`is_valid_char` function:
 
 .. doctest::
 
@@ -386,7 +388,7 @@ One of the most common and useful string operations is concatenation:
     "Hello, world.\n"
 
 Constructing strings like this can become a bit cumbersome, however. To
-reduce the need for these verbose calls to ``string``, Julia allows
+reduce the need for these verbose calls to :func:`string`, Julia allows
 interpolation into string literals using ``$``, as in Perl:
 
 .. doctest::
@@ -464,7 +466,7 @@ operators:
     true
 
 You can search for the index of a particular character using the
-``search`` function:
+:func:`search` function:
 
 .. doctest::
 
@@ -491,12 +493,15 @@ a third argument:
     julia> search("xylophone", 'o', 8)
     0
 
-Another handy string function is ``repeat``:
+Two other handy string functions are :func:`repeat` and :func:`join`:
 
 .. doctest::
 
     julia> repeat(".:Z:.", 10)
     ".:Z:..:Z:..:Z:..:Z:..:Z:..:Z:..:Z:..:Z:..:Z:..:Z:."
+
+    julia> join(["apples", "bananas", "pineapples"], ", ", " and ")
+    "apples, bananas and pineapples"
 
 Some other useful functions include:
 
@@ -553,7 +558,7 @@ any options turned on just uses ``r"..."``:
     julia> typeof(ans)
     Regex (constructor with 3 methods)
 
-To check if a regex matches a string, use the ``ismatch`` function:
+To check if a regex matches a string, use the :func:`ismatch` function:
 
 .. doctest::
 
@@ -567,7 +572,7 @@ As one can see here, ``ismatch`` simply returns true or false,
 indicating whether the given regex matches the string or not. Commonly,
 however, one wants to know not just whether a string matched, but also
 *how* it matched. To capture this information about a match, use the
-``match`` function instead:
+:func:`match` function instead:
 
 .. doctest::
 

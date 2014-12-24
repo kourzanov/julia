@@ -266,7 +266,11 @@ static GlobalVariable *jlexe_var;
 static GlobalVariable *jldll_var;
 #if defined(_CPU_X86_64_)
 #ifdef USE_MCJIT
-extern RTDyldMemoryManager* createRTDyldMemoryManagerWin(RTDyldMemoryManager *MM);
+#if LLVM36
+extern std::unique_ptr<RTDyldMemoryManager> createRTDyldMemoryManagerWin(RTDyldMemoryManager *MM);
+#else
+RTDyldMemoryManager* createRTDyldMemoryManagerWin(RTDyldMemoryManager *MM);
+#endif
 #else
 extern JITMemoryManager* createJITMemoryManagerWin();
 #endif
@@ -649,9 +653,9 @@ extern "C" void jl_generate_fptr(jl_function_t *f)
             Module *m = new Module("julia", jl_LLVMContext);
             jl_setup_module(m,true);
             FunctionMover mover(m,shadow_module);
-            li->functionObject = MapValue((Function*)li->functionObject,mover.VMap,RF_None,NULL,&mover);
+            li->functionObject = mover.CloneFunction((Function*)li->functionObject);
             if (li->cFunctionObject != NULL)
-                li->cFunctionObject = MapValue((Function*)li->cFunctionObject,mover.VMap,RF_None,NULL,&mover);
+                li->cFunctionObject = mover.CloneFunction((Function*)li->cFunctionObject);
         }
         #endif
 
@@ -3681,12 +3685,12 @@ static Function *emit_function(jl_lambda_info_t *lam, bool cstyle)
     if (jlrettype == (jl_value_t*)jl_bottom_type)
         f->setDoesNotReturn();
 #if defined(_OS_WINDOWS_) && !defined(_CPU_X86_64_)
-    // tell Win32 to realign the stack to the next 8-byte boundary
+    // tell Win32 to realign the stack to the next 16-byte boundary
     // upon entry to any function. This achieves compatibility
-    // with both MinGW-GCC (which assumes an 8-byte-aligned stack) and
-    // Windows (which uses a 2-byte-aligned stack)
+    // with both MinGW-GCC (which assumes an 16-byte-aligned stack) and
+    // i686 Windows (which uses a 4-byte-aligned stack)
     AttrBuilder *attr = new AttrBuilder();
-    attr->addStackAlignmentAttr(8);
+    attr->addStackAlignmentAttr(16);
 #if LLVM32 && !LLVM33
     f->addAttribute(Attributes::FunctionIndex,
         Attributes::get(f->getContext(),*attr));
@@ -4129,12 +4133,12 @@ static Function *emit_function(jl_lambda_info_t *lam, bool cstyle)
         else {
             prevlabel = false;
         }
-	if (do_malloc_log && lno != prevlno) {
-	    // Check memory allocation only after finishing a line
-	    if (prevlno != -1)
-		mallocVisitLine(filename, prevlno);
-	    prevlno = lno;
-	}
+        if (do_malloc_log && lno != prevlno) {
+            // Check memory allocation only after finishing a line
+            if (prevlno != -1)
+                mallocVisitLine(filename, prevlno);
+            prevlno = lno;
+        }
         if (jl_is_expr(stmt) && ((jl_expr_t*)stmt)->head == return_sym) {
             jl_expr_t *ex = (jl_expr_t*)stmt;
             Value *retval;
@@ -4155,8 +4159,8 @@ static Function *emit_function(jl_lambda_info_t *lam, bool cstyle)
             builder.CreateStore(builder.CreateBitCast(builder.CreateLoad(gcpop, false), jl_ppvalue_llvmt),
                                 prepare_global(jlpgcstack_var));
 #endif
-	    if (do_malloc_log && lno != -1)
-		mallocVisitLine(filename, lno);
+            if (do_malloc_log && lno != -1)
+                mallocVisitLine(filename, lno);
             if (builder.GetInsertBlock()->getTerminator() == NULL) {
                 if (retty == T_void)
                     builder.CreateRetVoid();
@@ -4712,9 +4716,9 @@ static void init_julia_llvm_env(Module *m)
     add_named_global(jlgetnthfieldchecked_func, (void*)*jl_get_nth_field_checked);
 
     diff_gc_total_bytes_func =
-	Function::Create(FunctionType::get(T_int64, false),
-			 Function::ExternalLinkage,
-			 "diff_gc_total_bytes", m);
+        Function::Create(FunctionType::get(T_int64, false),
+                         Function::ExternalLinkage,
+                         "diff_gc_total_bytes", m);
     add_named_global(diff_gc_total_bytes_func, (void*)*diff_gc_total_bytes);
 
     std::vector<Type *> execpoint_args(0);
@@ -4924,7 +4928,8 @@ extern "C" void jl_init_codegen(void)
     eb  ->setEngineKind(EngineKind::JIT)
 #if defined(_OS_WINDOWS_) && defined(_CPU_X86_64_)
 #if defined(USE_MCJIT)
-        .setMCJITMemoryManager(createRTDyldMemoryManagerWin(new SectionMemoryManager()))
+        .setMCJITMemoryManager(createRTDyldMemoryManagerWin(
+                new SectionMemoryManager()))
 #else
         .setJITMemoryManager(createJITMemoryManagerWin())
 #endif

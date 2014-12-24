@@ -267,7 +267,7 @@ ifeq ($(OS),WINNT)
 endif	
 	$(INSTALL_F) $(build_includedir)/uv* $(DESTDIR)$(includedir)/julia
 endif
-	$(INSTALL_F) src/julia.h src/options.h src/support/*.h $(DESTDIR)$(includedir)/julia
+	$(INSTALL_F) src/julia.h src/julia_version.h src/options.h src/support/*.h $(DESTDIR)$(includedir)/julia
 	# Copy system image
 	$(INSTALL_F) $(build_private_libdir)/sys.ji $(DESTDIR)$(private_libdir)
 	$(INSTALL_M) $(build_private_libdir)/sys.$(SHLIB_EXT) $(DESTDIR)$(private_libdir)
@@ -492,4 +492,4 @@ endif
 	7z e -y mingw-libexpat.cpio && \
 	7z x -y mingw-zlib.rpm -so > mingw-zlib.cpio && \
 	7z e -y mingw-zlib.cpio && \
-	$(JLDOWNLOAD) PortableGit.7z https://github.com/msysgit/msysgit/releases/download/Git-1.9.4-preview20140611/PortableGit-1.9.4-preview20140611.7z
+	$(JLDOWNLOAD) PortableGit.7z https://github.com/msysgit/msysgit/releases/download/Git-1.9.5-preview20141217/PortableGit-1.9.5-preview20141217.7z

@@ -1706,7 +1706,7 @@ GIT_SOURCE = git-$(GIT_VER)/src/git
 GIT_TARGET = $(build_prefix)/git
 
 git-$(GIT_VER).tar.gz:
-	$(JLDOWNLOAD) $@ http://git-core.googlecode.com/files/$@
+	$(JLDOWNLOAD) $@ https://www.kernel.org/pub/software/scm/git/git-$(GIT_VER).tar.gz
 git-$(GIT_VER)/configure: git-$(GIT_VER).tar.gz
 	$(JLCHECKSUM) $<
 	$(TAR) zxf $<
@@ -1788,6 +1788,7 @@ ifeq ($(BUILD_OS),WINNT)
 else
 	$(TAR) zxf $<
 endif
+	cd libgit2-$(LIBGIT2_VER) && patch -p1 < ../libgit2-0.21.3-mingw.patch
 	touch -c $@
 libgit2-$(LIBGIT2_VER)/build/Makefile: libgit2-$(LIBGIT2_VER)/CMakeLists.txt
 	mkdir -p libgit2-$(LIBGIT2_VER)/build

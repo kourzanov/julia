@@ -46,6 +46,10 @@ include("int.jl")
 include("operators.jl")
 include("pointer.jl")
 
+# rounding utilities
+include("rounding.jl")
+importall .Rounding
+
 include("float.jl")
 include("complex.jl")
 include("rational.jl")
@@ -138,16 +142,6 @@ include("multidimensional.jl")
 
 include("primes.jl")
 
-# concurrency and parallelism
-include("serialize.jl")
-include("multi.jl")
-
-# Polling (requires multi.jl)
-include("poll.jl")
-
-# code loading
-include("loading.jl")
-
 begin
     SOURCE_PATH = ""
     include = function(path)
@@ -172,10 +166,6 @@ include("sort.jl")
 importall .Sort
 include("combinatorics.jl")
 
-# rounding utilities
-include("rounding.jl")
-importall .Rounding
-
 # version
 include("version.jl")
 
@@ -195,6 +185,23 @@ include("hashing2.jl")
 include("dSFMT.jl")
 include("random.jl")
 importall .Random
+
+# (s)printf macros
+include("printf.jl")
+importall .Printf
+
+# nullable types
+include("nullable.jl")
+
+# concurrency and parallelism
+include("serialize.jl")
+include("multi.jl")
+
+# code loading
+include("loading.jl")
+
+# Polling (requires multi.jl)
+include("poll.jl")
 
 # distributed arrays and memory-mapped arrays
 include("darray.jl")
@@ -228,10 +235,6 @@ include("markdown/Markdown.jl")
 include("docs.jl")
 using .Docs
 using .Markdown
-
-# (s)printf macros
-include("printf.jl")
-importall .Printf
 
 # misc useful functions & macros
 include("util.jl")
@@ -282,9 +285,6 @@ importall .Profile
 # dates
 include("Dates.jl")
 import .Dates: Date, DateTime, now
-
-# nullable types
-include("nullable.jl")
 
 # Some basic documentation
 include("basedocs.jl")
