@@ -493,6 +493,27 @@ a third argument:
     julia> search("xylophone", 'o', 8)
     0
 
+You can use the :func:`contains` function to check if a substring is
+contained in a string:
+
+.. doctest::
+
+    julia> contains("Hello, world.", "world")
+    true
+
+    julia> contains("Xylophon", "o")
+    true
+
+    julia> contains("Xylophon", "a")
+    false
+
+    julia> contains("Xylophon", 'o')
+    ERROR: `contains` has no method matching contains(::ASCIIString, ::Char)
+
+The last error is because ``'o'`` is a character literal, and :func:`contains`
+is a generic function that looks for subsequences. To look for an element in a
+sequence, you must use the :func:`in` function instead.
+
 Two other handy string functions are :func:`repeat` and :func:`join`:
 
 .. doctest::
