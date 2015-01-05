@@ -111,7 +111,7 @@ diagnose problems and improve the performance of your code:
   suspect a type problem.  You can also start Julia with the
   ``--track-allocation=user`` option and examine the resulting
   ``*.mem`` files to see information about where those allocations
-  occur.  See :ref:`stdlib-track-allocation`.
+  occur.  See :ref:`man-track-allocation`.
 
 - ``@code_warntype`` generates a representation of your code that can
   be helpful in finding expressions that result in type uncertainty.
@@ -289,7 +289,7 @@ For example, the following contrived function returns an array of a
 randomly-chosen type::
 
     function strange_twos(n)
-        a = Array(randbool() ? Int64 : Float64, n)
+        a = Array(rand(Bool) ? Int64 : Float64, n)
         for i = 1:n
             a[i] = 2
         end
@@ -305,7 +305,7 @@ This should be written as::
     end
 
     function strange_twos(n)
-        a = Array(randbool() ? Int64 : Float64, n)
+        a = Array(rand(Bool) ? Int64 : Float64, n)
         fill_twos!(a)
         return a
     end
@@ -620,17 +620,15 @@ properties:
 -  In some simple cases, for example with 2-3 arrays accessed in a loop, the
    LLVM auto-vectorization may kick in automatically, leading to no further
    speedup with :obj:`@simd`.
-   speedup with ``@simd``.
-
-.. raw:: html
-    <style> .red {color:red} </style>
 
 .. _man-code-warntype:
 
-``@code_warntype``
-------------------
+:obj:`@code_warntype`
+---------------------
 
-The macro ``@code_warntype`` (or its function variant) can sometimes be helpful in diagnosing type-related problems.  Here's an example::
+The macro :obj:`@code_warntype` (or its function variant :func:`code_warntype`)
+can sometimes be helpful in diagnosing type-related problems. Here's an
+example::
 
     pos(x) = x < 0 ? 0 : x
 
@@ -664,20 +662,21 @@ The macro ``@code_warntype`` (or its function variant) can sometimes be helpful 
           return (GetfieldNode(Base.Math,:nan_dom_err,Any))((top(ccall))($(Expr(:call1, :(top(tuple)), "sin", GetfieldNode(Base.Math,:libm,Any))),Float64,$(Expr(:call1, :(top(tuple)), :Float64)),_var2::Float64,0)::Float64,_var2::Float64)::Float64
       end::Float64
 
-Interpreting the output of ``@code_warntype``, like that of its cousins
-``@code_lowered``, ``@code_typed``, ``@code_llvm``, and
-``@code_native``, takes a little practice. Your
-code is being presented in form that has been partially-digested on
+Interpreting the output of :obj:`@code_warntype`, like that of its cousins
+:obj:`@code_lowered`, :obj:`@code_typed`, :obj:`@code_llvm`, and
+:obj:`@code_native`, takes a little practice. Your
+code is being presented in form that has been partially digested on
 its way to generating compiled machine code.  Most of the expressions
 are annotated by a type, indicated by the ``::T`` (where ``T`` might
-be ``Float64``, for example). The most important characteristic of
-``@code_warntype`` is that non-concrete types are displayed in red; in
+be :obj:`Float64`, for example). The most important characteristic of
+:obj:`@code_warntype` is that non-concrete types are displayed in red; in
 the above example, such output is shown in all-caps.
 
-The top part of the output summarizes the type information for the different variables internal to the function. You can see that ``y``, one
-of the variables you created, is a ``Union(Int64,Float64)``, due to
-the type-instability of ``pos``.  There is another variable,
-``_var4``, which you can see also has the same type.
+The top part of the output summarizes the type information for the different
+variables internal to the function. You can see that ``y``, one of the
+variables you created, is a ``Union(Int64,Float64)``, due to the
+type-instability of ``pos``.  There is another variable, ``_var4``, which you
+can see also has the same type.
 
 The next lines represent the body of ``f``. The lines starting with a
 number followed by a colon (``1:``, ``2:``) are labels, and represent
@@ -686,20 +685,20 @@ you can see that ``pos`` has been *inlined* into ``f``---everything
 before ``2:`` comes from code defined in ``pos``.
 
 Starting at ``2:``, the variable ``y`` is defined, and again annotated
-as a ``Union`` type.  Next, we see that the compiler created the
+as a :obj:`Union` type.  Next, we see that the compiler created the
 temporary variable ``_var1`` to hold the result of ``y*x``. Because
-a ``Float64`` times *either* an ``Int64`` or ``Float64`` yields a ``Float64``,
-all type-instability ends here.  The net result is that
-``f(x::Float64)`` will not be type-unstable in its output, even if
-some of the intermediate computations are type-unstable.
+a :obj:`Float64` times *either* an :obj:`Int64` or :obj:`Float64` yields a
+:obj:`Float64`, all type-instability ends here. The net result is that
+``f(x::Float64)`` will not be type-unstable in its output, even if some of the
+intermediate computations are type-unstable.
 
-How you use this information is up to you.  Obviously, it would be far
+How you use this information is up to you. Obviously, it would be far
 and away best to fix ``pos`` to be type-stable: if you did so, all of
 the variables in ``f`` would be concrete, and its performance would be
 optimal.  However, there are circumstances where this kind of
 *ephemeral* type instability might not matter too much: for example,
 if ``pos`` is never used in isolation, the fact that ``f``\'s output
-is type-stable (for ``Float64`` inputs) will shield later code from
+is type-stable (for :obj:`Float64` inputs) will shield later code from
 the propagating effects of type instability.  This is particularly
 relevant in cases where fixing the type instability is difficult or
 impossible: for example, currently it's not possible to infer the
@@ -707,28 +706,29 @@ return type of an anonymous function.  In such cases, the tips above
 (e.g., adding type annotations and/or breaking up functions) are your
 best tools to contain the "damage" from type instability.
 
-Here is a table which can help you interpret expressions marked as
+The following examples may help you interpret expressions marked as
 containing non-leaf types:
 
-.. |I0| replace:: Interpretation
-.. |F0| replace:: Possible fix
-.. |I1| replace:: Function with unstable return type
-.. |F1| replace:: Make the return value type-stable, even if you have to annotate it
-.. |I2| replace:: Call to a type-unstable function
-.. |F2| replace:: Fix the function, or annotate the return value
-.. |I3| replace:: Accessing elements of poorly-typed arrays
-.. |F3| replace:: Use arrays with better-defined types, or annotate the type of individual element accesses
-.. |I4| replace:: Getting a field that is of non-leaf type. In this case, ``ArrayContainer`` had a field ``data::Array{T}``. But ``Array`` needs the dimension ``N``, too.
-.. |F4| replace:: Use concrete types like ``Array{T,3}`` or ``Array{T,N}``, where ``N`` is now a parameter of ``ArrayContainer``
+- Function body ending in ``end::Union(T1,T2))``
 
-+-------------------------------------------------------------------------+------+------+
-|  Marked expression                                                      | |I0| | |F0| |
-+=========================================================================+======+======+
-| Function ending in ``end::Union(T1,T2)))``                              | |I1| | |F1| |
-+-------------------------------------------------------------------------+------+------+
-| ``f(x::T)::Union(T1,T2)``                                               | |I2| | |F2| |
-+-------------------------------------------------------------------------+------+------+
-| ``(top(arrayref))(A::Array{Any,1},1)::Any``                             | |I3| | |F3| |
-+-------------------------------------------------------------------------+------+------+
-| ``(top(getfield))(A::ArrayContainer{Float64},:data)::Array{Float64,N}`` | |I4| | |F4| |
-+-------------------------------------------------------------------------+------+------+
+  + Interpretation: function with unstable return type
+
+  + Suggestion: make the return value type-stable, even if you have to annotate it
+
+- ``f(x::T)::Union(T1,T2)``
+
+  + Interpretation: call to a type-unstable function
+
+  + Suggestion: fix the function, or if necessary annotate the return value
+
+- ``(top(arrayref))(A::Array{Any,1},1)::Any``
+
+  + Interpretation: accessing elements of poorly-typed arrays
+
+  + Suggestion: use arrays with better-defined types, or if necessary annotate the type of individual element accesses
+
+- ``(top(getfield))(A::ArrayContainer{Float64},:data)::Array{Float64,N}``
+
+  + Interpretation: getting a field that is of non-leaf type. In this case, ``ArrayContainer`` had a field ``data::Array{T}``. But ``Array`` needs the dimension ``N``, too, to be a concrete type.
+
+  + Suggestion: use concrete types like ``Array{T,3}`` or ``Array{T,N}``, where ``N`` is now a parameter of ``ArrayContainer``

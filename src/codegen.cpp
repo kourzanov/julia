@@ -244,7 +244,6 @@ static GlobalVariable *jlundeferr_var;
 static GlobalVariable *jldomerr_var;
 static GlobalVariable *jlovferr_var;
 static GlobalVariable *jlinexacterr_var;
-static GlobalVariable *jlboundserr_var;
 static GlobalVariable *jlstderr_var;
 static GlobalVariable *jlRTLD_DEFAULT_var;
 #ifdef _OS_WINDOWS_
@@ -262,6 +261,10 @@ static Function *jlthrow_line_func;
 static Function *jlerror_func;
 static Function *jltypeerror_func;
 static Function *jlundefvarerror_func;
+static Function *jlboundserror_func;
+static Function *jluboundserror_func;
+static Function *jlvboundserror_func;
+static Function *jlboundserrorv_func;
 static Function *jlcheckassign_func;
 static Function *jldeclareconst_func;
 static Function *jltopeval_func;
@@ -877,11 +880,12 @@ static void coverageVisitLine(std::string filename, int line)
     std::vector<GlobalVariable*> &vec = coverageData[filename];
     if (vec.size() <= (size_t)line)
         vec.resize(line+1, NULL);
-    if (vec[line] == NULL)
+    if (vec[line] == NULL) {
         vec[line] = addComdat(new GlobalVariable(*jl_Module, T_int64, false,
                                                  GlobalVariable::InternalLinkage,
                                                  ConstantInt::get(T_int64,0), "lcnt"));
-    GlobalVariable *v = vec[line];
+    }
+    GlobalVariable *v = prepare_global(vec[line]);
     builder.CreateStore(builder.CreateAdd(builder.CreateLoad(v),
                                           ConstantInt::get(T_int64,1)),
                         v);
@@ -957,11 +961,12 @@ static void mallocVisitLine(std::string filename, int line)
     std::vector<GlobalVariable*> &vec = mallocData[filename];
     if (vec.size() <= (size_t)line)
         vec.resize(line+1, NULL);
-    if (vec[line] == NULL)
+    if (vec[line] == NULL) {
         vec[line] = addComdat(new GlobalVariable(*jl_Module, T_int64, false,
                                                  GlobalVariable::InternalLinkage,
                                                  ConstantInt::get(T_int64,0), "bytecnt"));
-    GlobalVariable *v = vec[line];
+    }
+    GlobalVariable *v = prepare_global(vec[line]);
     builder.CreateStore(builder.CreateAdd(builder.CreateLoad(v, true),
                                           builder.CreateCall(prepare_call(diff_gc_total_bytes_func))),
                         v, true);
@@ -1930,7 +1935,8 @@ static Value *emit_known_call(jl_value_t *ff, jl_value_t **args, size_t nargs,
                 Value *valen = emit_n_varargs(ctx);
                 Value *idx = emit_unbox(T_size,
                                         emit_unboxed(args[2], ctx),ity);
-                idx = emit_bounds_check(idx, valen, ctx);
+                idx = emit_bounds_check(builder.CreateGEP(ctx->argArray, ConstantInt::get(T_size, ctx->nReqArgs)),
+                        (jl_value_t*)jl_any_type, idx, valen, ctx);
                 idx = builder.CreateAdd(idx, ConstantInt::get(T_size, ctx->nReqArgs));
                 JL_GC_POP();
                 return tbaa_decorate(tbaa_user, builder.
@@ -1948,9 +1954,21 @@ static Value *emit_known_call(jl_value_t *ff, jl_value_t **args, size_t nargs,
                     return emit_tupleref(arg1,ConstantInt::get(T_size,idx),tty,ctx);
                 }
                 if (idx==0 || (!isseqt && idx > tlen)) {
-                    builder.CreateCall2(prepare_call(jlthrow_line_func),
-                                        tbaa_decorate(tbaa_const, builder.CreateLoad(prepare_global(jlboundserr_var))),
-                                        ConstantInt::get(T_int32, ctx->lineno));
+                    // known to be out of bounds
+                    if (arg1->getType() != jl_pvalue_llvmt) {
+                        Value *tmp = builder.CreateAlloca(arg1->getType());
+                        builder.CreateStore(arg1, tmp);
+                        jl_add_linfo_root(ctx->linfo, tty);
+                        builder.CreateCall3(prepare_call(jluboundserror_func),
+                                            builder.CreatePointerCast(tmp, T_pint8),
+                                            literal_pointer_val(tty),
+                                            ConstantInt::get(T_size, idx));
+                    }
+                    else {
+                        builder.CreateCall2(prepare_call(jlboundserror_func),
+                                            arg1,
+                                            ConstantInt::get(T_size, idx));
+                    }
                     JL_GC_POP();
                     return V_null;
                 }
@@ -1958,7 +1976,12 @@ static Value *emit_known_call(jl_value_t *ff, jl_value_t **args, size_t nargs,
             Value *tlen = emit_tuplelen(arg1,tty);
             Value *idx = emit_unbox(T_size,
                                     emit_unboxed(args[2], ctx), ity);
-            emit_bounds_check(idx, tlen, ctx);
+            bool unbox = false;
+            if (arg1->getType() != jl_pvalue_llvmt) {
+                unbox = true;
+                jl_add_linfo_root(ctx->linfo, tty);
+            }
+            emit_bounds_check(arg1, unbox ? tty : NULL, idx, tlen, ctx);
             JL_GC_POP();
             return emit_tupleref(arg1,idx,tty,ctx);
         }
@@ -1966,7 +1989,7 @@ static Value *emit_known_call(jl_value_t *ff, jl_value_t **args, size_t nargs,
     else if (f->fptr == &jl_f_tuple) {
         if (nargs == 0) {
             JL_GC_POP();
-            return literal_pointer_val((jl_value_t*)jl_null);
+            return tbaa_decorate(tbaa_const, builder.CreateLoad(prepare_global(jlnull_var)));
         }
         size_t i;
         for(i=0; i < nargs; i++) {
@@ -2229,7 +2252,7 @@ static Value *emit_known_call(jl_value_t *ff, jl_value_t **args, size_t nargs,
                 Type *llvm_st = strct->getType();
                 if (llvm_st == jl_pvalue_llvmt) {
                     if (is_structtype_all_pointers(stt)) {
-                        idx = emit_bounds_check(idx, ConstantInt::get(T_size, nfields), ctx);
+                        idx = emit_bounds_check(strct, NULL, idx, ConstantInt::get(T_size, nfields), ctx);
                         Value *fld =
                             tbaa_decorate(tbaa_user, builder.
                             CreateLoad(builder.
@@ -2245,7 +2268,7 @@ static Value *emit_known_call(jl_value_t *ff, jl_value_t **args, size_t nargs,
                     else if (is_tupletype_homogeneous(stt->types)) {
                         assert(nfields > 0); // nf==0 trapped by all_pointers case
                         jl_value_t *jt = jl_t0(stt->types);
-                        idx = emit_bounds_check(idx, ConstantInt::get(T_size, nfields), ctx);
+                        idx = emit_bounds_check(strct, NULL, idx, ConstantInt::get(T_size, nfields), ctx);
                         Value *ptr = data_pointer(strct);
                         JL_GC_POP();
                         return typed_load(ptr, idx, jt, ctx, stt->mutabl ? tbaa_user : tbaa_immut);
@@ -2263,7 +2286,8 @@ static Value *emit_known_call(jl_value_t *ff, jl_value_t **args, size_t nargs,
                     // frobbing the stack
                     Value *fld;
                     if (nfields == 0) {
-                        emit_bounds_check(idx, ConstantInt::get(T_size, nfields), ctx);
+                        emit_bounds_check(tbaa_decorate(tbaa_const, builder.CreateLoad(prepare_global(jlnull_var))),
+                                NULL, idx, ConstantInt::get(T_size, nfields), ctx);
                         fld = UndefValue::get(jl_pvalue_llvmt);
                     }
                     else {
@@ -2273,7 +2297,11 @@ static Value *emit_known_call(jl_value_t *ff, jl_value_t **args, size_t nargs,
                         Value *tempSpace = builder.CreateAlloca(llvm_st);
                         builder.CreateStore(strct, tempSpace);
                         jl_value_t *jt = jl_t0(stt->types);
-                        idx = emit_bounds_check(idx, ConstantInt::get(T_size, nfields), ctx);
+                        if (!stt->uid) {
+                            // add root for types not cached
+                            jl_add_linfo_root(ctx->linfo, (jl_value_t*)stt);
+                        }
+                        idx = emit_bounds_check(tempSpace, (jl_value_t*)stt, idx, ConstantInt::get(T_size, nfields), ctx);
                         Value *ptr = builder.CreateGEP(tempSpace, ConstantInt::get(T_size, 0));
                         fld = typed_load(ptr, idx, jt, ctx, stt->mutabl ? tbaa_user : tbaa_immut);
                         builder.CreateCall(Intrinsic::getDeclaration(jl_Module,Intrinsic::stackrestore),
@@ -2804,7 +2832,7 @@ static Value *emit_condition(jl_value_t *cond, const std::string &msg, jl_codect
         return builder.CreateXor(condV, ConstantInt::get(T_int1,1));
     }
     else if (condV->getType() == jl_pvalue_llvmt) {
-        return builder.CreateICmpEQ(condV, literal_pointer_val(jl_false));
+        return builder.CreateICmpEQ(condV, tbaa_decorate(tbaa_const, builder.CreateLoad(prepare_global(jlfalse_var))));
     }
     // not a boolean
     return ConstantInt::get(T_int1,0);
@@ -3706,7 +3734,7 @@ static Function *emit_function(jl_lambda_info_t *lam, bool cstyle)
     ctx.f = f;
 
     // step 5. set up debug info context and create first basic block
-    bool in_user_code = lam->module != jl_base_module && lam->module != jl_core_module;
+    bool in_user_code = !jl_is_submodule(lam->module, jl_base_module) && !jl_is_submodule(lam->module, jl_core_module);
     bool do_coverage = jl_compileropts.code_coverage == JL_LOG_ALL || (jl_compileropts.code_coverage == JL_LOG_USER && in_user_code);
     bool do_malloc_log = jl_compileropts.malloc_log  == JL_LOG_ALL || (jl_compileropts.malloc_log    == JL_LOG_USER && in_user_code);
     jl_value_t *stmt = jl_cellref(stmts,0);
@@ -4399,8 +4427,6 @@ static void init_julia_llvm_env(Module *m)
                                   (void*)&jl_overflow_exception, m);
     jlinexacterr_var = global_to_llvm("jl_inexact_exception",
                                       (void*)&jl_inexact_exception, m);
-    jlboundserr_var = global_to_llvm("jl_bounds_exception",
-                                     (void*)&jl_bounds_exception, m);
     jlstderr_var =
         new GlobalVariable(*m, T_int8,
                            true, GlobalVariable::ExternalLinkage,
@@ -4457,6 +4483,49 @@ static void init_julia_llvm_env(Module *m)
                          "jl_undefined_var_error", m);
     jlundefvarerror_func->setDoesNotReturn();
     add_named_global(jlundefvarerror_func, (void*)&jl_undefined_var_error);
+
+    std::vector<Type*> args2_boundserrorv(0);
+    args2_boundserrorv.push_back(jl_pvalue_llvmt);
+    args2_boundserrorv.push_back(T_psize);
+    args2_boundserrorv.push_back(T_size);
+    jlboundserrorv_func =
+        Function::Create(FunctionType::get(T_void, args2_boundserrorv, false),
+                         Function::ExternalLinkage,
+                         "jl_bounds_error_ints", m);
+    jlboundserrorv_func->setDoesNotReturn();
+    add_named_global(jlboundserrorv_func, (void*)&jl_bounds_error_ints);
+
+    std::vector<Type*> args2_boundserror(0);
+    args2_boundserror.push_back(jl_pvalue_llvmt);
+    args2_boundserror.push_back(T_size);
+    jlboundserror_func =
+        Function::Create(FunctionType::get(T_void, args2_boundserror, false),
+                         Function::ExternalLinkage,
+                         "jl_bounds_error_int", m);
+    jlboundserror_func->setDoesNotReturn();
+    add_named_global(jlboundserror_func, (void*)&jl_bounds_error_int);
+
+    std::vector<Type*> args3_vboundserror(0);
+    args3_vboundserror.push_back(jl_ppvalue_llvmt);
+    args3_vboundserror.push_back(T_size);
+    args3_vboundserror.push_back(T_size);
+    jlvboundserror_func =
+        Function::Create(FunctionType::get(T_void, args3_vboundserror, false),
+                         Function::ExternalLinkage,
+                         "jl_bounds_error_tuple_int", m);
+    jlvboundserror_func->setDoesNotReturn();
+    add_named_global(jlvboundserror_func, (void*)&jl_bounds_error_tuple_int);
+
+    std::vector<Type*> args3_uboundserror(0);
+    args3_uboundserror.push_back(T_pint8);
+    args3_uboundserror.push_back(jl_pvalue_llvmt);
+    args3_uboundserror.push_back(T_size);
+    jluboundserror_func =
+        Function::Create(FunctionType::get(T_void, args3_uboundserror, false),
+                         Function::ExternalLinkage,
+                         "jl_bounds_error_unboxed_int", m);
+    jluboundserror_func->setDoesNotReturn();
+    add_named_global(jluboundserror_func, (void*)&jl_bounds_error_unboxed_int);
 
     std::vector<Type*> args2_throw(0);
     args2_throw.push_back(jl_pvalue_llvmt);

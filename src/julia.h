@@ -340,7 +340,7 @@ extern DLLEXPORT jl_value_t *jl_overflow_exception;
 extern DLLEXPORT jl_value_t *jl_inexact_exception;
 extern DLLEXPORT jl_value_t *jl_undefref_exception;
 extern DLLEXPORT jl_value_t *jl_interrupt_exception;
-extern DLLEXPORT jl_value_t *jl_bounds_exception;
+extern DLLEXPORT jl_datatype_t *jl_boundserror_type;
 extern DLLEXPORT jl_value_t *jl_an_empty_cell;
 
 extern DLLEXPORT jl_datatype_t *jl_bool_type;
@@ -646,6 +646,7 @@ DLLEXPORT jl_function_t *jl_new_closure(jl_fptr_t proc, jl_value_t *env,
                                         jl_lambda_info_t *li);
 DLLEXPORT jl_lambda_info_t *jl_new_lambda_info(jl_value_t *ast, jl_tuple_t *sparams);
 DLLEXPORT jl_tuple_t *jl_tuple(size_t n, ...);
+DLLEXPORT jl_tuple_t *jl_tuplev(size_t n, jl_value_t **v);
 DLLEXPORT jl_tuple_t *jl_tuple1(void *a);
 DLLEXPORT jl_tuple_t *jl_tuple2(void *a, void *b);
 DLLEXPORT jl_tuple_t *jl_alloc_tuple(size_t n);
@@ -805,6 +806,7 @@ STATIC_INLINE jl_function_t *jl_get_function(jl_module_t *m, const char *name)
 }
 DLLEXPORT void jl_module_run_initializer(jl_module_t *m);
 jl_function_t *jl_module_call_func(jl_module_t *m);
+int jl_is_submodule(jl_module_t *child, jl_module_t *parent);
 
 // eq hash tables
 DLLEXPORT jl_array_t *jl_eqtable_put(jl_array_t *h, void *key, void *val);
@@ -825,16 +827,20 @@ DLLEXPORT jl_value_t *jl_environ(int i);
 // throwing common exceptions
 DLLEXPORT void NORETURN jl_error(const char *str);
 DLLEXPORT void NORETURN jl_errorf(const char *fmt, ...);
-DLLEXPORT void jl_too_few_args(const char *fname, int min);
-DLLEXPORT void jl_too_many_args(const char *fname, int max);
-DLLEXPORT void jl_type_error(const char *fname, jl_value_t *expected, jl_value_t *got);
-DLLEXPORT void jl_type_error_rt(const char *fname, const char *context,
+DLLEXPORT void NORETURN jl_too_few_args(const char *fname, int min);
+DLLEXPORT void NORETURN jl_too_many_args(const char *fname, int max);
+DLLEXPORT void NORETURN jl_type_error(const char *fname, jl_value_t *expected, jl_value_t *got);
+DLLEXPORT void NORETURN jl_type_error_rt(const char *fname, const char *context,
                                 jl_value_t *ty, jl_value_t *got);
-DLLEXPORT void jl_type_error_rt_line(const char *fname, const char *context,
+DLLEXPORT void NORETURN jl_type_error_rt_line(const char *fname, const char *context,
                                      jl_value_t *ty, jl_value_t *got, int line);
-jl_value_t *jl_no_method_error(jl_function_t *f, jl_value_t **args, size_t na);
-DLLEXPORT void jl_undefined_var_error(jl_sym_t *var);
-void jl_check_type_tuple(jl_tuple_t *t, jl_sym_t *name, const char *ctx);
+DLLEXPORT void NORETURN jl_undefined_var_error(jl_sym_t *var);
+DLLEXPORT void NORETURN jl_bounds_error(jl_value_t *v, jl_value_t *t);
+DLLEXPORT void NORETURN jl_bounds_error_v(jl_value_t *v, jl_value_t **idxs, size_t nidxs);
+DLLEXPORT void NORETURN jl_bounds_error_int(jl_value_t *v, size_t i);
+DLLEXPORT void NORETURN jl_bounds_error_tuple_int(jl_value_t **v, size_t nv, size_t i);
+DLLEXPORT void NORETURN jl_bounds_error_unboxed_int(void *v, jl_value_t *vt, size_t i);
+DLLEXPORT void NORETURN jl_bounds_error_ints(jl_value_t *v, size_t *idxs, size_t nidxs);
 DLLEXPORT jl_value_t *jl_exception_occurred(void);
 DLLEXPORT void jl_exception_clear(void);
 
@@ -1107,8 +1113,10 @@ DLLEXPORT extern volatile sig_atomic_t jl_defer_signal;
 #define JL_SIGATOMIC_END()                                      \
     do {                                                        \
         jl_defer_signal--;                                      \
-        if (jl_defer_signal == 0 && jl_signal_pending != 0)     \
-            raise(jl_signal_pending);                           \
+        if (jl_defer_signal == 0 && jl_signal_pending != 0) {   \
+            jl_signal_pending = 0;                              \
+            jl_throw(jl_interrupt_exception);                   \
+        }                                                       \
     } while(0)
 
 DLLEXPORT void restore_signals(void);
