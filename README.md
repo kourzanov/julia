@@ -267,7 +267,7 @@ Building Julia requires that the following software be installed:
 
 Julia uses the following external libraries, which are automatically downloaded (or in a few cases, included in the Julia source repository) and then compiled from source the first time you run `make`:
 
-- **[LLVM]** (>= 3.3)        — compiler infrastructure.
+- **[LLVM]** (3.3)           — compiler infrastructure. (3.4 not supported; 3.5+ mostly supported, [with caveats](https://github.com/JuliaLang/julia/issues/9336)) 
 - **[FemtoLisp]**            — packaged with Julia source, and used to implement the compiler front-end.
 - **[libuv]**                — portable, high-performance event-based I/O library
 - **[OpenLibm]**             — a portable libm library containing elementary math functions.
@@ -395,6 +395,7 @@ The following distributions include julia, but the versions may be out of date d
 * openSUSE
   * Stable package for openSUSE: [OBS page](https://build.opensuse.org/package/show/science/julia), [1 Click Install](http://software.opensuse.org/download.html?project=science&package=julia)
   * Git package for openSUSE: [OBS page](https://build.opensuse.org/package/show/science/julia-unstable), [1 Click Install](http://software.opensuse.org/download.html?project=science&package=julia-unstable)
+* [NixOS](https://github.com/NixOS/nixpkgs/blob/master/pkgs/development/compilers/julia)
 * Ubuntu
   * [Ubuntu 13.04 (Raring Ringtail)](http://packages.ubuntu.com/raring/julia)
   * [Nightly builds PPA](https://launchpad.net/~staticfloat/+archive/julianightlies) (depends on the [julia-deps PPA](https://launchpad.net/~staticfloat/+archive/julia-deps/))

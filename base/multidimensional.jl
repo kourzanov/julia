@@ -57,6 +57,13 @@ end
 # indexing
 getindex(index::CartesianIndex, i::Integer) = getfield(index, i)
 
+stagedfunction getindex{N}(A::Array, index::CartesianIndex{N})
+    N==0 ? :(Base.arrayref(A, 1)) : :(@ncall $N Base.arrayref A d->getfield(index,d))
+end
+stagedfunction setindex!{T,N}(A::Array{T}, v, index::CartesianIndex{N})
+    N==0 ? :(Base.arrayset(A, convert($T,v), 1)) : :(@ncall $N Base.arrayset A convert($T,v) d->getfield(index,d))
+end
+
 stagedfunction getindex{N}(A::AbstractArray, index::CartesianIndex{N})
     :(@nref $N A d->getfield(index,d))
 end
@@ -148,11 +155,12 @@ using .IteratorsMD
     nothing
 end
 
-unsafe_getindex(v::BitArray, ind::Int) = Base.unsafe_bitgetindex(v.chunks, ind)
+@inline unsafe_getindex(v::BitArray, ind::Int) = Base.unsafe_bitgetindex(v.chunks, ind)
 
-unsafe_setindex!{T}(v::AbstractArray{T}, x::T, ind::Int) = (v[ind] = x; v)
-unsafe_setindex!(v::BitArray, x::Bool, ind::Int) = (Base.unsafe_bitsetindex!(v.chunks, x, ind); v)
-unsafe_setindex!{T}(v::AbstractArray{T}, x::T, ind::Real) = unsafe_setindex!(v, x, to_index(ind))
+@inline unsafe_setindex!{T}(v::Array{T}, x::T, ind::Int) = (@inbounds v[ind] = x; v)
+@inline unsafe_setindex!{T}(v::AbstractArray{T}, x::T, ind::Int) = (v[ind] = x; v)
+@inline unsafe_setindex!(v::BitArray, x::Bool, ind::Int) = (Base.unsafe_bitsetindex!(v.chunks, x, ind); v)
+@inline unsafe_setindex!{T}(v::AbstractArray{T}, x::T, ind::Real) = unsafe_setindex!(v, x, to_index(ind))
 
 # Version that uses cartesian indexing for src
 @ngenerate N typeof(dest) function _getindex!(dest::Array, src::AbstractArray, I::NTuple{N,Union(Int,AbstractVector)}...)

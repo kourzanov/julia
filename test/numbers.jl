@@ -45,11 +45,11 @@
 @test bool(1//2) == true
 
 # basic arithmetic
-@test 2+3 == 5
-@test 2.+3. == 5.
-@test 2*3 == 6
-@test 2.*3 == 6
-@test 2. * 3. == 6.
+@test 2 + 3 == 5
+@test 2.0 + 3.0 == 5.
+@test 2 * 3 == 6
+@test 2.0 * 3 == 6
+@test 2.0 * 3.0 == 6.
 @test min(1.0,1) == 1
 
 @test minmax(5, 3) == (3, 5)
@@ -2086,3 +2086,9 @@ end
 let x = big(-0.0)
     @test signbit(x) && !signbit(abs(x))
 end
+
+# issue #9611
+@test factor(int128(2)^101+1) == Dict(3=>1,845100400152152934331135470251=>1)
+
+# test second branch, after all small primes in list have been searched
+@test factor(10009 * int128(1000000000000037)) == Dict(10009=>1,1000000000000037=>1)

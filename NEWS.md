@@ -145,6 +145,8 @@ Library improvements
 
   * A new `Val{T}` type allows one to dispatch on bits-type values ([#9452])
 
+  * Added `recvfrom` to get source address of UDP packets ([#9418])
+
 Deprecated or removed
 ---------------------
 
@@ -1147,5 +1149,7 @@ Too numerous to mention.
 [#9261]: https://github.com/JuliaLang/julia/issues/9261
 [#9271]: https://github.com/JuliaLang/julia/issues/9271
 [#9294]: https://github.com/JuliaLang/julia/issues/9294
-[#9569]: https://github.com/JuliaLang/julia/issues/9569
+[#9418]: https://github.com/JuliaLang/julia/issues/9418
 [#9452]: https://github.com/JuliaLang/julia/issues/9452
+[#9569]: https://github.com/JuliaLang/julia/issues/9569
+[#9578]: https://github.com/JuliaLang/julia/issues/9578
