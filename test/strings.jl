@@ -216,9 +216,12 @@ parsehex(s) = parseint(s,16)
 @test parseint(" 2") == 2
 @test parseint("+2\n") == 2
 @test parseint("-2") == -2
-@test_throws ErrorException parseint("   2 \n 0")
-@test_throws ErrorException parseint("2x")
-@test_throws ErrorException parseint("-")
+@test_throws ArgumentError parseint("   2 \n 0")
+@test_throws ArgumentError parseint("2x")
+@test_throws ArgumentError parseint("-")
+
+@test parseint('a') == 10
+@test_throws ArgumentError parseint(typemax(Char))
 
 @test parseint("1234") == 1234
 @test parseint("0x1234") == 0x1234
@@ -240,7 +243,7 @@ end
 for T in (UInt8,UInt16,UInt32,UInt64)
     @test parseint(T,string(typemin(T))) == typemin(T)
     @test parseint(T,string(typemax(T))) == typemax(T)
-    @test_throws ErrorException parseint(T,string(big(typemin(T))-1))
+    @test_throws ArgumentError parseint(T,string(big(typemin(T))-1))
     @test_throws OverflowError parseint(T,string(big(typemax(T))+1))
 end
 
@@ -841,10 +844,10 @@ bin_val = hex2bytes("07bf")
 @test "0123456789abcdefabcdef" == bytes2hex(hex2bytes("0123456789abcdefABCDEF"))
 
 # odd size
-@test_throws ErrorException hex2bytes("0123456789abcdefABCDEF0")
+@test_throws ArgumentError hex2bytes("0123456789abcdefABCDEF0")
 
 #non-hex characters
-@test_throws ErrorException hex2bytes("0123456789abcdefABCDEFGH")
+@test_throws ArgumentError hex2bytes("0123456789abcdefABCDEFGH")
 
 # sizeof
 @test sizeof("abc") == 3
@@ -1020,8 +1023,8 @@ end
 @test gensym("asdf") != gensym("asdf")
 @test gensym() != gensym()
 @test startswith(string(gensym()),"##")
-@test_throws ErrorException symbol("ab\0")
-@test_throws ErrorException gensym("ab\0")
+@test_throws ArgumentError symbol("ab\0")
+@test_throws ArgumentError gensym("ab\0")
 
 # issue #6949
 let f =IOBuffer(),

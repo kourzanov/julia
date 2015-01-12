@@ -5,7 +5,9 @@
 </a>
 </div>
 
-Linux, OSX: [![Build Status](https://api.travis-ci.org/JuliaLang/julia.svg?branch=master)](https://travis-ci.org/JuliaLang/julia) Windows: [![Build status](https://ci.appveyor.com/api/projects/status/4vr88cmgo7u02644/branch/master?svg=true)](https://ci.appveyor.com/project/StefanKarpinski/julia/branch/master)
+Linux, OSX: [![Build Status](https://api.travis-ci.org/JuliaLang/julia.svg?branch=master)](https://travis-ci.org/JuliaLang/julia)
+
+Windows: [![Build status](https://ci.appveyor.com/api/projects/status/4vr88cmgo7u02644/branch/master?svg=true)](https://ci.appveyor.com/project/StefanKarpinski/julia/branch/master)
 
 <a name="The-Julia-Language"/>
 ## The Julia Language
@@ -85,7 +87,7 @@ Once it is built, you can run the `julia` executable using its full path in the 
 
 - add the `julia` directory to your executable path permanently (e.g. in `.bash_profile`), or
 
-- write `prefix=/path/to/install/folder` into `Make.user` and then run `make install`.
+- write `prefix=/path/to/install/folder` into `Make.user` and then run `make install`. If there is a version of Julia already installed in this folder, you should delete it before running `make install`.
 
 Now you should be able to run Julia like this:
 

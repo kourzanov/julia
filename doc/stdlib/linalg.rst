@@ -479,7 +479,7 @@ Linear algebra functions in Julia are largely implemented by calling functions f
 
    Moore-Penrose pseudoinverse
 
-.. function:: null(M)
+.. function:: nullspace(M)
 
    Basis for nullspace of ``M``.
 
@@ -568,7 +568,7 @@ Linear algebra functions in Julia are largely implemented by calling functions f
 
    Conjugate transpose array ``src`` and store the result in the preallocated array ``dest``, which should have a size corresponding to ``(size(src,2),size(src,1))``. No in-place transposition is supported and unexpected results will happen if `src` and `dest` have overlapping memory regions.
 
-.. function:: eigs(A, [B,]; nev=6, which="LM", tol=0.0, maxiter=1000, sigma=nothing, ritzvec=true, v0=zeros((0,))) -> (d,[v,],nconv,niter,nmult,resid)
+.. function:: eigs(A, [B,]; nev=6, which="LM", tol=0.0, maxiter=300, sigma=nothing, ritzvec=true, v0=zeros((0,))) -> (d,[v,],nconv,niter,nmult,resid)
 
    ``eigs`` computes eigenvalues ``d`` of ``A`` using Lanczos or Arnoldi iterations for real symmetric or general nonsymmetric matrices respectively. If ``B`` is provided, the generalized eigen-problem is solved.  The following keyword arguments are supported:
     * ``nev``: Number of eigenvalues
@@ -603,6 +603,20 @@ Linear algebra functions in Julia are largely implemented by calling functions f
       ``nothing``     ordinary (forward)                 :math:`A`
       real or complex inverse with level shift ``sigma`` :math:`(A - \sigma I )^{-1}`
       =============== ================================== ==================================
+
+.. function:: svds(A; nsv=6, ritzvec=true, tol=0.0, maxiter=1000) -> (left_sv, s, right_sv, nconv, niter, nmult, resid)
+
+   ``svds`` computes largest singular values ``s`` of ``A`` using Lanczos or Arnoldi iterations. Uses ``eigs`` underneath. Inputs are:
+    * ``A``: Linear operator. It can either subtype of AbstractArray (e.g., sparse matrix) or duck typed. For duck typing ``A`` has to support ``size(A)``, ``eltype(A)``, ``A * vector`` and ``A' * vector``.
+    * ``nsv``: Number of singular values.
+    * ``ritzvec``: Whether to return the left and right singular vectors ``left_sv`` and ``right_sv``, default is ``true``. If ``false`` the singular vectors are omitted from the output.
+    * ``tol``: tolerance, see ``eigs``.
+    * ``maxiter``: Maximum number of iterations, see ``eigs``.
+
+   **Example**::
+
+      X = sprand(10, 5, 0.2)
+      svds(X, nsv = 2)
 
 .. function:: peakflops(n; parallel=false)
 
