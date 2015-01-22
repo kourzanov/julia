@@ -154,6 +154,10 @@ Library improvements
 
   * copy(DArray) will now make a copy of the DArray ([#9745])
 
+  * Split `Triangular` type into `UpperTriangular`, `LowerTriangular`, `UnitUpperTriagular` and `UnitLowerTriangular` ([#9779])
+
+  * ClusterManager - Performance improvements([#9309]) and support for changing transports([#9434])
+
 Deprecated or removed
 ---------------------
 

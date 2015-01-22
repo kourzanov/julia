@@ -1,3 +1,24 @@
+## Functions to switch to 0-based indexing to call external sparse solvers
+
+# Convert from 1-based to 0-based indices
+function decrement!{T<:Integer}(A::AbstractArray{T})
+    for i in 1:length(A) A[i] -= one(T) end
+    A
+end
+decrement{T<:Integer}(A::AbstractArray{T}) = decrement!(copy(A))
+
+# Convert from 0-based to 1-based indices
+function increment!{T<:Integer}(A::AbstractArray{T})
+    for i in 1:length(A) A[i] += one(T) end
+    A
+end
+increment{T<:Integer}(A::AbstractArray{T}) = increment!(copy(A))
+
+## Multiplication with UniformScaling (scaled identity matrices)
+
+*(S::SparseMatrixCSC, J::UniformScaling) = J.λ == 1 ? S : J.λ*S
+*{Tv,Ti}(J::UniformScaling, S::SparseMatrixCSC{Tv,Ti}) = J.λ == 1 ? S : S*J.λ
+
 ## sparse matrix multiplication
 
 function (*){TvA,TiA,TvB,TiB}(A::SparseMatrixCSC{TvA,TiA}, B::SparseMatrixCSC{TvB,TiB})
@@ -126,7 +147,7 @@ end
 *{TvA,TiA}(X::BitArray{2}, A::SparseMatrixCSC{TvA,TiA}) = invoke(*, (AbstractMatrix, SparseMatrixCSC), X, A)
 # TODO: Tridiagonal * Sparse should be implemented more efficiently
 *{TX,TvA,TiA}(X::Tridiagonal{TX}, A::SparseMatrixCSC{TvA,TiA}) = invoke(*, (Tridiagonal, AbstractMatrix), X, A)
-*{TvA,TiA}(X::Triangular, A::SparseMatrixCSC{TvA,TiA}) = full(X)*A
+*{TvA,TiA}(X::AbstractTriangular, A::SparseMatrixCSC{TvA,TiA}) = full(X)*A
 function *{TX,TvA,TiA}(X::AbstractMatrix{TX}, A::SparseMatrixCSC{TvA,TiA})
     mX, nX = size(X)
     nX == A.m || throw(DimensionMismatch())

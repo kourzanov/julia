@@ -3,11 +3,12 @@
 const C_NULL = box(Ptr{Void}, 0)
 
 # pointer to integer
-convert(::Type{UInt}, x::Ptr) = box(UInt, unbox(Ptr,x))
+convert{T<:Union(Int,UInt)}(::Type{T}, x::Ptr) = box(T, unbox(Ptr,x))
 convert{T<:Integer}(::Type{T}, x::Ptr) = convert(T,unsigned(x))
 
 # integer to pointer
 convert{T}(::Type{Ptr{T}}, x::Integer) = box(Ptr{T},unbox(UInt,uint(x)))
+convert{T}(::Type{Ptr{T}}, x::Signed) = box(Ptr{T},unbox(Int,int(x)))
 
 # pointer to pointer
 convert{T}(::Type{Ptr{T}}, p::Ptr{T}) = p
@@ -35,10 +36,12 @@ function pointer_to_array{T,N}(p::Ptr{T}, dims::NTuple{N,Int}, own::Bool=false)
           Array{T,N}, p, dims, own)
 end
 function pointer_to_array{T,N}(p::Ptr{T}, dims::NTuple{N,Integer}, own::Bool=false)
+    i = 1
     for d in dims
         if !(0 <= d <= typemax(Int))
-            error("invalid Array dimensions")
+            throw(ArgumentError("Array dimension must be 0 ≤ dim ≤ $(typemax(Int)), got $d for dimension $i"))
         end
+        i += 1
     end
     pointer_to_array(p, convert((Int...), dims), own)
 end

@@ -37,6 +37,7 @@ $(build_docdir):
 	@mkdir -p $@/examples
 	@cp -R doc/devdocs doc/manual doc/stdlib $@
 	@cp -R examples/*.jl $@/examples/
+	@cp -R examples/clustermanager $@/examples/
 
 git-submodules:
 ifneq ($(NO_GIT), 1)
@@ -51,7 +52,11 @@ debug release: | $(DIRS) $(build_datarootdir)/julia/base $(build_datarootdir)/ju
 	$(MAKE) $(QUIET_MAKE) LD_LIBRARY_PATH=$(build_libdir):$(LD_LIBRARY_PATH) JULIA_EXECUTABLE="$(JULIA_EXECUTABLE_$@)" $(build_private_libdir)/sys.$(SHLIB_EXT)
 
 check-whitespace:
-	bin/check-whitespace.sh
+ifneq ($(NO_GIT), 1)
+	@contrib/check-whitespace.sh
+else
+	$(warn "Skipping whitespace check because git is unavailable")
+endif
 
 release-candidate: release test
 	@#Check documentation
@@ -86,8 +91,8 @@ release-candidate: release test
 
 	@echo 1. Remove deprecations in base/deprecated.jl
 	@echo 2. Bump VERSION
-	@echo 3. Create tag, push to github "\(git tag v\`cat VERSION\` && git push --tags\)"
-	@echo 4. Clean out old .tar.gz files living in deps/, "\`git clean -fdx\`" seems to work
+	@echo 3. Create tag, push to github "\(git tag v\`cat VERSION\` && git push --tags\)"		#"` # These comments deal with incompetent syntax highlighting rules
+	@echo 4. Clean out old .tar.gz files living in deps/, "\`git clean -fdx\`" seems to work	#"`
 	@echo 5. Replace github release tarball with tarball created from make source-dist
 	@echo 6. Follow packaging instructions in DISTRIBUTING.md to create binary packages for all platforms
 	@echo 7. Upload to AWS, update http://julialang.org/downloads and http://status.julialang.org/stable links
@@ -263,12 +268,18 @@ endif
 			fi \
 		done \
 	done
+
+	# Copy in libssl and libcrypto if they exist
+ifeq ($(OS),Linux)
+	-$(INSTALL_M) $(build_libdir)/libssl*.so* $(DESTDIR)$(private_libdir)
+	-$(INSTALL_M) $(build_libdir)/libcrypto*.so* $(DESTDIR)$(private_libdir)
+endif
 endif
 
 ifeq ($(USE_SYSTEM_LIBUV),0)
 ifeq ($(OS),WINNT)
 	$(INSTALL_F) $(build_includedir)/tree.h $(DESTDIR)$(includedir)/julia
-endif	
+endif
 	$(INSTALL_F) $(build_includedir)/uv* $(DESTDIR)$(includedir)/julia
 endif
 	$(INSTALL_F) src/julia.h src/julia_version.h src/options.h src/support/*.h $(DESTDIR)$(includedir)/julia
@@ -288,7 +299,7 @@ endif
 	# Remove various files which should not be installed
 	-rm -f $(DESTDIR)$(datarootdir)/julia/base/version_git.sh
 	-rm -f $(DESTDIR)$(datarootdir)/julia/test/Makefile
-	# Copy in beautiful new man page 
+	# Copy in beautiful new man page
 	$(INSTALL_F) $(build_man1dir)/julia.1 $(DESTDIR)$(man1dir)/
 	# Copy icon and .desktop file
 	mkdir -p $(DESTDIR)$(datarootdir)/icons/hicolor/scalable/apps/

@@ -81,7 +81,7 @@ function Base.parseint_nocheck(::Type{BigInt}, s::AbstractString, base::Int)
     err = ccall((:__gmpz_set_str, :libgmp),
                Int32, (Ptr{BigInt}, Ptr{UInt8}, Int32),
                &z, convert(Ptr{UInt8},SubString(s,i)), base)
-    err == 0 || error("invalid big integer: $(repr(s))")
+    err == 0 || throw(ArgumentError("invalid BigInt: $(repr(s))"))
     return sgn < 0 ? -z : z
 end
 
@@ -363,7 +363,7 @@ function isqrt(x::BigInt)
     return z
 end
 
-function ^(x::BigInt, y::UInt)
+function ^(x::BigInt, y::Culong)
     z = BigInt()
     ccall((:__gmpz_pow_ui, :libgmp), Void, (Ptr{BigInt}, Ptr{BigInt}, Culong), &z, &x, y)
     return z
@@ -373,8 +373,20 @@ function bigint_pow(x::BigInt, y::Integer)
     if y<0; throw(DomainError()); end
     if x== 1; return x; end
     if x==-1; return isodd(y) ? x : -x; end
-    if y>typemax(UInt); throw(DomainError()); end
-    return x^uint(y)
+    if y>typemax(Culong)
+       x==0 && return x
+
+       #At this point, x is not 1, 0 or -1 and it is not possible to use
+       #gmpz_pow_ui to compute the answer. Note that the magnitude of the
+       #answer is:
+       #- at least 2^(2^32-1) ≈ 10^(1.3e9) (if Culong === UInt32).
+       #- at least 2^(2^64-1) ≈ 10^(5.5e18) (if Culong === UInt64).
+       #
+       #Assume that the answer will definitely overflow.
+
+       throw(OverflowError())
+    end
+    return x^convert(Culong, y)
 end
 
 ^(x::BigInt , y::BigInt ) = bigint_pow(x, y)
@@ -465,7 +477,7 @@ dec(n::BigInt) = base(10, n)
 hex(n::BigInt) = base(16, n)
 
 function base(b::Integer, n::BigInt)
-    2 <= b <= 62 || error("invalid base: $b")
+    2 <= b <= 62 || throw(ArgumentError("base must be 2 ≤ base ≤ 62, got $b"))
     p = ccall((:__gmpz_get_str,:libgmp), Ptr{UInt8}, (Ptr{UInt8}, Cint, Ptr{BigInt}), C_NULL, b, &n)
     len = int(ccall(:strlen, Csize_t, (Ptr{UInt8},), p))
     ASCIIString(pointer_to_array(p,len,true))

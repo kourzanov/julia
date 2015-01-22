@@ -9,11 +9,15 @@
 #include <llvm/ExecutionEngine/ExecutionEngine.h>
 #include <llvm/ExecutionEngine/JITEventListener.h>
 #include <llvm/PassManager.h>
-#include <llvm/Target/TargetLibraryInfo.h>
 #include <llvm/Target/TargetSubtargetInfo.h>
 #include <llvm/Support/TargetRegistry.h>
 #include <llvm/Analysis/Passes.h>
 #include <llvm/Bitcode/ReaderWriter.h>
+#ifdef LLVM37
+#include <llvm/Analysis/TargetLibraryInfo.h>
+#else
+#include <llvm/Target/TargetLibraryInfo.h>
+#endif
 #ifdef LLVM35
 #include <llvm/IR/Verifier.h>
 #include <llvm/Object/ObjectFile.h>
@@ -418,7 +422,11 @@ void jl_dump_objfile(char *fname, int jit_model)
         ));
 
     PassManager PM;
+#ifndef LLVM37
     PM.add(new TargetLibraryInfo(Triple(jl_TargetMachine->getTargetTriple())));
+#else
+    PM.add(new TargetLibraryInfoWrapperPass(Triple(jl_TargetMachine->getTargetTriple())));
+#endif
 #ifdef LLVM36
     PM.add(new DataLayoutPass());
 #elif LLVM35
@@ -3739,7 +3747,7 @@ static Function *emit_function(jl_lambda_info_t *lam, bool cstyle)
     bool in_user_code = !jl_is_submodule(lam->module, jl_base_module) && !jl_is_submodule(lam->module, jl_core_module);
     bool do_coverage = jl_compileropts.code_coverage == JL_LOG_ALL || (jl_compileropts.code_coverage == JL_LOG_USER && in_user_code);
     bool do_malloc_log = jl_compileropts.malloc_log  == JL_LOG_ALL || (jl_compileropts.malloc_log    == JL_LOG_USER && in_user_code);
-    jl_value_t *stmt = jl_cellref(stmts,0);
+    jl_value_t *stmt = skip_meta(stmts);
     std::string filename = "no file";
     char *dbgFuncName = lam->name->name;
     int lno = -1;

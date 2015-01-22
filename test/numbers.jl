@@ -59,34 +59,79 @@
 @test minmax(NaN, 3.) == (3., 3.)
 @test isequal(minmax(NaN, NaN), (NaN, NaN))
 
-# fast math
-const one32 = one(Float32)
-const eps32 = eps(Float32)
-const eps32_2 = eps32/2
-# Note: Cannot use local functions since these are not yet optimized
-fm_ieee_32(x) = x + eps32_2 + eps32_2
-fm_fast_32(x) = @fastmath x + eps32_2 + eps32_2
-@test fm_ieee_32(one32) == one32
-@test (fm_fast_32(one32) == one32 ||
-       fm_fast_32(one32) == one32 + eps32 > one32)
-
-const one64 = one(Float64)
-const eps64 = eps(Float64)
-const eps64_2 = eps64/2
-# Note: Cannot use local functions since these are not yet optimized
-fm_ieee_64(x) = x + eps64_2 + eps64_2
-fm_fast_64(x) = @fastmath x + eps64_2 + eps64_2
-@test fm_ieee_64(one64) == one64
-@test (fm_fast_64(one64) == one64 ||
-       fm_fast_64(one64) == one64 + eps64 > one64)
-
-let epsf = 1.0f0/2^15, one_epsf = 1+epsf
-    @test isapprox((@fastmath one_epsf * one_epsf - 1),
-                   float32(65537/1073741824))
+# fma
+let x = int64(7)^7
+    @test fma(x-1, x-2, x-3) == (x-1) * (x-2) + (x-3)
+    @test (fma((x-1)//(x-2), (x-3)//(x-4), (x-5)//(x-6)) ==
+           (x-1)//(x-2) * (x-3)//(x-4) + (x-5)//(x-6))
 end
-let eps = 1.0/2^30, one_eps = 1+eps
-    @test isapprox((@fastmath one_eps * one_eps - 1),
-                   2147483649/1152921504606846976)
+
+let x = BigInt(7)^77
+    @test fma(x-1, x-2, x-3) == (x-1) * (x-2) + (x-3)
+    @test (fma((x-1)//(x-2), (x-3)//(x-4), (x-5)//(x-6)) ==
+           (x-1)//(x-2) * (x-3)//(x-4) + (x-5)//(x-6))
+end
+
+let eps = 1//BigInt(2)^30, one_eps = 1+eps,
+    eps64 = float64(eps), one_eps64 = float64(one_eps)
+    @test eps64 == float64(eps)
+    @test one_eps64 == float64(one_eps)
+    @test one_eps64 * one_eps64 - 1 != float64(one_eps * one_eps - 1)
+    @test fma(one_eps64, one_eps64, -1) == float64(one_eps * one_eps - 1)
+end
+
+let eps = 1//BigInt(2)^15, one_eps = 1+eps,
+    eps32 = float32(eps), one_eps32 = float32(one_eps)
+    @test eps32 == float32(eps)
+    @test one_eps32 == float32(one_eps)
+    @test one_eps32 * one_eps32 - 1 != float32(one_eps * one_eps - 1)
+    @test fma(one_eps32, one_eps32, -1) == float32(one_eps * one_eps - 1)
+end
+
+let eps = 1//BigInt(2)^7, one_eps = 1+eps,
+    eps16 = float16(float32(eps)), one_eps16 = float16(float32(one_eps))
+    @test eps16 == float16(float32(eps))
+    @test one_eps16 == float16(float32(one_eps))
+    @test one_eps16 * one_eps16 - 1 != float16(float32(one_eps * one_eps - 1))
+    @test (fma(one_eps16, one_eps16, -1) ==
+           float16(float32(one_eps * one_eps - 1)))
+end
+
+let eps = 1//BigInt(2)^200, one_eps = 1+eps,
+    eps256 = BigFloat(eps), one_eps256 = BigFloat(one_eps)
+    @test eps256 == BigFloat(eps)
+    @test one_eps256 == BigFloat(one_eps)
+    @test one_eps256 * one_eps256 - 1 != BigFloat(one_eps * one_eps - 1)
+    @test fma(one_eps256, one_eps256, -1) == BigFloat(one_eps * one_eps - 1)
+end
+
+# muladd
+
+let eps = 1//BigInt(2)^30, one_eps = 1+eps,
+    eps64 = float64(eps), one_eps64 = float64(one_eps)
+    @test eps64 == float64(eps)
+    @test one_eps64 == float64(one_eps)
+    @test one_eps64 * one_eps64 - 1 != float64(one_eps * one_eps - 1)
+    @test isapprox(muladd(one_eps64, one_eps64, -1),
+                   float64(one_eps * one_eps - 1))
+end
+
+let eps = 1//BigInt(2)^15, one_eps = 1+eps,
+    eps32 = float32(eps), one_eps32 = float32(one_eps)
+    @test eps32 == float32(eps)
+    @test one_eps32 == float32(one_eps)
+    @test one_eps32 * one_eps32 - 1 != float32(one_eps * one_eps - 1)
+    @test isapprox(muladd(one_eps32, one_eps32, -1),
+                   float32(one_eps * one_eps - 1))
+end
+
+let eps = 1//BigInt(2)^7, one_eps = 1+eps,
+    eps16 = float16(float32(eps)), one_eps16 = float16(float32(one_eps))
+    @test eps16 == float16(float32(eps))
+    @test one_eps16 == float16(float32(one_eps))
+    @test one_eps16 * one_eps16 - 1 != float16(float32(one_eps * one_eps - 1))
+    @test isapprox(muladd(one_eps16, one_eps16, -1),
+                   float16(float32(one_eps * one_eps - 1)))
 end
 
 # lexing typemin(Int64)
@@ -2122,3 +2167,12 @@ end
 
 # test second branch, after all small primes in list have been searched
 @test factor(10009 * int128(1000000000000037)) == Dict(10009=>1,1000000000000037=>1)
+
+#Issue #5570
+@test map(x -> int(mod1(uint(x),uint(5))), 0:15) == [5, 1, 2, 3, 4, 5, 1, 2, 3, 4, 5, 1, 2, 3, 4, 5]
+
+# Issue #9618: errors thrown by large exponentiations
+@test_throws DomainError big(2)^-(big(typemax(UInt))+1)
+@test_throws OverflowError big(2)^(big(typemax(UInt))+1)
+@test 0==big(0)^(big(typemax(UInt))+1)
+

@@ -9,7 +9,7 @@ export
 import
     Base: (*), +, -, /, <, <=, ==, >, >=, ^, besselj, besselj0, besselj1, bessely,
         bessely0, bessely1, ceil, cmp, convert, copysign, deg2rad,
-        exp, exp2, exponent, factorial, floor, hypot, isinteger,
+        exp, exp2, exponent, factorial, floor, fma, hypot, isinteger,
         isfinite, isinf, isnan, ldexp, log, log2, log10, max, min, mod, modf,
         nextfloat, prevfloat, promote_rule, rad2deg, rem, round, show,
         showcompact, sum, sqrt, string, print, trunc, precision, exp10, expm1,
@@ -25,6 +25,12 @@ import Base.Rounding: get_rounding_raw, set_rounding_raw
 import Base.GMP: ClongMax, CulongMax, CdoubleMax
 
 import Base.Math.lgamma_r
+
+function __init__()
+    # set exponent to full range by default
+    set_emin!(get_emin_min())
+    set_emax!(get_emax_max())
+end
 
 const ROUNDING_MODE = Cint[0]
 const DEFAULT_PRECISION = [256]
@@ -74,7 +80,7 @@ end
 function BigFloat(x::AbstractString, base::Int)
     z = BigFloat()
     err = ccall((:mpfr_set_str, :libmpfr), Int32, (Ptr{BigFloat}, Ptr{UInt8}, Int32, Int32), &z, x, base, ROUNDING_MODE[end])
-    if err != 0; error("incorrectly formatted number"); end
+    err == 0 || throw("incorrectly formatted number \"$x\"")
     return z
 end
 BigFloat(x::AbstractString) = BigFloat(x, 10)
@@ -298,6 +304,12 @@ function -(c::BigInt, x::BigFloat)
     z = BigFloat()
     ccall((:mpfr_z_sub, :libmpfr), Int32, (Ptr{BigFloat}, Ptr{BigInt}, Ptr{BigFloat}, Int32), &z, &c, &x, ROUNDING_MODE[end])
     return z
+end
+
+function fma(x::BigFloat, y::BigFloat, z::BigFloat)
+    r = BigFloat()
+    ccall(("mpfr_fma",:libmpfr), Int32, (Ptr{BigFloat}, Ptr{BigFloat}, Ptr{BigFloat}, Ptr{BigFloat}, Int32), &r, &x, &y, &z, ROUNDING_MODE[end])
+    return r
 end
 
 
@@ -646,7 +658,7 @@ function from_mpfr(c::Integer)
     elseif c == 4
         return RoundFromZero
     else
-        error("invalid MPFR rounding mode code")
+        throw(ArgumentError("invalid MPFR rounding mode code: $c"))
     end
     RoundingMode(c)
 end
@@ -769,5 +781,17 @@ end
 print(io::IO, b::BigFloat) = print(io, string(b))
 show(io::IO, b::BigFloat) = print(io, string(b), " with $(precision(b)) bits of precision")
 showcompact(io::IO, b::BigFloat) = print(io, string(b))
+
+# get/set exponent min/max
+get_emax() = ccall((:mpfr_get_emax, :libmpfr), Clong, ())
+get_emax_min() = ccall((:mpfr_get_emax_min, :libmpfr), Clong, ())
+get_emax_max() = ccall((:mpfr_get_emax_max, :libmpfr), Clong, ())
+
+get_emin() = ccall((:mpfr_get_emin, :libmpfr), Clong, ())
+get_emin_min() = ccall((:mpfr_get_emin_min, :libmpfr), Clong, ())
+get_emin_max() = ccall((:mpfr_get_emin_max, :libmpfr), Clong, ())
+
+set_emax!(x) = ccall((:mpfr_set_emax, :libmpfr), Void, (Clong,), x)
+set_emin!(x) = ccall((:mpfr_set_emin, :libmpfr), Void, (Clong,), x)
 
 end #module

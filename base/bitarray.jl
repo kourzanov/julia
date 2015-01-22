@@ -7,11 +7,13 @@ type BitArray{N} <: DenseArray{Bool, N}
     len::Int
     dims::NTuple{N,Int}
     function BitArray(dims::Int...)
-        length(dims) == N || error("number of dimensions must be $N (got $(length(dims)))")
+        length(dims) == N || throw(ArgumentError("number of dimensions must be $N, got $(length(dims))"))
         n = 1
+        i = 1
         for d in dims
-            d >= 0 || error("dimension size must be nonnegative (got $d)")
+            d >= 0 || throw(ArgumentError("dimension size must be ≥ 0, got $d for dimension $i"))
             n *= d
+            i += 1
         end
         nc = num_bit_chunks(n)
         chunks = Array(UInt64, nc)
@@ -34,7 +36,14 @@ length(B::BitArray) = B.len
 size(B::BitVector) = (B.len,)
 size(B::BitArray) = B.dims
 
-size(B::BitVector, d) = (d==1 ? B.len : d>1 ? 1 : error("dimensions should be positive (got $d)"))
+size(B::BitVector, d) = begin
+    if d == 1
+        return B.len
+    elseif d > 1
+        return 1
+    end
+    throw(ArgumentError("dimension must be ≥ 1, got $d"))
+end
 size{N}(B::BitArray{N}, d) = (d>N ? 1 : B.dims[d])
 
 isassigned{N}(B::BitArray{N}, i::Int) = 1 <= i <= length(B)
@@ -592,7 +601,7 @@ function resize!(B::BitVector, n::Integer)
 end
 
 function pop!(B::BitVector)
-    isempty(B) && error("argument must not be empty")
+    isempty(B) && throw(ArgumentError("argument must not be empty"))
     item = B[end]
     B[end] = false
 
@@ -626,7 +635,7 @@ function unshift!(B::BitVector, item)
 end
 
 function shift!(B::BitVector)
-    isempty(B) && error("argument must not be empty")
+    isempty(B) && throw(ArgumentError("argument must not be empty"))
     @inbounds begin
         item = B[1]
 
@@ -753,7 +762,7 @@ function deleteat!(B::BitVector, inds)
     while !done(inds, s)
         (i,s) = next(inds, s)
         if !(q <= i <= n)
-            i < q && error("indices must be unique and sorted")
+            i < q && throw(ArgumentError("indices must be unique and sorted"))
             throw(BoundsError(B, i))
         end
         new_l -= 1
@@ -1540,54 +1549,44 @@ function any(B::BitArray)
     return false
 end
 
-minimum(B::BitArray) = isempty(B) ? error("argument must be non-empty") : all(B)
-maximum(B::BitArray) = isempty(B) ? error("argument must be non-empty") : any(B)
+minimum(B::BitArray) = isempty(B) ? throw(ArgumentError("argument must be non-empty")) : all(B)
+maximum(B::BitArray) = isempty(B) ? throw(ArgumentError("argument must be non-empty")) : any(B)
 
 ## map over bitarrays ##
 
-function map!(f::Callable, A::Union(StridedArray,BitArray))
-    for i = 1:length(A)
-        A[i] = f(A[i])
-    end
-    return A
-end
+# Specializing map is even more important for bitarrays than it is for generic
+# arrays since there can be a 64x speedup by working at the level of Int64
+# instead of looping bit-by-bit.
 
-function map!(f::Callable, dest::Union(StridedArray,BitArray), A::Union(StridedArray,BitArray))
-    for i = 1:length(A)
-        dest[i] = f(A[i])
-    end
-    return dest
-end
+map(f::Callable, A::BitArray) = map(specialized_bitwise_unary(f), A)
+map(f::Callable, A::BitArray, B::BitArray) = map(specialized_bitwise_binary(f), A, B)
+map(f::BitFunctorUnary, A::BitArray) = map!(f, similar(A), A)
+map(f::BitFunctorBinary, A::BitArray, B::BitArray) = map!(f, similar(A), A, B)
 
-function map!(f::Callable, dest::Union(StridedArray,BitArray), A::Union(StridedArray,BitArray), B::Union(StridedArray,BitArray))
-    for i = 1:length(A)
-        dest[i] = f(A[i], B[i])
-    end
-    return dest
-end
+map!(f::Callable, A::BitArray) = map!(f, A, A)
+map!(f::Callable, dest::BitArray, A::BitArray) = map!(specialized_bitwise_unary(f), dest, A)
+map!(f::Callable, dest::BitArray, A::BitArray, B::BitArray) = map!(specialized_bitwise_binary(f), dest, A, B)
 
-function map!(f::Callable, dest::Union(StridedArray,BitArray), A::Union(StridedArray,BitArray), B::Number)
-    for i = 1:length(A)
-        dest[i] = f(A[i], B)
+# If we were able to specialize the function to a known bitwise operation,
+# map across the chunks. Otherwise, fall-back to the AbstractArray method that
+# iterates bit-by-bit.
+function map!(f::BitFunctorUnary, dest::BitArray, A::BitArray)
+    size(A) == size(dest) || throw(DimensionMismatch("sizes of dest and A must match"))
+    length(A) == 0 && return dest
+    for i=1:length(A.chunks)-1
+        dest.chunks[i] = f(A.chunks[i])
     end
-    return dest
+    dest.chunks[end] = f(A.chunks[end]) & _msk_end(A)
+    dest
 end
-
-function map!(f::Callable, dest::Union(StridedArray,BitArray), A::Number, B::Union(StridedArray,BitArray))
-    for i = 1:length(B)
-        dest[i] = f(A, B[i])
+function map!(f::BitFunctorBinary, dest::BitArray, A::BitArray, B::BitArray)
+    size(A) == size(B) == size(dest) || throw(DimensionMismatch("sizes of dest, A, and B must all match"))
+    length(A) == 0 && return dest
+    for i=1:length(A.chunks)-1
+        dest.chunks[i] = f(A.chunks[i], B.chunks[i])
     end
-    return dest
-end
-
-function map!(f::Callable, dest::Union(StridedArray,BitArray), As::Union(StridedArray,BitArray)...)
-    n = length(As[1])
-    i = 1
-    ith = a->a[i]
-    for i = 1:n
-        dest[i] = f(map(ith, As)...)
-    end
-    return dest
+    dest.chunks[end] = f(A.chunks[end], B.chunks[end]) & _msk_end(A)
+    dest
 end
 
 ## Filter ##
@@ -1692,7 +1691,7 @@ ctranspose(B::BitArray) = transpose(B)
 function permutedims(B::Union(BitArray,StridedArray), perm)
     dimsB = size(B)
     ndimsB = length(dimsB)
-    (ndimsB == length(perm) && isperm(perm)) || error("no valid permutation of dimensions")
+    (ndimsB == length(perm) && isperm(perm)) || throw(ArgumentError("no valid permutation of dimensions"))
     dimsP = ntuple(ndimsB, i->dimsB[perm[i]])::typeof(dimsB)
     P = similar(B, dimsP)
     permutedims!(P, B, perm)
@@ -1704,7 +1703,9 @@ end
 function hcat(B::BitVector...)
     height = length(B[1])
     for j = 2:length(B)
-        length(B[j]) == height || error("dimensions must match")
+        if length(B[j]) != height
+            throw(DimensionMismatch("dimensions must match"))
+        end
     end
     M = BitArray(height, length(B))
     for j = 1:length(B)
@@ -1736,7 +1737,9 @@ function hcat(A::Union(BitMatrix,BitVector)...)
         Aj = A[j]
         nd = ndims(Aj)
         ncols += (nd==2 ? size(Aj,2) : 1)
-        if size(Aj, 1) != nrows; error("rows must match"); end
+        if size(Aj, 1) != nrows
+            throw(DimensionMismatch("row lengths must match"))
+        end
     end
 
     B = BitArray(nrows, ncols)
@@ -1756,7 +1759,9 @@ function vcat(A::BitMatrix...)
     nrows = sum(a->size(a, 1), A)::Int
     ncols = size(A[1], 2)
     for j = 2:nargs
-        size(A[j], 2) == ncols || error("columns must match")
+        if size(A[j], 2) != ncols
+            throw(DimensionMismatch("column lengths must match"))
+        end
     end
     B = BitArray(nrows, ncols)
     Bc = B.chunks
@@ -1794,14 +1799,16 @@ function cat(catdim::Integer, X::Union(BitArray, Integer)...)
 
     if catdim > d_max + 1
         for i = 1:nargs
-            dimsX[1] == dimsX[i] || error("all inputs must have same dimensions when concatenating along a higher dimension");
+            if dimsX[1] != dimsX[i]
+                throw(DimensionMismatch("all inputs must have same dimensions when concatenating along a higher dimension"))
+            end
         end
     elseif nargs >= 2
         for d = 1:d_max
             d == catdim && continue
             len = d <= ndimsX[1] ? dimsX[1][d] : 1
             for i = 2:nargs
-                len == (d <= ndimsX[i] ? dimsX[i][d] : 1) || error("mismatch in dimension ", d)
+                len == (d <= ndimsX[i] ? dimsX[i][d] : 1) || throw(DimensionMismatch("mismatch in dimension $d"))
             end
         end
     end

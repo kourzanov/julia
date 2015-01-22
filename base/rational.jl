@@ -3,7 +3,7 @@ immutable Rational{T<:Integer} <: Real
     den::T
 
     function Rational(num::T, den::T)
-        num == den == 0 && error("invalid rational: 0//0")
+        num == den == zero(T) && throw(ArgumentError("invalid rational: zero($T)//zero($T)"))
         g = den < 0 ? -gcd(den, num) : gcd(den, num)
         new(div(num, g), div(den, g))
     end
@@ -175,6 +175,8 @@ function *(x::Rational, y::Rational)
 end
 /(x::Rational, y::Rational) = x//y
 /(x::Rational, z::Complex ) = inv(z/x)
+
+fma(x::Rational, y::Rational, z::Rational) = x*y+z
 
 ==(x::Rational, y::Rational) = (x.den == y.den) & (x.num == y.num)
 ==(x::Rational, y::Integer ) = (x.den == 1) & (x.num == y)

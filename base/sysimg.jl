@@ -59,6 +59,7 @@ include("abstractarray.jl")
 include("subarray.jl")
 include("array.jl")
 include("subarray2.jl")
+include("functors.jl")
 include("bitarray.jl")
 include("intset.jl")
 include("dict.jl")
@@ -239,15 +240,17 @@ using .Markdown
 # misc useful functions & macros
 include("util.jl")
 
-# sparse matrices and linear algebra
-include("sparse.jl")
-importall .SparseMatrix
+# dense linear algebra
 include("linalg.jl")
 importall .LinAlg
 const ⋅ = dot
 const × = cross
 include("broadcast.jl")
 importall .Broadcast
+
+# sparse matrices and sparse linear algebra
+include("sparse.jl")
+importall .SparseMatrix
 
 # statistics
 include("statistics.jl")
@@ -267,6 +270,10 @@ include("constants.jl")
 # Numerical integration
 include("quadgk.jl")
 importall .QuadGK
+
+# Fast math
+include("fastmath.jl")
+importall .FastMath
 
 # deprecated functions
 include("deprecated.jl")
