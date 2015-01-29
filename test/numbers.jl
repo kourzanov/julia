@@ -75,7 +75,9 @@ end
 let eps = 1//BigInt(2)^30, one_eps = 1+eps,
     eps64 = float64(eps), one_eps64 = float64(one_eps)
     @test eps64 == float64(eps)
+    @test rationalize(BigInt, eps64, tol=0) == eps
     @test one_eps64 == float64(one_eps)
+    @test rationalize(BigInt, one_eps64, tol=0) == one_eps
     @test one_eps64 * one_eps64 - 1 != float64(one_eps * one_eps - 1)
     @test fma(one_eps64, one_eps64, -1) == float64(one_eps * one_eps - 1)
 end
@@ -83,7 +85,9 @@ end
 let eps = 1//BigInt(2)^15, one_eps = 1+eps,
     eps32 = float32(eps), one_eps32 = float32(one_eps)
     @test eps32 == float32(eps)
+    @test rationalize(BigInt, eps32, tol=0) == eps
     @test one_eps32 == float32(one_eps)
+    @test rationalize(BigInt, one_eps32, tol=0) == one_eps
     @test one_eps32 * one_eps32 - 1 != float32(one_eps * one_eps - 1)
     @test fma(one_eps32, one_eps32, -1) == float32(one_eps * one_eps - 1)
 end
@@ -91,7 +95,11 @@ end
 let eps = 1//BigInt(2)^7, one_eps = 1+eps,
     eps16 = float16(float32(eps)), one_eps16 = float16(float32(one_eps))
     @test eps16 == float16(float32(eps))
+    # Currently broken in Julia -- enable when "rationalize" is fixed;
+    # see <https://github.com/JuliaLang/julia/issues/9897>
+    # @test rationalize(BigInt, eps16, tol=0) == eps
     @test one_eps16 == float16(float32(one_eps))
+    # @test rationalize(BigInt, one_eps16, tol=0) == one_eps
     @test one_eps16 * one_eps16 - 1 != float16(float32(one_eps * one_eps - 1))
     @test (fma(one_eps16, one_eps16, -1) ==
            float16(float32(one_eps * one_eps - 1)))
@@ -100,7 +108,9 @@ end
 let eps = 1//BigInt(2)^200, one_eps = 1+eps,
     eps256 = BigFloat(eps), one_eps256 = BigFloat(one_eps)
     @test eps256 == BigFloat(eps)
+    @test rationalize(BigInt, eps256, tol=0) == eps
     @test one_eps256 == BigFloat(one_eps)
+    @test rationalize(BigInt, one_eps256, tol=0) == one_eps
     @test one_eps256 * one_eps256 - 1 != BigFloat(one_eps * one_eps - 1)
     @test fma(one_eps256, one_eps256, -1) == BigFloat(one_eps * one_eps - 1)
 end
@@ -133,6 +143,14 @@ let eps = 1//BigInt(2)^7, one_eps = 1+eps,
     @test isapprox(muladd(one_eps16, one_eps16, -1),
                    float16(float32(one_eps * one_eps - 1)))
 end
+
+@test muladd(1,2,3) == 1*2+3
+@test muladd(big(1),2,3) == big(1)*2+3
+@test muladd(uint(1),2,3) == uint(1)*2+3
+@test muladd(1//1,2,3) == (1//1)*2+3
+@test muladd(big(1//1),2,3) == big(1//1)*2+3
+@test muladd(1.0,2,3) == 1.0*2+3
+@test muladd(big(1.0),2,3) == big(1.0)*2+3
 
 # lexing typemin(Int64)
 @test (-9223372036854775808)^1 == -9223372036854775808
@@ -1708,6 +1726,19 @@ approx_eq(a, b) = approx_eq(a, b, 1e-6)
 @test approx_eq(signif(123.456,8,2), 123.5)
 @test signif(0.0, 1) === 0.0
 @test signif(-0.0, 1) === -0.0
+@test signif(1.2, 2) === 1.2
+@test signif(1.0, 6) === 1.0
+@test signif(0.6, 1) === 0.6
+@test signif(7.262839104539736, 2) === 7.3
+@test isinf(signif(Inf, 3))
+@test isnan(signif(NaN, 3))
+@test signif(1.12312, 1000) === 1.12312
+@test signif(float32(7.262839104539736), 3) === float32(7.26)
+@test signif(float32(7.262839104539736), 4) === float32(7.263)
+@test signif(float32(1.2), 3) === float32(1.2)
+@test signif(float32(1.2), 5) === float32(1.2)
+@test signif(float16(0.6), 2) === float16(0.6)
+@test signif(float16(1.1), 70) === float16(1.1)
 
 # issue #1308
 @test hex(~uint128(0)) == "f"^32
@@ -2157,6 +2188,11 @@ end
 @test_throws InexactError convert(Int, big(2)^100)
 @test_throws InexactError convert(Int16, big(2)^100)
 @test_throws InexactError convert(Int, typemax(UInt))
+
+# issue #9789
+@test_throws InexactError convert(Int8, typemax(UInt64))
+@test_throws InexactError convert(Int16, typemax(UInt64))
+@test_throws InexactError convert(Int, typemax(UInt64))
 
 let x = big(-0.0)
     @test signbit(x) && !signbit(abs(x))
