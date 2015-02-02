@@ -130,7 +130,7 @@ static Constant *julia_const_to_llvm(jl_value_t *e)
     jl_value_t *jt = jl_typeof(e);
     jl_datatype_t *bt = (jl_datatype_t*)jt;
 
-    if (!jl_is_datatype(bt))
+    if (!jl_is_datatype(bt) || bt == jl_gensym_type)
         return NULL;
 
     if (e == jl_true)
@@ -878,9 +878,10 @@ static Value *emit_intrinsic(intrinsic f, jl_value_t **args, size_t nargs,
                                                  emit_expr(args[2], ctx, false));
         }
         else if (t1 == t2 && llt1 == llt2 && llt1 != jl_pvalue_llvmt) {
-            ifelse_result = builder.CreateSelect(isfalse,
-                                                 auto_unbox(args[3], ctx),
-                                                 auto_unbox(args[2], ctx));
+            Value *x = auto_unbox(args[3], ctx);
+            ifelse_result = tpropagate(x, builder.CreateSelect(isfalse,
+                                                               x,
+                                                               auto_unbox(args[2], ctx)));
         }
         else {
             Value *arg1 = boxed(emit_expr(args[3],ctx,false), ctx, expr_type(args[3],ctx));

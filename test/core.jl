@@ -2113,3 +2113,20 @@ function test_wr()
     @test wref[1].value == nothing
 end
 test_wr()
+
+# issue #9947
+function f9947()
+    if 1 == 0
+        1
+    else
+        min(UInt128(2),1)
+    end
+end
+@test f9947() == UInt128(1)
+
+# Type inference for tuple parameters
+immutable fooTuple{s}; end
+barTuple1() = fooTuple{(:y,)}()
+barTuple2() = fooTuple{tuple(:y)}()
+
+@test Base.return_types(barTuple1,())[1] == Base.return_types(barTuple2,())[1] == fooTuple{(:y,)}

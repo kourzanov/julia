@@ -165,8 +165,12 @@ Library improvements
 
   * Rational arithmetic throws errors on overflow ([#8672]).
 
+  * Added Base.get_process_title / Base.set_process_title. ([#9957])
+
 Deprecated or removed
 ---------------------
+
+  * Woodbury special matrix type has been removed from LinAlg ([#10023]).
 
   * `median` and `median!` no longer accept a `checknan` keyword argument ([#8605]).
 

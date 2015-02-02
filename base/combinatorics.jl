@@ -68,11 +68,12 @@ function factorial{T<:Integer}(n::T, k::T)
     end
     f = one(T)
     while n > k
-        f *= n
+        f = Base.checked_mul(f,n)
         n -= 1
     end
     return f
 end
+factorial(n::Integer, k::Integer) = factorial(promote(n, k)...)
 
 function binomial{T<:Integer}(n::T, k::T)
     k < 0 && return zero(T)
