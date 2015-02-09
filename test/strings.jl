@@ -1317,3 +1317,27 @@ end
 @test float32("1\n") == 1.0
 @test float32(split("0,1\n",","))[2] == 1.0
 @test_throws ArgumentError float32(split("0,1 X\n",","))[2]
+
+#more ascii tests
+@test convert(ASCIIString, UInt8[32,107,75], "*") == " kK"
+@test convert(ASCIIString, UInt8[132,107,75], "*") == "*kK"
+@test convert(ASCIIString, UInt8[], "*") == ""
+@test convert(ASCIIString, UInt8[255], "*") == "*"
+
+@test ucfirst("Hola")=="Hola"
+@test ucfirst("hola")=="Hola"
+@test ucfirst("")==""
+@test ucfirst("*")=="*"
+
+@test lcfirst("Hola")=="hola"
+@test lcfirst("hola")=="hola"
+@test lcfirst("")==""
+@test lcfirst("*")=="*"
+
+#more UTF8String tests
+@test convert(UTF8String, UInt8[32,107,75], "*") == " kK"
+@test convert(UTF8String, UInt8[132,107,75], "*") == "*kK"
+@test convert(UTF8String, UInt8[32,107,75], "αβ") == " kK"
+@test convert(UTF8String, UInt8[132,107,75], "αβ") == "αβkK"
+@test convert(UTF8String, UInt8[], "*") == ""
+@test convert(UTF8String, UInt8[255], "αβ") == "αβ"

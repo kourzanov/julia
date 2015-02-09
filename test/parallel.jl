@@ -182,6 +182,40 @@ workloads = hist(@parallel((a,b)->[a,b], for i=1:7; myid(); end), nprocs())[2]
     @test isready(rr1)
 end
 
+# specify pids for pmap
+@test sort(workers()[1:2]) == sort(unique(pmap(x->(sleep(0.1);myid()), 1:10, pids = workers()[1:2])))
+
+# Testing buffered  and unbuffered reads
+# This large array should write directly to the socket
+a = ones(10^6)
+@test a == remotecall_fetch(id_other, (x)->x, a)
+
+# Not a bitstype, should be buffered
+s = [randstring() for x in 1:10^5]
+@test s == remotecall_fetch(id_other, (x)->x, s)
+
+#large number of small requests
+[remotecall_fetch(id_other, myid) for i in 1:100000]
+
+# test parallel sends of large arrays from multiple tasks to the same remote worker
+ntasks = 10
+rr_list = [RemoteRef() for x in 1:ntasks]
+for rr in rr_list
+    @async let rr=rr
+        a=ones(10^6);
+        try
+            for i in 1:10
+                @test a == remotecall_fetch(id_other, (x)->x, a)
+                yield()
+            end
+            put!(rr, :OK)
+        catch
+            put!(rr, :ERROR)
+        end
+    end
+end
+
+@test [fetch(rr) for rr in rr_list] == [:OK for x in 1:ntasks]
 
 # TODO: The below block should be always enabled but the error is printed by the event loop
 
@@ -228,9 +262,7 @@ if haskey(ENV, "PTEST_FULL")
     #Issue #9951
     hosts=[]
     for i in 1:30
-        push!(hosts, "localhost")
-        push!(hosts, string(getipaddr()))
-        push!(hosts, "127.0.0.1")
+        push!(hosts, "localhost", string(getipaddr()), "127.0.0.1")
     end
 
     print("\nTesting SSH addprocs with $(length(hosts)) workers...\n")
@@ -254,16 +286,21 @@ if haskey(ENV, "PTEST_FULL")
 
     test_n_remove_pids(new_pids)
 
-    print("\nMore addprocs tests...\n")
-
-    #Other addprocs/rmprocs tests
+    print("\nMixed ssh addprocs with :auto\n")
     new_pids = sort(remotecall_fetch(1, addprocs, ["localhost", ("127.0.0.1", :auto), "localhost"]))
     @test length(new_pids) == (2 + Sys.CPU_CORES)
     test_n_remove_pids(new_pids)
 
+    print("\nMixed ssh addprocs with numbers\n")
     new_pids = sort(remotecall_fetch(1, addprocs, [("localhost", 2), ("127.0.0.1", 2), "localhost"]))
     @test length(new_pids) == 5
     test_n_remove_pids(new_pids)
+
+    print("\nssh addprocs with tunnel\n")
+    new_pids = sort(remotecall_fetch(1, ()->addprocs([("localhost", 2)]; tunnel=true)))
+    @test length(new_pids) == 2
+    test_n_remove_pids(new_pids)
+
 end
 end
 

@@ -233,7 +233,7 @@ show(io::IO, s::Symbol) = show_unquoted(io, QuoteNode(s))
 
 typealias ExprNode Union(Expr, QuoteNode, SymbolNode, LineNumberNode,
                          LabelNode, GotoNode, TopNode)
-print        (io::IO, ex::ExprNode)    = show_unquoted(io, ex)
+print        (io::IO, ex::ExprNode)    = (show_unquoted(io, ex); nothing)
 show         (io::IO, ex::ExprNode)    = show_unquoted(io, QuoteNode(ex))
 show_unquoted(io::IO, ex)              = show_unquoted(io, ex, 0, 0)
 show_unquoted(io::IO, ex, indent::Int) = show_unquoted(io, ex, indent, 0)
@@ -283,7 +283,7 @@ is_linenumber(ex)                 = false
 
 is_quoted(ex)            = false
 is_quoted(ex::QuoteNode) = true
-is_quoted(ex::Expr)      = is_expr(ex, :quote, 1)
+is_quoted(ex::Expr)      = is_expr(ex, :quote, 1) || is_expr(ex, :inert, 1)
 
 unquoted(ex::QuoteNode)  = ex.value
 unquoted(ex::Expr)       = ex.args[1]

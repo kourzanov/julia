@@ -145,7 +145,7 @@ Constructors
 
 .. function:: similar(array, element_type, dims)
 
-   Create an uninitialized array of the same type as the given array, but with the specified element type and dimensions. The second and third arguments are both optional. The ``dims`` argument may be a tuple or a series of integer arguments.
+   Create an uninitialized array of the same type as the given array, but with the specified element type and dimensions. The second and third arguments are both optional. The ``dims`` argument may be a tuple or a series of integer arguments. For some special ``AbstractArray`` objects which are not real containers (like ranges), this function returns a standard ``Array`` to allow operating on elements.
 
 .. function:: reinterpret(type, A)
 
@@ -637,13 +637,29 @@ BitArrays
 
    Performs a bitwise not operation on B. See :ref:`~ operator <~>`.
 
-.. function:: rol(B::BitArray{1},i::Integer) -> BitArray{1}
+.. function:: rol!(dest::BitArray{1}, src::BitArray{1}, i::Integer) -> BitArray{1}
 
-   Left rotation operator.
+   Performs a left rotation operation on ``src`` and put the result into ``dest``.
 
-.. function:: ror(B::BitArray{1},i::Integer) -> BitArray{1}
+.. function:: rol!(B::BitArray{1}, i::Integer) -> BitArray{1}
 
-   Right rotation operator.
+   Performs a left rotation operation on B.
+
+.. function:: rol(B::BitArray{1}, i::Integer) -> BitArray{1}
+
+   Performs a left rotation operation.
+
+.. function:: ror!(dest::BitArray{1}, src::BitArray{1}, i::Integer) -> BitArray{1}
+
+   Performs a right rotation operation on ``src`` and put the result into ``dest``.
+
+.. function:: ror!(B::BitArray{1}, i::Integer) -> BitArray{1}
+
+   Performs a right rotation operation on B.
+
+.. function:: ror(B::BitArray{1}, i::Integer) -> BitArray{1}
+
+   Performs a right rotation operation.
 
 .. _stdlib-sparse:
 
@@ -670,7 +686,7 @@ Sparse matrices support much of the same set of operations as dense matrices. Th
 
 .. function:: sparse(A)
 
-   Convert a dense matrix ``A`` into a sparse matrix.
+   Convert an AbstractMatrix ``A`` into a sparse matrix.
 
 .. function:: sparsevec(A)
 

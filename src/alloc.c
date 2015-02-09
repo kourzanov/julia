@@ -96,6 +96,7 @@ jl_sym_t *boundscheck_sym; jl_sym_t *copyast_sym;
 jl_sym_t *fastmath_sym;
 jl_sym_t *simdloop_sym; jl_sym_t *meta_sym;
 jl_sym_t *arrow_sym; jl_sym_t *ldots_sym;
+jl_sym_t *inert_sym;
 
 typedef struct {
     int64_t a;
@@ -717,6 +718,7 @@ jl_datatype_t *jl_new_datatype(jl_sym_t *name, jl_datatype_t *super,
     t->ninitialized = ninitialized;
     t->instance = NULL;
     t->struct_decl = NULL;
+    t->ditype = NULL;
     t->size = 0;
     t->alignment = 1;
 

@@ -900,7 +900,7 @@
         (begin (take-token s)
                (cond ((closing-token? (peek-token s))  op)
                      ((memq op '(& |::|))  (list op (parse-call s)))
-                     (else                 (list op (parse-atom s)))))
+                     (else                 (list op (parse-unary-prefix s)))))
         (parse-atom s))))
 
 ;; parse function call, indexing, dot, and transpose expressions
@@ -1172,7 +1172,7 @@
                        #f
                        finalb)
                  (let* ((var (parse-eq* s))
-                        (var? (and (not nl) (symbol? var)))
+                        (var? (and (not nl) (or (symbol? var) (and (length= var 2) (eq? (car var) '$)))))
                         (catch-block (if (eq? (require-token s) 'finally)
                                          '(block)
                                          (parse-block s))))
@@ -1206,7 +1206,7 @@
            (error "expected assignment after \"const\"")
            `(const ,assgn))))
     ((module baremodule)
-     (let* ((name (parse-atom s))
+     (let* ((name (parse-unary-prefix s))
             (body (parse-block s)))
        (expect-end s)
        (list 'module (eq? word 'module) name

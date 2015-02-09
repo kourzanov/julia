@@ -48,6 +48,7 @@ DLLEXPORT void NORETURN jl_errorf(const char *fmt, ...)
     ios_vprintf(&buf, fmt, args);
     va_end(args);
     if (jl_errorexception_type == NULL) {
+        ios_write(&buf, "", 1); // null terminate the buffer
         JL_PRINTF(JL_STDERR, "%s", buf.buf);
         jl_exit(1);
     }
@@ -431,14 +432,13 @@ JL_CALLABLE(jl_f_apply)
         }
     }
     jl_value_t **newargs;
-    if (n > jl_page_size/sizeof(jl_value_t*)) {
+    int onstack = (n < jl_page_size/sizeof(jl_value_t*));
+    JL_GC_PUSHARGS(newargs, onstack ? n : 1);
+    if (!onstack) {
         // put arguments on the heap if there are too many
         jl_value_t *argarr = (jl_value_t*)jl_alloc_cell_1d(n);
-        JL_GC_PUSH1(&argarr);
+        newargs[0] = argarr;
         newargs = jl_cell_data(argarr);
-    }
-    else {
-        JL_GC_PUSHARGS(newargs, n);
     }
     n = 0;
     for(i=1; i < nargs; i++) {

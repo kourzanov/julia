@@ -224,6 +224,7 @@ typedef struct _jl_datatype_t {
     uint32_t alignment;  // strictest alignment over all fields
     uint32_t uid;
     void *struct_decl;  //llvm::Value*
+    void *ditype; // llvm::MDNode* to be used as llvm::DIType(ditype)
     jl_fielddesc_t fields[];
 } jl_datatype_t;
 
@@ -421,6 +422,7 @@ extern jl_sym_t *boundscheck_sym; extern jl_sym_t *copyast_sym;
 extern jl_sym_t *fastmath_sym;
 extern jl_sym_t *simdloop_sym; extern jl_sym_t *meta_sym;
 extern jl_sym_t *arrow_sym; extern jl_sym_t *ldots_sym;
+extern jl_sym_t *inert_sym;
 
 
 // GC write barrier

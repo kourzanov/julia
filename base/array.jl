@@ -57,6 +57,12 @@ end
 
 copy!{T}(dest::Array{T}, src::Array{T}) = copy!(dest, 1, src, 1, length(src))
 
+function copy(a::Array)
+    b = similar(a)
+    ccall(:memcpy, Ptr{Void}, (Ptr{Void}, Ptr{Void}, UInt), b, a, sizeof(a))
+    return b
+end
+
 function reinterpret{T,S}(::Type{T}, a::Array{S,1})
     nel = int(div(length(a)*sizeof(S),sizeof(T)))
     # TODO: maybe check that remainder is zero?
@@ -1162,7 +1168,7 @@ function findn(A::StridedMatrix)
     return (I, J)
 end
 
-function findnz{T}(A::StridedMatrix{T})
+function findnz{T}(A::AbstractMatrix{T})
     nnzA = countnz(A)
     I = zeros(Int, nnzA)
     J = zeros(Int, nnzA)
@@ -1239,11 +1245,9 @@ end
 
 function findin(a, b)
     ind = Array(Int, 0)
-    bset = union!(Set(), b)
-    for i = 1:length(a)
-        if in(a[i], bset)
-            push!(ind, i)
-        end
+    bset = Set(b)
+    @inbounds for i = 1:length(a)
+        a[i] in bset && push!(ind, i)
     end
     ind
 end
@@ -1447,7 +1451,7 @@ function setdiff(a, b)
     args_type = promote_type(eltype(a), eltype(b))
     bset = Set(b)
     ret = Array(args_type,0)
-    seen = Set()
+    seen = Set{eltype(a)}()
     for a_elem in a
         if !in(a_elem, seen) && !in(a_elem, bset)
             push!(ret, a_elem)

@@ -178,7 +178,7 @@ Julia does not install anything outside the directory it was cloned into. Julia 
 
 #### General
 
-* GCC version 4.6 or later is recommended to build Julia.
+* GCC version 4.7 or later is required to build Julia.
 * To use external shared libraries not in the system library search path, set `USE_SYSTEM_XXX=1` and `LDFLAGS=-Wl,-rpath /path/to/dir/contains/libXXX.so` in `Make.user`.
   * Instead of setting `LDFLAGS`, putting the library directory into the environment variable `LD_LIBRARY_PATH` (at both compile and run time) also works.
 * See also the [external dependencies](#Required-Build-Tools-External-Libraries).
@@ -198,17 +198,11 @@ The [julia-deps PPA](https://launchpad.net/~staticfloat/+archive/julia-deps/) co
 
 For a fast and easy current installation, the `before_install` section of [travis.yml](https://github.com/JuliaLang/julia/blob/master/.travis.yml) is a great resource.  Note that those instructions are for Ubuntu 12.04, and for later versions you may need to install newer versions of dependencies, such as `libunwind8-dev` instead of `libunwind7-dev`.
 
-#### RHEL/CentOS 5
+#### RHEL/CentOS 6
 
-On RHEL/CentOS 5 systems, the default compiler (`gcc` 4.1) is too old to build Julia.
+On RHEL/CentOS 6 systems, the default compiler (`gcc` 4.4) is too old to build Julia.
 
-If the `gcc44` and `gfortran44` packages are installed, you can specify their use by adding the following to Make.user
-
-    FC = gfortran44
-    CC = gcc44
-    CXX = g++44
-
-Otherwise, install or contact your systems administrator to install a more recent version of `gcc`.
+Install or contact your systems administrator to install a more recent version of `gcc`. The [Scientific Linux Developer Toolset](http://linux.web.cern.ch/linux/devtoolset/) works well.
 
 #### Google Compute Engine
 
@@ -241,9 +235,9 @@ If you see build failures in OpenBLAS or if you prefer to experiment, you can us
 
 ### FreeBSD
 
-On *FreeBSD Release 9.0*, install the `gcc46`, `git`, and `gmake` packages/ports, and compile Julia with the command:
+On *FreeBSD Release 9.0*, install the `gcc47`, `git`, and `gmake` packages/ports, and compile Julia with the command:
 
-    $ gmake FC=gfortran46
+    $ gmake FC=gfortran47
 
 You must use the `gmake` command on FreeBSD instead of `make`.
 
@@ -261,7 +255,7 @@ Julia can be developed in an isolated Vagrant environment. See [the Vagrant READ
 Building Julia requires that the following software be installed:
 
 - **[GNU make]**                — building dependencies.
-- **[gcc & g++][gcc]** (>= 4.4) or **[Clang][clang]** (>= 3.1, Xcode 4.3.3 on OS X) — compiling and linking C, C++
+- **[gcc & g++][gcc]** (>= 4.7) or **[Clang][clang]** (>= 3.1, Xcode 4.3.3 on OS X) — compiling and linking C, C++
 - **[gfortran][gcc]**           — compiling and linking Fortran libraries
 - **[git]**                     — version control and package management (version 1.7.3+ required)
 - **[perl]**                    — preprocessing of header files of libraries.
