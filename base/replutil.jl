@@ -119,6 +119,7 @@ showerror(io::IO, ex::ErrorException) = print(io, ex.msg)
 showerror(io::IO, ex::KeyError) = print(io, "KeyError: $(ex.key) not found")
 showerror(io::IO, ex::InterruptException) = print(io, "InterruptException:")
 showerror(io::IO, ex::ArgumentError) = print(io, "ArgumentError: $(ex.msg)")
+showerror(io::IO, ex::AssertionError) = print(io, "AssertionError: $(ex.msg)")
 
 function showerror(io::IO, ex::MethodError)
     print(io, "MethodError: ")
@@ -162,19 +163,15 @@ function showerror(io::IO, ex::MethodError)
     # and sees a no method error for convert
     if ex.f == Base.convert && !isempty(ex.args) && isa(ex.args[1], Type)
         println(io)
-        print(io, "This may have arisen from a call to the constructor $(ex.args[1])(...), ")
-        print(io, "since type constructors fall back to convert methods in julia v0.4.")
+        print(io, "This may have arisen from a call to the constructor $(ex.args[1])(...),")
+        print(io, "\nsince type constructors fall back to convert methods.")
     end
-
     show_method_candidates(io, ex)
 end
 
 function show_method_candidates(io::IO, ex::MethodError)
     # Displays the closest candidates of the given function by looping over the
     # functions methods and counting the number of matching arguments.
-
-    return_T(val) = typeof(val)
-    return_T(val::DataType) = Type{val}
 
     lines = Array((IOBuffer, Int), 0)
     name = isgeneric(ex.f) ? ex.f.env.name : :anonymous
@@ -192,7 +189,7 @@ function show_method_candidates(io::IO, ex::MethodError)
             show_delim_array(buf, tv, '{', ',', '}', false)
         end
         print(buf, "(")
-        t_i = [return_T(arg) for arg in ex.args]
+        t_i = [Base.REPLCompletions.method_type_of_arg(arg) for arg in ex.args]
         right_matches = 0
         for i = 1 : min(length(t_i), length(method.sig))
             i != 1 && print(buf, ", ")

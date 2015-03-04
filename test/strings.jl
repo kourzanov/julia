@@ -660,6 +660,17 @@ end
 @test replace("ḟøøƀäṙḟøø", r"(ḟø|ƀä)", "xx") == "xxøxxṙxxø"
 @test replace("ḟøøƀäṙḟøø", r"(ḟøø|ƀä)", "ƀäṙ") == "ƀäṙƀäṙṙƀäṙ"
 
+# lower and upper
+@test uppercase("aBc") == "ABC"
+@test uppercase('A') == 'A'
+@test uppercase('a') == 'A'
+@test lowercase("AbC") == "abc"
+@test lowercase('A') == 'a'
+@test lowercase('a') == 'a'
+@test ucfirst("Abc") == "Abc"
+@test ucfirst("abc") == "Abc"
+@test lcfirst("ABC") == "aBC"
+@test lcfirst("aBC") == "aBC"
 
 # {starts,ends}with
 @test startswith("abcd", 'a')
@@ -752,7 +763,7 @@ arr = ["a","b","c"]
 
 # string iteration, and issue #1454
 str = "é"
-str_a = [str...]
+str_a = vcat(str...)
 @test length(str_a)==1
 @test str_a[1] == str[1]
 
@@ -907,7 +918,7 @@ bin_val = hex2bytes("07bf")
 # combo
 @test (@sprintf "%f %d %d %f" 1.0 [3 4]... 5) == "1.000000 3 4 5.000000"
 # multi
-@test (@sprintf "%s %f %9.5f %d %d %d %d%d%d%d" [1:6]... [7,8,9,10]...) == "1 2.000000   3.00000 4 5 6 78910"
+@test (@sprintf "%s %f %9.5f %d %d %d %d%d%d%d" [1:6;]... [7,8,9,10]...) == "1 2.000000   3.00000 4 5 6 78910"
 # comprehension
 @test (@sprintf "%s %s %s %d %d %d %f %f %f" Any[10^x+y for x=1:3,y=1:3 ]...) == "11 101 1001 12 102 1002 13.000000 103.000000 1003.000000"
 
@@ -1049,11 +1060,11 @@ end
 @test_throws BoundsError checkbounds("hello", 6)
 @test_throws BoundsError checkbounds("hello", 0:3)
 @test_throws BoundsError checkbounds("hello", 4:6)
-@test_throws BoundsError checkbounds("hello", [0:3])
-@test_throws BoundsError checkbounds("hello", [4:6])
+@test_throws BoundsError checkbounds("hello", [0:3;])
+@test_throws BoundsError checkbounds("hello", [4:6;])
 @test checkbounds("hello", 2)
 @test checkbounds("hello", 1:5)
-@test checkbounds("hello", [1:5])
+@test checkbounds("hello", [1:5;])
 
 
 # isvalid(), chr2ind() and ind2chr() for SubString{DirectIndexString}
@@ -1258,6 +1269,21 @@ end
 @test iscntrl( string(char(0x0080))) == true
 @test ispunct( "‡؟჻") ==true
 
+@test isxdigit('0') == true
+@test isxdigit("0") == true
+@test isxdigit("a") == true
+@test isxdigit("g") == false
+
+@test is_valid_ascii("is_valid_ascii") == true
+@test is_valid_ascii("Σ_not_valid_ascii") == false
+@test is_valid_char('a') == true
+@test is_valid_char('\x00') == true
+@test is_valid_char('\ud800') == false
+
+@test is_valid_utf16(utf16("a")) == true
+@test is_valid_utf16(utf16("\ud800")) == false
+# TODO is_valid_utf8
+
 # This caused JuliaLang/JSON.jl#82
 @test first('\x00':'\x7f') === '\x00'
 @test last('\x00':'\x7f') === '\x7f'
@@ -1341,3 +1367,41 @@ end
 @test convert(UTF8String, UInt8[132,107,75], "αβ") == "αβkK"
 @test convert(UTF8String, UInt8[], "*") == ""
 @test convert(UTF8String, UInt8[255], "αβ") == "αβ"
+
+# test AbstractString functions at beginning of string.jl
+immutable tstStringType <: AbstractString
+    data::Array{UInt8,1}
+end
+tstr = tstStringType("12");
+@test_throws ErrorException endof(tstr)
+@test_throws ErrorException next(tstr, bool(1))
+
+gstr = Base.GenericString("12");
+@test typeof(string(gstr))==Base.GenericString
+@test bytestring()==""
+
+@test convert(Array{UInt8}, gstr) ==[49;50]
+@test convert(Array{Char,1}, gstr) ==['1';'2']
+@test convert(Symbol, gstr)==symbol("12")
+
+@test getindex(gstr, bool(1))=='1'
+@test getindex(gstr, 1.0)=='1'
+@test getindex(gstr,bool(1):bool(1))=="1"
+@test getindex(gstr,AbstractVector([bool(1):bool(1);]))=="1"
+
+@test symbol(gstr)==symbol("12")
+
+@test_throws ErrorException sizeof(gstr)
+
+@test length(Base.GenericString(""))==0
+
+@test getindex(gstr,AbstractVector([bool(1):bool(1);]))=="1"
+
+@test nextind(AbstractArray([bool(1):bool(1);]),1)==2
+
+@test checkbounds(gstr,1.0)==true
+
+@test ind2chr(gstr,2)==2
+
+# issue #10307
+@test typeof(int16(String[])) == Vector{Int16}

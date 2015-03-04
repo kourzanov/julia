@@ -71,7 +71,6 @@ show(io::IO, s::AbstractString) = print_quoted(io, s)
 
 sizeof(s::AbstractString) = error("type $(typeof(s)) has no canonical binary representation")
 
-eltype(::AbstractString) = Char
 eltype{T<:AbstractString}(::Type{T}) = Char
 
 (*)(s::AbstractString...) = string(s...)
@@ -822,7 +821,7 @@ end
 map_result(s::AbstractString, a::Vector{UInt8}) = UTF8String(a)
 map_result(s::Union(ASCIIString,SubString{ASCIIString}), a::Vector{UInt8}) = bytestring(a)
 
-function map(f::Function, s::AbstractString)
+function map(f, s::AbstractString)
     out = IOBuffer(Array(UInt8,endof(s)),true,true)
     truncate(out,0)
     for c in s
@@ -835,7 +834,7 @@ function map(f::Function, s::AbstractString)
     map_result(s, takebuf_array(out))
 end
 
-function filter(f::Function, s::AbstractString)
+function filter(f, s::AbstractString)
     out = IOBuffer(Array(UInt8,endof(s)),true,true)
     truncate(out,0)
     for c in s
@@ -1629,7 +1628,7 @@ parsefloat(::Type{Float32}, x::AbstractString) = float32(x)
 for conv in (:float, :float32, :float64,
              :int, :int8, :int16, :int32, :int64,
              :uint, :uint8, :uint16, :uint32, :uint64)
-    @eval ($conv){S<:AbstractString}(a::AbstractArray{S}) = map($conv, a)
+    @eval ($conv){S<:AbstractString}(a::AbstractArray{S}) = map!($conv, similar(a,typeof($conv(0))), a)
 end
 
 # find the index of the first occurrence of a value in a byte array
@@ -1679,7 +1678,7 @@ end
 rsearch(a::ByteArray, b::Union(Int8,UInt8,Char)) = rsearch(a,b,length(a))
 
 # return a random string (often useful for temporary filenames/dirnames)
-let b = uint8(['0':'9','A':'Z','a':'z'])
+let b = uint8(['0':'9';'A':'Z';'a':'z'])
     global randstring
     randstring(n::Int) = ASCIIString(b[rand(1:length(b),n)])
     randstring() = randstring(8)

@@ -313,7 +313,7 @@ static void jl_gen_llvm_gv_array(llvm::Module *mod, SmallVector<GlobalVariable*,
                     ConstantInt::get(T_size,globalUnique+1),
                     "jl_globalUnique")));
 
-    Constant *feature_string = ConstantDataArray::getString(jl_LLVMContext, jl_compileropts.cpu_target);
+    Constant *feature_string = ConstantDataArray::getString(jl_LLVMContext, jl_options.cpu_target);
     globalvars.push_back(addComdat(new GlobalVariable(
                     *mod,
                     feature_string->getType(),
@@ -323,7 +323,7 @@ static void jl_gen_llvm_gv_array(llvm::Module *mod, SmallVector<GlobalVariable*,
                     "jl_sysimg_cpu_target")));
 
     // For native also store the cpuid
-    if (strcmp(jl_compileropts.cpu_target,"native") == 0) {
+    if (strcmp(jl_options.cpu_target,"native") == 0) {
         uint32_t info[4];
 
         jl_cpuid((int32_t*)info, 1);
@@ -910,8 +910,8 @@ static Value *emit_bounds_check(Value *a, jl_value_t *ty, Value *i, Value *len, 
     Value *im1 = builder.CreateSub(i, ConstantInt::get(T_size, 1));
 #if CHECK_BOUNDS==1
     if (((ctx->boundsCheck.empty() || ctx->boundsCheck.back()==true) &&
-         jl_compileropts.check_bounds != JL_COMPILEROPT_CHECK_BOUNDS_OFF) ||
-        jl_compileropts.check_bounds == JL_COMPILEROPT_CHECK_BOUNDS_ON) {
+         jl_options.check_bounds != JL_OPTIONS_CHECK_BOUNDS_OFF) ||
+         jl_options.check_bounds == JL_OPTIONS_CHECK_BOUNDS_ON) {
         Value *ok = builder.CreateICmpULT(im1, len);
         BasicBlock *failBB = BasicBlock::Create(getGlobalContext(),"fail",ctx->f);
         BasicBlock *passBB = BasicBlock::Create(getGlobalContext(),"pass");
@@ -1074,7 +1074,7 @@ static jl_value_t *expr_type(jl_value_t *e, jl_codectx_t *ctx)
         e = jl_fieldref(e,0);
         jl_binding_t *b = jl_get_binding(topmod(ctx), (jl_sym_t*)e);
         if (!b || !b->value)
-            return jl_top_type;
+            return (jl_value_t*)jl_any_type;
         if (b->constp) {
             e = b->value;
             goto type_of_constant;
@@ -1101,7 +1101,7 @@ static jl_value_t *expr_type(jl_value_t *e, jl_codectx_t *ctx)
         }
         jl_binding_t *b = jl_get_binding(ctx->module, (jl_sym_t*)e);
         if (!b || !b->value)
-            return jl_top_type;
+            return (jl_value_t*)jl_any_type;
         if (b->constp)
             e = b->value;
         else
@@ -1469,8 +1469,8 @@ static Value *emit_array_nd_index(Value *a, jl_value_t *ex, size_t nd, jl_value_
     Value *stride = ConstantInt::get(T_size, 1);
 #if CHECK_BOUNDS==1
     bool bc = ((ctx->boundsCheck.empty() || ctx->boundsCheck.back()==true) &&
-               jl_compileropts.check_bounds != JL_COMPILEROPT_CHECK_BOUNDS_OFF) ||
-        jl_compileropts.check_bounds == JL_COMPILEROPT_CHECK_BOUNDS_ON;
+               jl_options.check_bounds != JL_OPTIONS_CHECK_BOUNDS_OFF) ||
+              jl_options.check_bounds == JL_OPTIONS_CHECK_BOUNDS_ON;
     BasicBlock *failBB=NULL, *endBB=NULL;
     if (bc) {
         failBB = BasicBlock::Create(getGlobalContext(), "oob");
@@ -1653,7 +1653,7 @@ static Value *boxed(Value *v, jl_codectx_t *ctx, jl_value_t *jt)
     if (jt == NULL) {
         jt = julia_type_of(v);
     }
-    else if (!jl_is_leaf_type(jt)) {
+    else if (jt != jl_bottom_type && !jl_is_leaf_type(jt)) {
         // we can get a sharper type from julia_type_of than expr_type in some
         // cases, due to ccall's compile-time evaluations of types. see issue #5752
         jl_value_t *jt2 = julia_type_of(v);

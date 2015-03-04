@@ -4,6 +4,13 @@
 @test significand(12.8) == 1.6
 @test exponent(12.8) == 3
 
+for T in (Int, Float64, BigFloat)
+    @test_approx_eq deg2rad(T(180)) 1pi
+    @test_approx_eq deg2rad(T[45, 60]) [pi/T(4), pi/T(3)]
+    @test_approx_eq rad2deg([pi/T(4), pi/T(3)]) [45, 60]
+    @test_approx_eq rad2deg(T(1)*pi) 180
+end
+
 # degree-based trig functions
 for T = (Float32,Float64,Rational{Int})
     fT = typeof(float(one(T)))
@@ -199,9 +206,9 @@ end
 
 # gamma, lgamma (complex argument)
 if Base.Math.libm == "libopenlibm"
-    @test gamma(Float64[1:25]) == gamma(1:25)
+    @test gamma(Float64[1:25;]) == gamma(1:25)
 else
-    @test_approx_eq gamma(Float64[1:25]) gamma(1:25)
+    @test_approx_eq gamma(Float64[1:25;]) gamma(1:25)
 end
 @test_approx_eq gamma(1/2) sqrt(π)
 @test_approx_eq gamma(-1/2) -2sqrt(π)
@@ -332,6 +339,10 @@ end
                     end, 1,2,3,4,5)
           evalcounts
       end == 1
+a0 = 1
+a1 = 2
+c = 3
+@test @evalpoly(c, a0, a1) == 7
 
 @test 1e-14 > err(eta(1+1e-9), 0.693147180719814213126976796937244130533478392539154928250926)
 @test 1e-14 > err(eta(1+5e-3), 0.693945708117842473436705502427198307157819636785324430166786)

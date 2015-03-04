@@ -53,7 +53,6 @@ function compile(regex::Regex)
 end
 
 macro r_str(pattern, flags...) Regex(pattern, flags...) end
-macro r_mstr(pattern, flags...) Regex(pattern, flags...) end
 
 copy(r::Regex) = r
 
@@ -112,6 +111,8 @@ function ismatch(r::Regex, s::SubString, offset::Integer=0)
     return PCRE.exec(r.regex, r.extra, s, offset, r.options & PCRE.EXECUTE_MASK,
                   r.ovec)
 end
+
+call(r::Regex, s) = ismatch(r, s)
 
 function match(re::Regex, str::UTF8String, idx::Integer, add_opts::Int32=int32(0))
     opts = re.options & PCRE.EXECUTE_MASK | add_opts
@@ -200,7 +201,7 @@ immutable RegexMatchIterator
     end
 end
 compile(itr::RegexMatchIterator) = (compile(itr.regex); itr)
-eltype(itr::RegexMatchIterator) = RegexMatch
+eltype(::Type{RegexMatchIterator}) = RegexMatch
 start(itr::RegexMatchIterator) = match(itr.regex, itr.string, 1, int32(0))
 done(itr::RegexMatchIterator, prev_match) = (prev_match == nothing)
 
@@ -243,15 +244,6 @@ function eachmatch(re::Regex, str::AbstractString, ovr::Bool=false)
 end
 
 eachmatch(re::Regex, str::AbstractString) = RegexMatchIterator(re,str)
-
-# miscellaneous methods that depend on Regex being defined
-
-filter!(r::Regex, v) = filter!(x->ismatch(r,x), v)
-filter(r::Regex, v)  = filter(x->ismatch(r,x), v)
-
-filter!(r::Regex, d::Dict) = filter!((k,v)->ismatch(r,k),d)
-filter(r::Regex,  d::Dict) = filter!(r,copy(d))
-
 
 # Don't serialize the pointers
 function serialize(s, r::Regex)

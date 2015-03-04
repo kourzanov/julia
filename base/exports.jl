@@ -2,7 +2,6 @@ export
 # Modules
     Collections,
     FFTW,
-    Graphics,
     Meta,
     Operators,
     Pkg,
@@ -13,6 +12,7 @@ export
     LinAlg,
     BLAS,
     LAPACK,
+    SparseMatrix,
     Docs,
     Markdown,
 
@@ -41,7 +41,6 @@ export
     Complex128,
     Complex64,
     Complex32,
-    DArray,
     DenseMatrix,
     DenseVecOrMat,
     DenseVector,
@@ -50,6 +49,7 @@ export
     Dict,
     Dims,
     EachLine,
+    Enum,
     Enumerate,
     Factorization,
     FileMonitor,
@@ -104,8 +104,6 @@ export
     StridedVecOrMat,
     StridedVector,
     SubArray,
-    SubDArray,
-    SubOrDArray,
     SubString,
     Symmetric,
     SymTridiagonal,
@@ -160,6 +158,7 @@ export
     ProcessExitedException,
     SystemError,
     TypeError,
+    AssertionError,
 
 # Global constants and variables
     ARGS,
@@ -357,6 +356,7 @@ export
     factor,
     factorial,
     fld,
+    fldmod,
     flipsign,
     float,
     float16,
@@ -789,6 +789,7 @@ export
     mapfoldl,
     mapfoldr,
     mapreduce,
+    mapreducedim,
     merge!,
     merge,
     #pop!,
@@ -902,6 +903,7 @@ export
     searchindex,
     show,
     showall,
+    showarray,
     showcompact,
     showerror,
     split,
@@ -1008,6 +1010,12 @@ export
     next,
     start,
     zip,
+    rest,
+    countfrom,
+    take,
+    drop,
+    cycle,
+    repeated,
 
 # object identity and equality
     copy,
@@ -1062,6 +1070,7 @@ export
 # types
     convert,
     fieldoffsets,
+    fieldnames,
     isleaftype,
     oftype,
     promote,
@@ -1167,6 +1176,7 @@ export
     nb_available,
     ntoh,
     open,
+    pipe,
     PipeBuffer,
     poll_fd,
     poll_file,
@@ -1256,17 +1266,6 @@ export
     redisplay,
     HTML,
     Text,
-
-# distributed arrays
-    dfill,
-    distribute,
-    dones,
-    drand,
-    drandn,
-    dzeros,
-    localpart,
-    localindexes,
-    procs,
 
 # shared arrays
     sdata,
@@ -1372,12 +1371,9 @@ export
     @__FILE__,
     @b_str,
     @r_str,
-    @r_mstr,
     @v_str,
     @text_str,
-    @text_mstr,
     @html_str,
-    @html_mstr,
     @int128_str,
     @uint128_str,
     @bigint_str,
@@ -1437,4 +1433,4 @@ export
     @noinline,
     @doc,
     @doc_str,
-    @doc_mstr
+    @enum

@@ -100,7 +100,7 @@ for elty in (Float32, Float64, Complex64, Complex128, Int)
 
     # The determinant of a rotation matrix should always be 1.
     if elty != Int
-        for theta = convert(Vector{elty}, pi ./ [1:4])
+        for theta = convert(Vector{elty}, pi ./ [1:4;])
             R = [cos(theta) -sin(theta);
                  sin(theta) cos(theta)]
             @test_approx_eq convert(elty, det(R)) one(elty)
@@ -147,10 +147,10 @@ end
 # Test gradient
 for elty in (Int32, Int64, Float32, Float64, Complex64, Complex128)
     if elty <: Real
-        x = convert(Vector{elty}, [1:3])
+        x = convert(Vector{elty}, [1:3;])
         g = ones(elty, 3)
     else
-        x = convert(Vector{elty}, complex([1:3],[1:3]))
+        x = convert(Vector{elty}, complex([1:3;], [1:3;]))
         g = convert(Vector{elty}, complex(ones(3), ones(3)))
     end
     @test_approx_eq gradient(x) g
@@ -338,8 +338,26 @@ for elty in (Float32, Float64, BigFloat, Complex{Float32}, Complex{Float64}, Com
         for p = -2:3
             @test norm(reshape(A, length(A)), p) == vecnorm(A, p)
         end
+
+        # issue #10234
+        if elty <: FloatingPoint || elty <: Complex
+            let z = zeros(elty, 100)
+                z[1] = -Inf
+                for p in [-2,-1.5,-1,-0.5,0.5,1,1.5,2,Inf]
+                    @test norm(z, p) == (p < 0 ? 0 : Inf)
+                    @test norm(elty[Inf],p) == Inf
+                end
+            end
+        end
     end
 end
+
+# issue #10234
+@test norm(Any[Inf],-2) == norm(Any[Inf],-1) == norm(Any[Inf],1) == norm(Any[Inf],1.5) == norm(Any[Inf],2) == norm(Any[Inf],Inf) == Inf
+
+# overflow/underflow in norms:
+@test_approx_eq norm(Float64[1e-300, 1], -3)*1e300 1
+@test_approx_eq norm(Float64[1e300, 1], 3)*1e-300 1
 
 # Uniform scaling
 @test I[1,1] == 1 # getindex

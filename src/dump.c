@@ -177,20 +177,19 @@ DLLEXPORT int jl_running_on_valgrind() {
     return RUNNING_ON_VALGRIND;
 }
 
-static void jl_load_sysimg_so(char *fname)
+static void jl_load_sysimg_so()
 {
 #ifndef _OS_WINDOWS_
     Dl_info dlinfo;
 #endif
-    // attempt to load the pre-compiled sysimg at fname
+    // attempt to load the pre-compiled sysimage from jl_sysimg_handle
     // if this succeeds, sysimg_gvars will be a valid array
     // otherwise, it will be NULL
-    jl_sysimg_handle = (uv_lib_t *) jl_load_dynamic_library_e(fname, JL_RTLD_DEFAULT | JL_RTLD_GLOBAL);
     if (jl_sysimg_handle != 0) {
         sysimg_gvars = (jl_value_t***)jl_dlsym(jl_sysimg_handle, "jl_sysimg_gvars");
         globalUnique = *(size_t*)jl_dlsym(jl_sysimg_handle, "jl_globalUnique");
         const char *cpu_target = (const char*)jl_dlsym(jl_sysimg_handle, "jl_sysimg_cpu_target");
-        if (strcmp(cpu_target,jl_compileropts.cpu_target) != 0)
+        if (strcmp(cpu_target,jl_options.cpu_target) != 0)
             jl_error("Julia and the system image were compiled for different architectures.\n"
                      "Please delete or regenerate sys.{so,dll,dylib}.\n");
         uint32_t info[4];
@@ -322,7 +321,7 @@ static void jl_delayed_fptrs(jl_lambda_info_t *li, int32_t func, int32_t cfunc)
 
 static void jl_update_all_fptrs()
 {
-    //printf("delayed_fptrs_n: %d\n", delayed_fptrs_n);
+    //jl_printf(JL_STDOUT, "delayed_fptrs_n: %d\n", delayed_fptrs_n);
     jl_value_t ***gvars = sysimg_gvars;
     if (gvars == 0) return;
     // jl_fptr_to_llvm needs to decompress some ASTs, therefore this needs to be NULL
@@ -743,7 +742,7 @@ static void jl_serialize_value_(ios_t *s, jl_value_t *v)
     }
 }
 
-void jl_serialize_methtable_from_mod(ios_t *s, jl_module_t *m, jl_sym_t *name, jl_methtable_t *mt, int8_t iskw)
+static void jl_serialize_methtable_from_mod(ios_t *s, jl_module_t *m, jl_sym_t *name, jl_methtable_t *mt, int8_t iskw)
 {
     if (iskw) {
         if (!mt->kwsorter)
@@ -783,7 +782,7 @@ void jl_serialize_methtable_from_mod(ios_t *s, jl_module_t *m, jl_sym_t *name, j
     }
 }
 
-void jl_serialize_lambdas_from_mod(ios_t *s, jl_module_t *m)
+static void jl_serialize_lambdas_from_mod(ios_t *s, jl_module_t *m)
 {
     if (m == jl_current_module) return;
     size_t i;
@@ -1337,8 +1336,7 @@ DLLEXPORT void jl_save_system_image(const char *fname)
     htable_reset(&backref_table, 250000);
     ios_t f;
     if (ios_file(&f, fname, 1, 1, 1, 1) == NULL) {
-        JL_PRINTF(JL_STDERR, "Cannot open system image file \"%s\" for writing.\n", fname);
-        exit(1);
+        jl_errorf("Cannot open system image file \"%s\" for writing.\n", fname);
     }
 
     // orphan old Base module if present
@@ -1382,11 +1380,11 @@ extern void jl_get_uv_hooks();
 
 // Takes in a path of the form "usr/lib/julia/sys.ji", such as passed in to jl_restore_system_image()
 DLLEXPORT
-const char * jl_get_system_image_cpu_target(const char *fname)
+void jl_preload_sysimg_so(const char *fname)
 {
     // If passed NULL, don't even bother
     if (!fname)
-        return NULL;
+        return;
 
     // First, get "sys" from "sys.ji"
     char *fname_shlib = (char*)alloca(strlen(fname)+1);
@@ -1396,14 +1394,18 @@ const char * jl_get_system_image_cpu_target(const char *fname)
         *fname_shlib_dot = 0;
 
     // Get handle to sys.so
-    uv_lib_t * sysimg_handle = jl_load_dynamic_library_e(fname_shlib, JL_RTLD_DEFAULT | JL_RTLD_GLOBAL);
+#ifdef _OS_WINDOWS_
+    if (!jl_is_debugbuild()) {
+#endif
+        jl_sysimg_handle = (uv_lib_t*)jl_load_dynamic_library_e(fname_shlib, JL_RTLD_DEFAULT | JL_RTLD_GLOBAL);
+#ifdef _OS_WINDOWS_
+    }
+#endif
 
-    // Return jl_sysimg_cpu_target if we can
-    if (sysimg_handle)
-        return (const char *)jl_dlsym(sysimg_handle, "jl_sysimg_cpu_target");
-
-    // If something goes wrong, return NULL
-    return NULL;
+    // set cpu target if unspecified by user and available from sysimg
+    // otherwise default to native.
+    if (jl_sysimg_handle && jl_options.cpu_target == NULL)
+        jl_options.cpu_target = (const char *)jl_dlsym(jl_sysimg_handle, "jl_sysimg_cpu_target");
 }
 
 DLLEXPORT
@@ -1411,8 +1413,7 @@ void jl_restore_system_image(const char *fname)
 {
     ios_t f;
     if (ios_file(&f, fname, 1, 0, 0, 0) == NULL) {
-        JL_PRINTF(JL_STDERR, "System image file \"%s\" not found\n", fname);
-        exit(1);
+        jl_errorf("System image file \"%s\" not found\n", fname);
     }
     int build_mode = 0;
 #ifdef _OS_WINDOWS_
@@ -1421,11 +1422,7 @@ void jl_restore_system_image(const char *fname)
     if (jl_is_debugbuild()) build_mode = 1;
 #endif
     if (!build_mode) {
-        char *fname_shlib = (char*)alloca(strlen(fname)+1);
-        strcpy(fname_shlib, fname);
-        char *fname_shlib_dot = strrchr(fname_shlib, '.');
-        if (fname_shlib_dot != NULL) *fname_shlib_dot = 0;
-        jl_load_sysimg_so(fname_shlib);
+        jl_load_sysimg_so();
     }
 #ifdef JL_GC_MARKSWEEP
     int en = jl_gc_is_enabled();
@@ -1475,7 +1472,7 @@ void jl_restore_system_image(const char *fname)
     jl_set_t_uid_ctr(read_int32(&f));
     jl_set_gs_ctr(read_int32(&f));
 
-    //ios_printf(ios_stderr, "backref_list.len = %d\n", backref_list.len);
+    //jl_printf(JL_STDERR, "backref_list.len = %d\n", backref_list.len);
     arraylist_free(&backref_list);
     ios_close(&f);
 
@@ -1550,7 +1547,7 @@ jl_value_t *jl_compress_ast(jl_lambda_info_t *li, jl_value_t *ast)
     jl_serialize_value(&dest, jl_lam_body((jl_expr_t*)ast)->etype);
     jl_serialize_value(&dest, ast);
 
-    //JL_PRINTF(JL_STDERR, "%d bytes, %d values\n", dest.size, vals->length);
+    //jl_printf(JL_STDERR, "%d bytes, %d values\n", dest.size, vals->length);
 
     jl_value_t *v = (jl_value_t*)jl_takebuf_array(&dest);
     if (jl_array_len(tree_literal_values) == 0 && last_tlv == NULL) {
@@ -1590,7 +1587,7 @@ int jl_save_new_module(const char *fname, jl_module_t *mod)
 {
     ios_t f;
     if (ios_file(&f, fname, 1, 1, 1, 1) == NULL) {
-        JL_PRINTF(JL_STDERR, "Cannot open cache file \"%s\" for writing.\n", fname);
+        jl_printf(JL_STDERR, "Cannot open cache file \"%s\" for writing.\n", fname);
         return 1;
     }
     htable_new(&backref_table, 5000);
@@ -1628,7 +1625,7 @@ jl_module_t *jl_restore_new_module(const char *fname)
 {
     ios_t f;
     if (ios_file(&f, fname, 1, 0, 0, 0) == NULL) {
-        JL_PRINTF(JL_STDERR, "Cache file \"%s\" not found\n", fname);
+        jl_printf(JL_STDERR, "Cache file \"%s\" not found\n", fname);
         return NULL;
     }
     if (ios_eof(&f)) {
@@ -1649,7 +1646,7 @@ jl_module_t *jl_restore_new_module(const char *fname)
     jl_binding_t *b = jl_get_binding_wr(parent, name);
     jl_declare_constant(b);
     if (b->value != NULL) {
-        JL_PRINTF(JL_STDERR, "Warning: replacing module %s\n", name->name);
+        jl_printf(JL_STDERR, "Warning: replacing module %s\n", name->name);
     }
     b->value = jl_deserialize_value(&f, &b->value);
 
@@ -1848,30 +1845,26 @@ void jl_init_serializer(void)
                      jl_box_int64(51), jl_box_int64(52), jl_box_int64(53),
                      jl_box_int64(54), jl_box_int64(55), jl_box_int64(56),
 #endif
-                     jl_labelnode_type, jl_linenumbernode_type,
-                     jl_gotonode_type, jl_quotenode_type, jl_topnode_type,
-                     jl_type_type, jl_bottom_type, jl_pointer_type,
-                     jl_vararg_type, jl_ntuple_type, jl_abstractarray_type,
-                     jl_densearray_type, jl_box_type, jl_void_type,
-                     jl_typector_type, jl_undef_type, jl_top_type, jl_typename_type,
-                     jl_task_type, jl_uniontype_type, jl_typetype_type, jl_typetype_tvar,
-                     jl_ANY_flag, jl_array_any_type, jl_intrinsic_type, jl_method_type,
-                     jl_methtable_type, jl_voidpointer_type, jl_newvarnode_type,
-                     jl_array_symbol_type, jl_tupleref(jl_tuple_type,0),
+                     jl_labelnode_type, jl_linenumbernode_type, jl_gotonode_type,
+                     jl_quotenode_type, jl_topnode_type, jl_type_type, jl_bottom_type,
+                     jl_pointer_type, jl_vararg_type, jl_ntuple_type,
+                     jl_abstractarray_type, jl_densearray_type, jl_box_type, jl_void_type,
+                     jl_typector_type, jl_typename_type, jl_task_type, jl_uniontype_type,
+                     jl_typetype_type, jl_typetype_tvar, jl_ANY_flag, jl_array_any_type,
+                     jl_intrinsic_type, jl_method_type, jl_methtable_type,
+                     jl_voidpointer_type, jl_newvarnode_type, jl_array_symbol_type,
+                     jl_tupleref(jl_tuple_type,0),
 
-                     jl_symbol_type->name, jl_gensym_type->name,
-                     jl_pointer_type->name, jl_datatype_type->name,
-                     jl_uniontype_type->name, jl_array_type->name, jl_expr_type->name,
-                     jl_typename_type->name, jl_type_type->name, jl_methtable_type->name,
-                     jl_method_type->name, jl_tvar_type->name, jl_vararg_type->name,
-                     jl_ntuple_type->name, jl_abstractarray_type->name,
-                     jl_densearray_type->name, jl_void_type->name,
-                     jl_lambda_info_type->name, jl_module_type->name, jl_box_type->name,
-                     jl_function_type->name, jl_typector_type->name,
-                     jl_intrinsic_type->name, jl_undef_type->name, jl_task_type->name,
+                     jl_symbol_type->name, jl_gensym_type->name, jl_pointer_type->name,
+                     jl_datatype_type->name, jl_uniontype_type->name, jl_array_type->name,
+                     jl_expr_type->name, jl_typename_type->name, jl_type_type->name,
+                     jl_methtable_type->name, jl_method_type->name, jl_tvar_type->name,
+                     jl_vararg_type->name, jl_ntuple_type->name, jl_abstractarray_type->name,
+                     jl_densearray_type->name, jl_void_type->name, jl_lambda_info_type->name,
+                     jl_module_type->name, jl_box_type->name, jl_function_type->name,
+                     jl_typector_type->name, jl_intrinsic_type->name, jl_task_type->name,
                      jl_labelnode_type->name, jl_linenumbernode_type->name,
-                     jl_gotonode_type->name, jl_quotenode_type->name,
-                     jl_topnode_type->name,
+                     jl_gotonode_type->name, jl_quotenode_type->name, jl_topnode_type->name,
 
                      jl_root_task, jl_bottom_func,
 

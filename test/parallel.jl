@@ -1,8 +1,8 @@
 # NOTE: worker processes cannot add more workers, only the client process can.
 require("testdefs.jl")
 
-if nprocs() < 3
-    remotecall_fetch(1, () -> addprocs(2))
+if nworkers() < 3
+    remotecall_fetch(1, () -> addprocs(3))
 end
 
 id_me = myid()
@@ -11,44 +11,6 @@ id_other = filter(x -> x != id_me, procs())[rand(1:(nprocs()-1))]
 @test fetch(@spawnat id_other myid()) == id_other
 @test @fetchfrom id_other begin myid() end == id_other
 @fetch begin myid() end
-
-d = drand((200,200), [id_me, id_other])
-dc = copy(d)
-
-@test d == dc                                           # Should be identical
-@spawnat id_other localpart(dc)[1] = 0
-@test fetch(@spawnat id_other localpart(d)[1] != 0) # but not point to the same memory
-
-s = convert(Matrix{Float64}, d[1:150, 1:150])
-a = convert(Matrix{Float64}, d)
-@test a[1:150,1:150] == s
-
-@test fetch(@spawnat id_me localpart(d)[1,1]) == d[1,1]
-@test fetch(@spawnat id_other localpart(d)[1,1]) == d[1,101]
-
-d=DArray(I->fill(myid(), map(length,I)), (10,10), [id_me, id_other])
-d2 = map(x->1, d)
-@test reduce(+, d2) == 100
-
-@test reduce(+, d) == ((50*id_me) + (50*id_other))
-map!(x->1, d)
-@test reduce(+, d) == 100
-
-# Test mapreduce on DArrays
-begin
-    # Test that the proper method exists on DArrays
-    sig = methods(mapreduce, (Function, Function, DArray))[1].sig
-    @test sig[3] == DArray
-
-    # Test that it is functionally equivalent to the standard method
-    for _ = 1:25, f = [x -> 2x, x -> x^2, x -> x^2 + 2x - 1], opt = [+, *]
-        n = rand(2:50)
-        arr = rand(1:100, n)
-        darr = distribute(arr)
-
-        @test mapreduce(f, opt, arr) == mapreduce(f, opt, darr)
-    end
-end
 
 dims = (20,20,20)
 
@@ -145,13 +107,9 @@ map!(x->1, d)
 @test 2.0 == remotecall_fetch(id_other, D->D[2], Base.shmem_fill(2.0, 2; pids=[id_me, id_other]))
 @test 3.0 == remotecall_fetch(id_other, D->D[1], Base.shmem_fill(3.0, 1; pids=[id_me, id_other]))
 
-
 # Test @parallel load balancing - all processors should get either M or M+1
 # iterations out of the loop range for some M.
-if nprocs() < 4
-    remotecall_fetch(1, () -> addprocs(4 - nprocs()))
-end
-workloads = hist(@parallel((a,b)->[a,b], for i=1:7; myid(); end), nprocs())[2]
+workloads = hist(@parallel((a,b)->[a;b], for i=1:7; myid(); end), nprocs())[2]
 @test maximum(workloads) - minimum(workloads) <= 1
 
 # @parallel reduction should work even with very short ranges
@@ -195,14 +153,15 @@ s = [randstring() for x in 1:10^5]
 @test s == remotecall_fetch(id_other, (x)->x, s)
 
 #large number of small requests
-[remotecall_fetch(id_other, myid) for i in 1:100000]
+num_small_requests = 10000
+@test fill(id_other, num_small_requests) == [remotecall_fetch(id_other, myid) for i in 1:num_small_requests]
 
 # test parallel sends of large arrays from multiple tasks to the same remote worker
 ntasks = 10
 rr_list = [RemoteRef() for x in 1:ntasks]
+a=ones(2*10^5);
 for rr in rr_list
     @async let rr=rr
-        a=ones(10^6);
         try
             for i in 1:10
                 @test a == remotecall_fetch(id_other, (x)->x, a)

@@ -1,11 +1,9 @@
 ## generic operations on numbers ##
 
-isreal(x::Real) = true
 isinteger(x::Integer) = true
 
 size(x::Number) = ()
 size(x::Number,d) = convert(Int,d)<1 ? throw(BoundsError()) : 1
-eltype(x::Number) = typeof(x)
 eltype{T<:Number}(::Type{T}) = T
 ndims(x::Number) = 0
 ndims{T<:Number}(::Type{T}) = 0
@@ -19,6 +17,7 @@ first(x::Number) = x
 last(x::Number) = x
 
 divrem(x,y) = (div(x,y),rem(x,y))
+fldmod(x,y) = (fld(x,y),mod(x,y))
 signbit(x::Real) = x < 0
 sign(x::Real) = ifelse(x < 0, oftype(x,-1), ifelse(x > 0, one(x), x))
 sign(x::Unsigned) = ifelse(x > 0, one(x), x)
@@ -40,7 +39,7 @@ done(x::Number, state) = state
 isempty(x::Number) = false
 in(x::Number, y::Number) = x == y
 
-map(f::Callable, x::Number) = f(x)
+map(f, x::Number) = f(x)
 
 zero(x::Number) = oftype(x,0)
 zero{T<:Number}(::Type{T}) = convert(T,0)

@@ -438,6 +438,10 @@ Types
 
    Compute a type that contains the intersection of ``T`` and ``S``. Usually this will be the smallest such type or one close to it.
 
+.. function:: Union(Ts...)
+
+   Construct a special abstract type that behaves as though all of the types in ``Ts`` are its subtypes.
+
 .. function:: Val{c}
 
    Create a "value type" out of ``c``, which must be an ``isbits``
@@ -445,6 +449,20 @@ Types
    constants, e.g., ``f(Val{false})`` allows you to dispatch directly
    (at compile-time) to an implementation ``f(::Type{Val{false}})``,
    without having to test the boolean value at runtime.
+
+.. function:: @enum EnumName EnumValue1[=x] EnumValue2[=y]
+
+   Create an `Enum` type with name `EnumName` and enum member values of `EnumValue1` and `EnumValue2` with optional assigned values of `x` and `y`, respectively. `EnumName` can be used just like other types and enum member values as regular values, such as
+
+   .. doctest::
+
+      julia> @enum FRUIT apple=1 orange=2 kiwi=3
+
+      julia> f(x::FRUIT) = "I'm a FRUIT with value: $(int(x))"
+      f (generic function with 1 method)
+
+      julia> f(apple)
+      "I'm a FRUIT with value: 1"
 
 Generic Functions
 -----------------
@@ -553,6 +571,12 @@ Syntax
 Nullables
 ---------
 
+.. function:: Nullable(x)
+
+   Wrap value ``x`` in an object of type ``Nullable``, which indicates whether a value is present.
+   ``Nullable(x)`` yields a non-empty wrapper, and ``Nullable{T}()`` yields an empty instance
+   of a wrapper that might contain a value of type ``T``.
+
 .. function:: get(x)
 
    Attempt to access the value of the ``Nullable`` object, ``x``. Returns the
@@ -617,11 +641,11 @@ System
    and waits for the process to complete.  Returns the value returned
    by ``f``.
 
-.. function:: Base.set_process_title(title::AbstractString)
+.. function:: Sys.set_process_title(title::AbstractString)
 
    Set the process title. No-op on some operating systems. (not exported)
 
-.. function:: Base.get_process_title()
+.. function:: Sys.get_process_title()
 
    Get the process title. On some systems, will always return empty string. (not exported)
 
@@ -649,24 +673,33 @@ System
    The ``dir`` keyword argument can be used to specify a working directory for the
    command.
 
-.. function:: |>(command, command)
-              |>(command, filename)
-              |>(filename, command)
+.. function:: pipe(from, to, ...)
 
-   Redirect operator. Used for piping the output of a process into another (first form) or to redirect the standard output/input of a command to/from a file (second and third forms).
+   Create a pipeline from a data source to a destination. The source and destination can
+   be commands, I/O streams, strings, or results of other ``pipe`` calls. At least one
+   argument must be a command. Strings refer to filenames.
+   When called with more than two arguments, they are chained together from left to right.
+   For example ``pipe(a,b,c)`` is equivalent to ``pipe(pipe(a,b),c)``. This provides a more
+   concise way to specify multi-stage pipelines.
 
    **Examples**:
-     * ``run(`ls` |> `grep xyz`)``
-     * ``run(`ls` |> "out.txt")``
-     * ``run("out.txt" |> `grep xyz`)``
+     * ``run(pipe(`ls`, `grep xyz`))``
+     * ``run(pipe(`ls`, "out.txt"))``
+     * ``run(pipe("out.txt", `grep xyz`))``
 
-.. function:: >>(command, filename)
+.. function:: pipe(command; stdin, stdout, stderr, append=false)
 
-   Redirect standard output of a process, appending to the destination file.
+   Redirect I/O to or from the given ``command``. Keyword arguments specify which of
+   the command's streams should be redirected. ``append`` controls whether file output
+   appends to the file.
+   This is a more general version of the 2-argument ``pipe`` function.
+   ``pipe(from, to)`` is equivalent to ``pipe(from, stdout=to)`` when ``from`` is a
+   command, and to ``pipe(to, stdin=from)`` when ``from`` is another kind of
+   data source.
 
-.. function:: .>(command, filename)
-
-   Redirect the standard error stream of a process.
+   **Examples**:
+     * ``run(pipe(`dothings`, stdout="out.txt", stderr="errs.txt"))``
+     * ``run(pipe(`update`, stdout="log.txt", append=true))``
 
 .. function:: gethostname() -> AbstractString
 
@@ -781,11 +814,15 @@ Errors
 
 .. function:: assert(cond, [text])
 
-   Raise an error if ``cond`` is false. Also available as the macro ``@assert expr``.
+   Throw an ``AssertionError`` if ``cond`` is false. Also available as the macro ``@assert expr``.
 
-.. function:: @assert
+.. function:: @assert cond [text]
 
-   Raise an error if ``cond`` is false. Preferred syntax for writings assertions.
+   Throw an ``AssertionError`` if ``cond`` is false. Preferred syntax for writing assertions.
+
+.. data:: AssertionError
+
+   The asserted condition did not evalutate to ``true``.
 
 .. data:: ArgumentError
 
@@ -918,10 +955,11 @@ Internals
 
    Disable garbage collection. This should be used only with extreme
    caution, as it can cause memory use to grow without bound.
+   Returns previous GC state.
 
 .. function:: gc_enable()
 
-   Re-enable garbage collection after calling :func:`gc_disable`.
+   Re-enable garbage collection after calling :func:`gc_disable`. Returns previous GC state.
 
 .. function:: macroexpand(x)
 

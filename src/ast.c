@@ -27,7 +27,6 @@ static uint8_t flisp_system_image[] = {
 #include "julia_flisp.boot.inc"
 };
 
-extern fltype_t *iostreamtype;
 static fltype_t *jvtype=NULL;
 
 static value_t true_sym;
@@ -120,13 +119,10 @@ extern int jl_parse_depwarn(int warn);
 void jl_init_frontend(void)
 {
     fl_init(4*1024*1024);
-    value_t img = cvalue(iostreamtype, sizeof(ios_t));
-    ios_t *pi = value2c(ios_t*, img);
-    ios_static_buffer(pi, (char*)flisp_system_image, sizeof(flisp_system_image));
 
-    if (fl_load_system_image(img)) {
-        JL_PRINTF(JL_STDERR, "fatal error loading system image\n");
-        jl_exit(1);
+    if (fl_load_system_image_str((char*)flisp_system_image,
+                                 sizeof(flisp_system_image))) {
+        jl_error("fatal error loading system image\n");
     }
 
     fl_applyn(0, symbol_value(symbol("__init_globals")));
@@ -142,7 +138,7 @@ void jl_init_frontend(void)
     fl_jlgensym_sym = symbol("jlgensym");
 
     // Enable / disable syntax deprecation warnings
-    jl_parse_depwarn((int)jl_compileropts.depwarn);
+    jl_parse_depwarn((int)jl_options.depwarn);
 }
 
 DLLEXPORT void jl_lisp_prompt(void)
@@ -249,9 +245,9 @@ static jl_value_t *scm_to_julia_(value_t e, int eo)
         }
         if (
 #ifdef _P64
-            jl_compileropts.int_literals==32
+            jl_options.int_literals==32
 #else
-            jl_compileropts.int_literals!=64
+            jl_options.int_literals!=64
 #endif
             ) {
             if (i64 > (int64_t)S32_MAX || i64 < (int64_t)S32_MIN)
@@ -345,8 +341,7 @@ static jl_value_t *scm_to_julia_(value_t e, int eo)
                     return jl_new_struct(jl_gotonode_type,
                                          scm_to_julia_(car_(e),0));
                 }
-                if (sym == inert_sym || (sym == quote_sym && (!iscons(car_(e)) ||
-                                                              !iscons(cdr_(car_(e)))))) {
+                if (sym == inert_sym || (sym == quote_sym && (!iscons(car_(e))))) {
                     return jl_new_struct(jl_quotenode_type,
                                          scm_to_julia_(car_(e),0));
                 }
@@ -675,7 +670,9 @@ jl_sym_t *jl_lam_argname(jl_lambda_info_t *li, int i)
         ast = (jl_expr_t*)li->ast;
     else
         ast = (jl_expr_t*)jl_uncompress_ast(li, li->ast);
-    return (jl_sym_t*)jl_arrayref(jl_lam_args(ast),i);
+    // NOTE (gc root): `ast` is not rooted here, but jl_lam_args and jl_cellref
+    // do not allocate.
+    return (jl_sym_t*)jl_cellref(jl_lam_args(ast),i);
 }
 
 // get array of local var symbols

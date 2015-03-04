@@ -26,7 +26,7 @@ function filt!{T,S,N}(out::AbstractArray, b::Union(AbstractVector, Number), a::U
     isempty(a) && throw(ArgumentError("filter vector a must be non-empty"))
     a[1] == 0  && throw(ArgumentError("filter vector a[1] must be nonzero"))
     if size(x) != size(out)
-        thow(ArgumentError("output size $(size(out)) must match input size $(size(x))"))
+        throw(ArgumentError("output size $(size(out)) must match input size $(size(x))"))
     end
 
     as = length(a)
@@ -111,8 +111,8 @@ function conv{T<:Base.LinAlg.BlasFloat}(u::StridedVector{T}, v::StridedVector{T}
     nv = length(v)
     n = nu + nv - 1
     np2 = n > 1024 ? nextprod([2,3,5], n) : nextpow2(n)
-    upad = [u, zeros(T, np2 - nu)]
-    vpad = [v, zeros(T, np2 - nv)]
+    upad = [u; zeros(T, np2 - nu)]
+    vpad = [v; zeros(T, np2 - nv)]
     if T <: Real
         p = plan_rfft(upad)
         y = irfft(p(upad).*p(vpad), np2)

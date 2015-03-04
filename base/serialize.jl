@@ -22,7 +22,7 @@ let i = 2
              UTF16String, UTF32String, Float16,
              :reserved9, :reserved10, :reserved11, :reserved12,
 
-             (), Bool, Any, :Any, Bottom, Top, Undef, Type,
+             (), Bool, Any, :Any, Bottom, :reserved21, :reserved22, Type,
              :Array, :TypeVar, :Box,
              :lambda, :body, :return, :call, symbol("::"),
              :(=), :null, :gotoifnot, :A, :B, :C, :M, :N, :T, :S, :X, :Y,
@@ -315,11 +315,12 @@ function serialize(s, x)
         return write_as_tag(s, x)
     end
     t = typeof(x)
+    nf = nfields(t)
     serialize_type(s, t)
-    if length(t.names)==0 && t.size>0
+    if nf == 0 && t.size > 0
         write(s, x)
     else
-        for i in 1:length(t.names)
+        for i in 1:nf
             if isdefined(x, i)
                 serialize(s, getfield(x, i))
             else
@@ -527,14 +528,14 @@ end
 
 # default DataType deserializer
 function deserialize(s, t::DataType)
-    if length(t.names)==0 && t.size>0
+    nf = nfields(t)
+    if nf == 0 && t.size > 0
         # bits type
         return read(s, t)
     end
-    nf = length(t.names)
     if nf == 0
         return ccall(:jl_new_struct, Any, (Any,Any...), t)
-    elseif !t.mutable
+    elseif isbits(t)
         if nf == 1
             return ccall(:jl_new_struct, Any, (Any,Any...), t, deserialize(s))
         elseif nf == 2
@@ -548,15 +549,14 @@ function deserialize(s, t::DataType)
             return ccall(:jl_new_struct, Any, (Any,Any...), t, f1, f2, f3)
         else
             flds = Any[ deserialize(s) for i = 1:nf ]
-            return ccall(:jl_new_structv, Any, (Any,Ptr{Void},UInt32),
-                         t, flds, nf)
+            return ccall(:jl_new_structv, Any, (Any,Ptr{Void},UInt32), t, flds, nf)
         end
     else
         x = ccall(:jl_new_struct_uninit, Any, (Any,), t)
-        for i in 1:length(t.names)
+        for i in 1:nf
             tag = int32(read(s, UInt8))
             if tag==0 || !is(deser_tag[tag], UndefRefTag)
-                setfield!(x, i, handle_deserialize(s, tag))
+                ccall(:jl_set_nth_field, Void, (Any, Csize_t, Any), x, i-1, handle_deserialize(s, tag))
             end
         end
         return x

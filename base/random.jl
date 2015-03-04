@@ -124,7 +124,7 @@ function make_seed()
         seed = reinterpret(UInt64, time())
         seed = hash(seed, uint64(getpid()))
         try
-        seed = hash(seed, parseint(UInt64, readall(`ifconfig` |> `sha1sum`)[1:40], 16))
+        seed = hash(seed, parseint(UInt64, readall(pipe(`ifconfig`, `sha1sum`))[1:40], 16))
         end
         return make_seed(seed)
     end
@@ -522,8 +522,8 @@ else
             rand!(rng, g.limbs)
             g.limbs[end] &= g.mask
             ccall((:__gmpz_import, :libgmp), Void,
-                  (Ptr{BigInt}, Csize_t, Cint, Csize_t, Cint, Csize_t, Ptr{Void}),
-                  &x, length(g.limbs), -1, sizeof(Limb), 0, 0, &g.limbs)
+                  (Ptr{BigInt}, Csize_t, Cint, Csize_t, Cint, Csize_t, Ptr{Limb}),
+                  &x, length(g.limbs), -1, sizeof(Limb), 0, 0, g.limbs)
             x <= g.m && break
         end
         ccall((:__gmpz_add, :libgmp), Void, (Ptr{BigInt}, Ptr{BigInt}, Ptr{BigInt}), &x, &x, &g.a)
@@ -1164,7 +1164,7 @@ function Base.convert(::Type{UUID}, s::AbstractString)
     end
 
     u = uint128(0)
-    for i in [1:8, 10:13, 15:18, 20:23, 25:36]
+    for i in [1:8; 10:13; 15:18; 20:23; 25:36]
         u <<= 4
         d = s[i]-'0'
         u |= 0xf & (d-39*(d>9))

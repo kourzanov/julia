@@ -9,7 +9,7 @@ github_user() = readchomp(ignorestatus(`git config --global --get github.user`))
 function git_contributors(dir::AbstractString, n::Int=typemax(Int))
     contrib = Dict()
     tty = @windows? "CON:" : "/dev/tty"
-    for line in eachline(tty |> Git.cmd(`shortlog -nes`, dir=dir))
+    for line in eachline(pipe(tty, Git.cmd(`shortlog -nes`, dir=dir)))
         m = match(r"\s*(\d+)\s+(.+?)\s+\<(.+?)\>\s*$", line)
         m == nothing && continue
         commits, name, email = m.captures
@@ -60,7 +60,7 @@ function package(
             $pkg.jl $(isnew ? "generated" : "regenerated") files.
 
                 license:  $license
-                authors:  $(join([authors],", "))
+                authors:  $(join([authors...],", "))
                 years:    $years
                 user:     $user
 

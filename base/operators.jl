@@ -170,6 +170,11 @@ widen{T<:Number}(x::T) = convert(widen(T), x)
 
 sizeof(x) = Core.sizeof(x)
 
+eltype(::Type) = Any
+eltype(::Type{Any}) = Any
+eltype(t::DataType) = eltype(super(t))
+eltype(x) = eltype(typeof(x))
+
 # copying immutable things
 copy(x::Union(Symbol,Number,AbstractString,Function,Tuple,LambdaStaticData,
               TopNode,QuoteNode,DataType,UnionType)) = x
@@ -421,6 +426,8 @@ isequal(p::Pair, q::Pair) = isequal(p.first,q.first) & isequal(p.second,q.second
 
 isless(p::Pair, q::Pair) = ifelse(!isequal(p.first,q.first), isless(p.first,q.first),
                                                              isless(p.second,q.second))
+getindex(p::Pair,i::Int) = getfield(p,i)
+getindex(p::Pair,i::Real) = getfield(p, convert(Int, i))
 
 # some operators not defined yet
 global //, .>>, .<<, >:, <|, |>, hcat, hvcat, ⋅, ×, ∈, ∉, ∋, ∌, ⊆, ⊈, ⊊, ∩, ∪, √, ∛

@@ -8,7 +8,11 @@
 #include "llvm-version.h"
 #include <llvm/ExecutionEngine/ExecutionEngine.h>
 #include <llvm/ExecutionEngine/JITEventListener.h>
+#ifdef LLVM37
+#include "llvm/IR/LegacyPassManager.h"
+#else
 #include <llvm/PassManager.h>
+#endif
 #include <llvm/Target/TargetSubtargetInfo.h>
 #include <llvm/Support/TargetRegistry.h>
 #include <llvm/Analysis/Passes.h>
@@ -110,6 +114,9 @@
 #include <cstdio>
 #include <cassert>
 using namespace llvm;
+#if LLVM37
+using namespace llvm::legacy;
+#endif
 
 extern "C" {
 
@@ -262,7 +269,6 @@ static GlobalVariable *jlundeferr_var;
 static GlobalVariable *jldomerr_var;
 static GlobalVariable *jlovferr_var;
 static GlobalVariable *jlinexacterr_var;
-static GlobalVariable *jlstderr_var;
 static GlobalVariable *jlRTLD_DEFAULT_var;
 #ifdef _OS_WINDOWS_
 static GlobalVariable *jlexe_var;
@@ -320,7 +326,6 @@ static Function *box8_func;
 static Function *box16_func;
 static Function *box32_func;
 static Function *box64_func;
-static Function *jlputs_func;
 static Function *wbfunc;
 static Function *queuerootfun;
 static Function *expect_func;
@@ -596,7 +601,7 @@ static Function *to_function(jl_lambda_info_t *li, bool cstyle)
     Function *f = NULL;
     JL_TRY {
         f = emit_function(li, cstyle);
-        //JL_PRINTF(JL_STDOUT, "emit %s\n", li->name->name);
+        //jl_printf(JL_STDOUT, "emit %s\n", li->name->name);
         //n_emit++;
     }
     JL_CATCH {
@@ -630,7 +635,7 @@ static Function *to_function(jl_lambda_info_t *li, bool cstyle)
     FPM->run(*f);
     //n_compile++;
     // print out the function's LLVM code
-    //ios_printf(ios_stderr, "%s:%d\n",
+    //jl_printf(JL_STDERR, "%s:%d\n",
     //           ((jl_sym_t*)li->file)->name, li->line);
     //if (verifyFunction(*f,PrintMessageAction)) {
     //    f->dump();
@@ -815,15 +820,16 @@ void jl_extern_c(jl_function_t *f, jl_value_t *rt, jl_value_t *argt, char *name)
 // --- native code info, and dump function to IR and ASM ---
 extern void RegisterJuliaJITEventListener();
 
-extern int jl_get_llvmf_info(size_t fptr, uint64_t *symsize,
+extern int jl_get_llvmf_info(uint64_t fptr, uint64_t *symsize, uint64_t *slide,
 #ifdef USE_MCJIT
-    const object::ObjectFile **object);
+    const object::ObjectFile **object
 #else
-    std::vector<JITEvent_EmittedFunctionDetails::LineStart> *lines);
+    std::vector<JITEvent_EmittedFunctionDetails::LineStart> *lines
 #endif
+    );
 
 extern "C"
-void jl_dump_function_asm(const char *Fptr, size_t Fsize,
+void jl_dump_function_asm(uintptr_t Fptr, size_t Fsize, size_t slide,
 #ifdef USE_MCJIT
                           const object::ObjectFile *objectfile,
 #else
@@ -841,19 +847,19 @@ const jl_value_t *jl_dump_llvmf(void *f, bool dumpasm)
         llvmf->print(stream);
     }
     else {
-        uint64_t symsize;
+        uint64_t symsize, slide;
 #ifdef USE_MCJIT
-        size_t fptr = (size_t)jl_ExecutionEngine->getFunctionAddress(llvmf->getName());
+        uint64_t fptr = jl_ExecutionEngine->getFunctionAddress(llvmf->getName());
         const object::ObjectFile *object;
 #else
-        size_t fptr = (size_t)jl_ExecutionEngine->getPointerToFunction(llvmf);
+        uint64_t fptr = (uintptr_t)jl_ExecutionEngine->getPointerToFunction(llvmf);
         std::vector<JITEvent_EmittedFunctionDetails::LineStart> object;
 #endif
         assert(fptr != 0);
-        if (jl_get_llvmf_info(fptr, &symsize, &object))
-            jl_dump_function_asm((char *)fptr, symsize, object, fstream);
+        if (jl_get_llvmf_info(fptr, &symsize, &slide, &object))
+            jl_dump_function_asm(fptr, symsize, slide, object, fstream);
         else
-            JL_PRINTF(JL_STDERR, "Warning: Unable to find function pointer\n");
+            jl_printf(JL_STDERR, "Warning: Unable to find function pointer\n");
         fstream.flush();
     }
     return jl_cstr_to_string(const_cast<char*>(stream.str().c_str()));
@@ -872,7 +878,7 @@ void *jl_get_llvmf(jl_function_t *f, jl_tuple_t *types, bool getwrapper)
         sf = jl_method_lookup_by_type(jl_gf_mtable(f), types, 0, 0);
         if (sf == jl_bottom_func)
             return NULL;
-        JL_PRINTF(JL_STDERR,
+        jl_printf(JL_STDERR,
                   "Warning: Returned code may not match what actually runs.\n");
     }
     Function *llvmf;
@@ -938,7 +944,7 @@ extern "C" int isabspath(const char *in);
 
 void write_log_data(logdata_t logData, const char *extension)
 {
-    std::string base = std::string(jl_compileropts.julia_home);
+    std::string base = std::string(jl_options.julia_home);
     base = base + "/../share/julia/base/";
     logdata_t::iterator it = logData.begin();
     for (; it != logData.end(); it++) {
@@ -1240,7 +1246,7 @@ static std::set<jl_sym_t*> assigned_in_try(jl_array_t *stmts, int s, long l, int
     std::set<jl_sym_t*> av;
     size_t slength = jl_array_dim0(stmts);
     for(int i=s; i < (int)slength; i++) {
-        jl_value_t *st = jl_arrayref(stmts,i);
+        jl_value_t *st = jl_cellref(stmts,i);
         if (jl_is_expr(st)) {
             if (((jl_expr_t*)st)->head == assign_sym) {
                 jl_value_t *ar = jl_exprarg(st, 0);
@@ -1267,7 +1273,7 @@ static void mark_volatile_vars(jl_array_t *stmts, std::map<jl_sym_t*,jl_varinfo_
 {
     size_t slength = jl_array_dim0(stmts);
     for(int i=0; i < (int)slength; i++) {
-        jl_value_t *st = jl_arrayref(stmts,i);
+        jl_value_t *st = jl_cellref(stmts,i);
         if (jl_is_expr(st)) {
             if (((jl_expr_t*)st)->head == enter_sym) {
                 int last = (int)slength-1;
@@ -1279,7 +1285,7 @@ static void mark_volatile_vars(jl_array_t *stmts, std::map<jl_sym_t*,jl_varinfo_
                         std::set<jl_sym_t*>::iterator it = as.begin();
                         for(; it != as.end(); it++) {
                             if (vars.find(*it) != vars.end() &&
-                                local_var_occurs(jl_arrayref(stmts,j), *it)) {
+                                local_var_occurs(jl_cellref(stmts,j), *it)) {
                                 vars[*it].isVolatile = true;
                             }
                         }
@@ -1360,7 +1366,6 @@ static void simple_escape_analysis(jl_value_t *expr, bool esc, jl_codectx_t *ctx
         }
         return;
     }
-    jl_value_t *ty = expr_type(expr, ctx);
     if (jl_is_symbolnode(expr)) {
         expr = (jl_value_t*)jl_symbolnode_sym(expr);
     }
@@ -1369,9 +1374,6 @@ static void simple_escape_analysis(jl_value_t *expr, bool esc, jl_codectx_t *ctx
         if (ctx->vars.find(vname) != ctx->vars.end()) {
             jl_varinfo_t &vi = ctx->vars[vname];
             vi.escapes |= esc;
-            vi.usedUndef |= (jl_subtype((jl_value_t*)jl_undef_type,ty,0)!=0);
-            if (!ctx->linfo->inferred)
-                vi.usedUndef = true;
             vi.used = true;
         }
     }
@@ -1570,7 +1572,7 @@ static void jl_add_linfo_root(jl_lambda_info_t *li, jl_value_t *val)
     else {
         size_t rlen = jl_array_dim0(li->roots);
         for(size_t i=0; i < rlen; i++) {
-            if (jl_arrayref(li->roots,i) == val) {
+            if (jl_cellref(li->roots,i) == val) {
                 JL_GC_POP();
                 return;
             }
@@ -1902,7 +1904,7 @@ static Value *emit_known_call(jl_value_t *ff, jl_value_t **args, size_t nargs,
             if (aty != NULL) {
                 /*
                   if (trace) {
-                      JL_PRINTF(JL_STDOUT, "call %s%s\n",
+                      jl_printf(JL_STDOUT, "call %s%s\n",
                       jl_sprint(args[0]),
                       jl_sprint((jl_value_t*)aty));
                   }
@@ -2869,8 +2871,7 @@ static Value *emit_var(jl_sym_t *sym, jl_value_t *ty, jl_codectx_t *ctx, bool is
     }
     assert(jbp == NULL);
     if (arg != NULL ||    // arguments are always defined
-        ((!is_var_closed(sym, ctx) || !vi.isAssigned) &&
-         !jl_subtype((jl_value_t*)jl_undef_type, ty, 0))) {
+        ((!is_var_closed(sym, ctx) || !vi.isAssigned) && !vi.usedUndef)) {
         Value *theLoad = builder.CreateLoad(bp, vi.isVolatile);
         if (vi.closureidx > -1 && !(vi.isAssigned && vi.isCaptured))
             theLoad = tbaa_decorate(tbaa_const, (Instruction*)theLoad);
@@ -3001,7 +3002,7 @@ static Value *emit_expr(jl_value_t *expr, jl_codectx_t *ctx, bool isboxed,
         jl_sym_t *sym = (jl_sym_t*)expr;
         if (valuevar != NULL)
             *valuevar = sym;
-        return emit_var(sym, (jl_value_t*)jl_undef_type, ctx, isboxed);
+        return emit_var(sym, (jl_value_t*)jl_any_type, ctx, isboxed);
     }
     if (jl_is_symbolnode(expr)) {
         if (!valuepos) return NULL;
@@ -3067,15 +3068,12 @@ static Value *emit_expr(jl_value_t *expr, jl_codectx_t *ctx, bool isboxed,
     }
     if (jl_is_topnode(expr)) {
         jl_sym_t *var = (jl_sym_t*)jl_fieldref(expr,0);
-        jl_value_t *etype = expr_type(expr, ctx);
         jl_module_t *mod = topmod(ctx);
         jl_binding_t *b = jl_get_binding(mod, var);
         if (b == NULL)
             b = jl_get_binding_wr(mod, var);
         Value *bp = julia_binding_gv(b);
-        if ((b->constp && b->value!=NULL) ||
-            (etype!=(jl_value_t*)jl_any_type &&
-             !jl_subtype((jl_value_t*)jl_undef_type, etype, 0))) {
+        if (b->constp && b->value!=NULL) {
             return builder.CreateLoad(bp, false);
         }
         return emit_checked_var(bp, var, ctx);
@@ -3186,6 +3184,9 @@ static Value *emit_expr(jl_value_t *expr, jl_codectx_t *ctx, bool isboxed,
             }
             else {
                 bp = var_binding_pointer((jl_sym_t*)mn, &bnd, false, ctx);
+                if (isBoxed((jl_sym_t*)mn, ctx)) {
+                    bp_owner = builder.CreateBitCast(emit_nthptr_addr(bp, -1), jl_pvalue_llvmt);
+                }
             }
         }
         Value *a1 = boxed(emit_expr(args[1], ctx),ctx);
@@ -3365,7 +3366,7 @@ static Value *emit_expr(jl_value_t *expr, jl_codectx_t *ctx, bool isboxed,
     }
     else if (head == boundscheck_sym) {
         if (jl_array_len(ex->args) > 0 &&
-            jl_compileropts.check_bounds == JL_COMPILEROPT_CHECK_BOUNDS_DEFAULT) {
+            jl_options.check_bounds == JL_OPTIONS_CHECK_BOUNDS_DEFAULT) {
             jl_value_t *arg = args[0];
             if (arg == jl_true) {
                 ctx->boundsCheck.push_back(true);
@@ -3395,7 +3396,7 @@ static Value *emit_expr(jl_value_t *expr, jl_codectx_t *ctx, bool isboxed,
     }
     else if (head == simdloop_sym) {
         if (!llvm::annotateSimdLoop(builder.GetInsertBlock()))
-            JL_PRINTF(JL_STDERR, "Warning: could not attach metadata for @simd loop.\n");
+            jl_printf(JL_STDERR, "Warning: could not attach metadata for @simd loop.\n");
         return NULL;
     }
     else if (head == meta_sym) {
@@ -3446,7 +3447,7 @@ static bool store_unboxed_p(jl_sym_t *s, jl_codectx_t *ctx)
     jl_varinfo_t &vi = ctx->vars[s];
     // only store a variable unboxed if type inference has run, which
     // checks that the variable is not referenced undefined.
-    return (ctx->linfo->inferred && !vi.isCaptured &&
+    return (ctx->linfo->inferred && !vi.isCaptured && !vi.usedUndef &&
             // don't unbox vararg tuples
             s != ctx->vaName && store_unboxed_p(vi.declType));
 }
@@ -3691,8 +3692,8 @@ static Function *emit_function(jl_lambda_info_t *lam, bool cstyle)
     }
     assert(jl_is_expr(ast));
     sparams = jl_tuple_tvars_to_symbols(lam->sparams);
-    //JL_PRINTF((jl_value_t*)ast);
-    //JL_PRINTF(JL_STDOUT, "\n");
+    //jl_printf((jl_value_t*)ast);
+    //jl_printf(JL_STDOUT, "\n");
     std::map<jl_sym_t*, jl_arrayvar_t> arrayvars;
     std::map<int, BasicBlock*> labels;
     std::map<int, Value*> handlers;
@@ -3749,6 +3750,7 @@ static Function *emit_function(jl_lambda_info_t *lam, bool cstyle)
         if (varinfo.isCaptured)
             varinfo.used = true;
         varinfo.isSA = (jl_vinfo_sa(vi)!=0);
+        varinfo.usedUndef = (jl_vinfo_usedundef(vi)!=0) || (!varinfo.isArgument && !lam->inferred);
         varinfo.declType = jl_cellref(vi,1);
     }
     vinfos = jl_lam_capt(ast);
@@ -3763,8 +3765,9 @@ static Function *emit_function(jl_lambda_info_t *lam, bool cstyle)
         varinfo.closureidx = i;
         varinfo.isAssigned = (jl_vinfo_assigned(vi)!=0);
         varinfo.isCaptured = true;
-        varinfo.used = true;
         varinfo.escapes = true;
+        varinfo.used = true;
+        varinfo.usedUndef = (jl_vinfo_usedundef(vi)!=0) || !lam->inferred;
         varinfo.declType = jl_cellref(vi,1);
     }
 
@@ -3914,8 +3917,8 @@ static Function *emit_function(jl_lambda_info_t *lam, bool cstyle)
 
     // step 5. set up debug info context and create first basic block
     bool in_user_code = !jl_is_submodule(lam->module, jl_base_module) && !jl_is_submodule(lam->module, jl_core_module);
-    bool do_coverage = jl_compileropts.code_coverage == JL_LOG_ALL || (jl_compileropts.code_coverage == JL_LOG_USER && in_user_code);
-    bool do_malloc_log = jl_compileropts.malloc_log  == JL_LOG_ALL || (jl_compileropts.malloc_log    == JL_LOG_USER && in_user_code);
+    bool do_coverage = jl_options.code_coverage == JL_LOG_ALL || (jl_options.code_coverage == JL_LOG_USER && in_user_code);
+    bool do_malloc_log = jl_options.malloc_log  == JL_LOG_ALL || (jl_options.malloc_log    == JL_LOG_USER && in_user_code);
     jl_value_t *stmt = skip_meta(stmts);
     std::string filename = "no file";
     char *dbgFuncName = lam->name->name;
@@ -3950,7 +3953,7 @@ static Function *emit_function(jl_lambda_info_t *lam, bool cstyle)
     BasicBlock *b0 = BasicBlock::Create(jl_LLVMContext, "top", f);
     builder.SetInsertPoint(b0);
 
-    //ios_printf(ios_stderr, "\n*** compiling %s at %s:%d\n\n",
+    //jl_printf(JL_STDERR, "\n*** compiling %s at %s:%d\n\n",
     //           lam->name->name, filename.c_str(), lno);
 
     DebugLoc noDbg;
@@ -4794,11 +4797,6 @@ static void init_julia_llvm_env(Module *m)
                                   (void*)&jl_overflow_exception, m);
     jlinexacterr_var = global_to_llvm("jl_inexact_exception",
                                       (void*)&jl_inexact_exception, m);
-    jlstderr_var =
-        new GlobalVariable(*m, T_int8,
-                           true, GlobalVariable::ExternalLinkage,
-                           NULL, "jl_uv_stderr");
-    add_named_global(jlstderr_var, (void*)&jl_uv_stderr);
 
     jlRTLD_DEFAULT_var =
         new GlobalVariable(*m, T_pint8,
@@ -5128,15 +5126,6 @@ static void init_julia_llvm_env(Module *m)
                          "jl_alloc_tuple", m);
     add_named_global(jl_alloc_tuple_func, (void*)&jl_alloc_tuple);
 
-    std::vector<Type *> puts_args(0);
-    puts_args.push_back(T_pint8);
-    puts_args.push_back(T_pint8);
-    jlputs_func =
-        Function::Create(FunctionType::get(T_void, puts_args, false),
-                         Function::ExternalLinkage,
-                         "jl_puts", m);
-    add_named_global(jlputs_func, (void*)&jl_puts);
-
     std::vector<Type *> dlsym_args(0);
     dlsym_args.push_back(T_pint8);
     dlsym_args.push_back(T_pint8);
@@ -5205,7 +5194,7 @@ static void init_julia_llvm_env(Module *m)
 #endif
 #endif
     FPM->add(createTypeBasedAliasAnalysisPass());
-    if (jl_compileropts.opt_level>=1)
+    if (jl_options.opt_level>=1)
         FPM->add(createBasicAliasAnalysisPass());
     // list of passes from vmkit
     FPM->add(createCFGSimplificationPass()); // Clean up disgusting code
@@ -5274,13 +5263,13 @@ static void init_julia_llvm_env(Module *m)
     FPM->add(createJumpThreadingPass());         // Thread jumps
     FPM->add(createDeadStoreEliminationPass());  // Delete dead stores
 #if LLVM33 && !defined(INSTCOMBINE_BUG)
-    if (jl_compileropts.opt_level>=1)
+    if (jl_options.opt_level>=1)
         FPM->add(createSLPVectorizerPass());     // Vectorize straight-line code
 #endif
 
     FPM->add(createAggressiveDCEPass());         // Delete dead instructions
 #if LLVM33 && !defined(INSTCOMBINE_BUG)
-    if (jl_compileropts.opt_level>=1)
+    if (jl_options.opt_level>=1)
         FPM->add(createInstructionCombiningPass());   // Clean up after SLP loop vectorizer
 #endif
 #if LLVM35
@@ -5297,7 +5286,7 @@ extern "C" void jl_init_codegen(void)
 #ifdef JL_DEBUG_BUILD
     cl::ParseEnvironmentOptions("Julia", "JULIA_LLVM_ARGS");
 #endif
-    imaging_mode = jl_compileropts.build_path != NULL;
+    imaging_mode = jl_options.build_path != NULL;
 
 #if LLVM_VERSION_MAJOR == 3 && LLVM_VERSION_MINOR <= 3
     // this option disables LLVM's signal handlers
@@ -5394,9 +5383,9 @@ extern "C" void jl_init_codegen(void)
             TheTriple,
             "",
 #if LLVM35
-            strcmp(jl_compileropts.cpu_target,"native") ? StringRef(jl_compileropts.cpu_target) : sys::getHostCPUName(),
+            strcmp(jl_options.cpu_target,"native") ? StringRef(jl_options.cpu_target) : sys::getHostCPUName(),
 #else
-            strcmp(jl_compileropts.cpu_target,"native") ? jl_compileropts.cpu_target : "",
+            strcmp(jl_options.cpu_target,"native") ? jl_options.cpu_target : "",
 #endif
             MAttrs);
     jl_TargetMachine = jl_TargetMachine->getTarget().createTargetMachine(
@@ -5421,9 +5410,9 @@ extern "C" void jl_init_codegen(void)
     engine_module->setDataLayout(jl_TargetMachine->getDataLayout()->getStringRepresentation());
 #endif
     jl_ExecutionEngine = eb->create(jl_TargetMachine);
-    //ios_printf(ios_stderr,"%s\n",jl_ExecutionEngine->getDataLayout()->getStringRepresentation().c_str());
+    //jl_printf(JL_STDERR,"%s\n",jl_ExecutionEngine->getDataLayout()->getStringRepresentation().c_str());
     if (!jl_ExecutionEngine) {
-        JL_PRINTF(JL_STDERR, "Critical error initializing llvm: ", ErrorStr.c_str());
+        jl_printf(JL_STDERR, "Critical error initializing llvm: ", ErrorStr.c_str());
         exit(1);
     }
 #ifdef LLVM35

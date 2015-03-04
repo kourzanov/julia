@@ -1,6 +1,6 @@
 module Docs
 
-import Base.Markdown: @doc_str, @doc_mstr, MD
+import Base.Markdown: @doc_str, MD
 
 export doc, @doc
 
@@ -113,7 +113,7 @@ function doc(f::Function, m::Method)
 end
 
 catdoc() = nothing
-catdoc(xs...) = [xs...]
+catdoc(xs...) = vcat(xs...)
 
 # Modules
 
@@ -149,9 +149,9 @@ namify(sy::Symbol) = sy
 
 function mdify(ex)
     if isa(ex, AbstractString)
-        :(@doc_str $(esc(ex)))
+        :(@doc_str $ex)
     elseif isexpr(ex, :macrocall) && namify(ex) == symbol("@mstr")
-        :(@doc_mstr $(esc(ex.args[2])))
+        :(@doc_str $(Expr(:triple_quoted_string, ex.args[2])))
     else
         esc(ex)
     end
@@ -258,7 +258,7 @@ end
 
 import Base: print, writemime
 
-export HTML, @html_str, @html_mstr
+export HTML, @html_str
 
 export HTML, Text
 
@@ -289,13 +289,8 @@ writemime(io::IO, ::MIME"text/html", h::HTML) = print(io, h.content)
 writemime(io::IO, ::MIME"text/html", h::HTML{Function}) = h.content(io)
 
 @doc "Create an `HTML` object from a literal string." ->
-macro html_str (s)
+macro html_str(s)
     :(HTML($s))
-end
-
-@doc (@doc html"") ->
-macro html_mstr (s)
-    :(HTML($(Base.triplequoted(s))))
 end
 
 function catdoc(xs::HTML...)
@@ -306,7 +301,7 @@ function catdoc(xs::HTML...)
     end
 end
 
-export Text, @text_str, @text_mstr
+export Text, @text_str
 
 # @doc """
 # `Text(s)`: Create an object that renders `s` as plain text.
@@ -330,11 +325,6 @@ writemime(io::IO, ::MIME"text/plain", t::Text) = print(io, t)
 @doc "Create a `Text` object from a literal string." ->
 macro text_str (s)
     :(Text($s))
-end
-
-@doc (@doc text"") ->
-macro text_mstr (s)
-    :(Text($(Base.triplequoted(s))))
 end
 
 function catdoc(xs::Text...)
@@ -525,8 +515,8 @@ moduleusings(mod) = ccall(:jl_module_usings, Any, (Any,), mod)
 filtervalid(names) = filter(x->!ismatch(r"#", x), map(string, names))
 
 accessible(mod::Module) =
-    [names(mod, true, true),
-     map(names, moduleusings(mod))...,
+    [names(mod, true, true);
+     map(names, moduleusings(mod))...;
      builtins] |> unique |> filtervalid
 
 completions(name) = fuzzysort(name, accessible(current_module()))

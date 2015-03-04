@@ -31,6 +31,7 @@ include("reflection.jl")
 include("build_h.jl")
 include("version_git.jl")
 include("c.jl")
+include("options.jl")
 
 # core operations & types
 include("promotion.jl")
@@ -74,7 +75,6 @@ importall .SimdLoop
 include("reduce.jl")
 
 # compiler
-import Core.Undef  # used internally by compiler
 include("inference.jl")
 
 # For OS specific stuff in I/O
@@ -205,8 +205,7 @@ include("loading.jl")
 # Polling (requires multi.jl)
 include("poll.jl")
 
-# distributed arrays and memory-mapped arrays
-include("darray.jl")
+# memory-mapped and shared arrays
 include("mmap.jl")
 include("sharedarray.jl")
 
@@ -280,9 +279,6 @@ importall .FastMath
 include("pkg.jl")
 const Git = Pkg.Git
 
-# base graphics API
-include("graphics.jl")
-
 # profiler
 include("profile.jl")
 importall .Profile
@@ -290,6 +286,10 @@ importall .Profile
 # dates
 include("Dates.jl")
 import .Dates: Date, DateTime, now
+
+# enums
+include("Enums.jl")
+importall .Enums
 
 # deprecated functions
 include("deprecated.jl")

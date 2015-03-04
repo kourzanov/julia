@@ -23,6 +23,10 @@
 #endif
 #endif
 
+#ifdef GC_VERIFY
+void jl_(void *jl_value);
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -113,14 +117,14 @@ static region_t *find_region(void *ptr)
     }
     return NULL;
 }
-gcpage_t *page_metadata(void *data)
+static gcpage_t *page_metadata(void *data)
 {
     region_t *r = find_region(data);
     int pg_idx = (GC_PAGE_DATA(data) - &r->pages[0][0])/GC_PAGE_SZ;
     return &r->meta[pg_idx];
 }
 
-char *page_age(gcpage_t *pg)
+static char *page_age(gcpage_t *pg)
 {
     return pg->ages;
 }
@@ -279,25 +283,25 @@ static void add_lostval_parent(jl_value_t* parent)
 
 #define verify_val(v) do {                                              \
         if(lostval == (jl_value_t*)(v) && (v) != 0) {                   \
-            JL_PRINTF(JL_STDOUT,                                        \
+            jl_printf(JL_STDOUT,                                        \
                       "Found lostval 0x%lx at %s:%d oftype: ",          \
                       (uintptr_t)(lostval), __FILE__, __LINE__);        \
             jl_static_show(JL_STDOUT, jl_typeof(v));                    \
-            JL_PRINTF(JL_STDOUT, "\n");                                 \
+            jl_printf(JL_STDOUT, "\n");                                 \
         }                                                               \
     } while(0);
 
 
 #define verify_parent(ty, obj, slot, args...) do {                      \
         if(*(jl_value_t**)(slot) == lostval && (obj) != lostval) {      \
-            JL_PRINTF(JL_STDOUT, "Found parent %s 0x%lx at %s:%d\n",    \
+            jl_printf(JL_STDOUT, "Found parent %s 0x%lx at %s:%d\n",    \
                       ty, (uintptr_t)(obj), __FILE__, __LINE__);        \
-            JL_PRINTF(JL_STDOUT, "\tloc 0x%lx : ", (uintptr_t)(slot));  \
-            JL_PRINTF(JL_STDOUT, args);                                 \
-            JL_PRINTF(JL_STDOUT, "\n");                                 \
-            JL_PRINTF(JL_STDOUT, "\ttype: ");                           \
+            jl_printf(JL_STDOUT, "\tloc 0x%lx : ", (uintptr_t)(slot));  \
+            jl_printf(JL_STDOUT, args);                                 \
+            jl_printf(JL_STDOUT, "\n");                                 \
+            jl_printf(JL_STDOUT, "\ttype: ");                           \
             jl_static_show(JL_STDOUT, jl_typeof(obj));                  \
-            JL_PRINTF(JL_STDOUT, "\n");                                 \
+            jl_printf(JL_STDOUT, "\n");                                 \
             add_lostval_parent((jl_value_t*)(obj));                     \
         }                                                               \
     } while(0);
@@ -354,6 +358,7 @@ static inline int gc_setmark_big(void *o, int mark_mode)
     if (bits == GC_QUEUED || bits == GC_MARKED)
         mark_mode = GC_MARKED;
     if ((mark_mode == GC_MARKED) & (bits != GC_MARKED)) {
+        // Move hdr from big_objects list to big_objects_marked list
         *hdr->prev = hdr->next;
         if (hdr->next)
             hdr->next->prev = hdr->prev;
@@ -471,7 +476,7 @@ static __attribute__((noinline)) void *malloc_page(void)
 #ifdef _OS_WINDOWS_
             char* mem = VirtualAlloc(NULL, sizeof(region_t) + GC_PAGE_SZ, MEM_RESERVE, PAGE_READWRITE);
 #else
-            char* mem = mmap(0, sizeof(region_t) + GC_PAGE_SZ, PROT_READ | PROT_WRITE, MAP_NORESERVE | MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+            char* mem = (char*)mmap(0, sizeof(region_t) + GC_PAGE_SZ, PROT_READ | PROT_WRITE, MAP_NORESERVE | MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
             mem = mem == MAP_FAILED ? NULL : mem;
 #endif
             if (mem == NULL) {
@@ -707,9 +712,9 @@ static void run_finalizer(jl_value_t *o, jl_value_t *ff)
         jl_apply(f, (jl_value_t**)&o, 1);
     }
     JL_CATCH {
-        JL_PRINTF(JL_STDERR, "error in running finalizer: ");
+        jl_printf(JL_STDERR, "error in running finalizer: ");
         jl_static_show(JL_STDERR, jl_exception_in_transit);
-        JL_PUTC('\n',JL_STDERR);
+        jl_printf(JL_STDERR, "\n");
     }
 }
 
@@ -809,6 +814,8 @@ static int big_total;
 static int big_freed;
 static int big_reset;
 
+// Sweep list rooted at *pv, removing and freeing any unmarked objects.
+// Return pointer to last `next` field in the culled list.
 static bigval_t** sweep_big_list(int sweep_mask, bigval_t** pv)
 {
     bigval_t *v = *pv;
@@ -834,6 +841,7 @@ static bigval_t** sweep_big_list(int sweep_mask, bigval_t** pv)
             gc_bits(&v->_data) = bits;
         }
         else {
+            // Remove v from list and free it
             *pv = nxt;
             if (nxt)
                 nxt->prev = pv;
@@ -855,6 +863,7 @@ static void sweep_big(int sweep_mask)
     sweep_big_list(sweep_mask, &big_objects);
     if (sweep_mask == GC_MARKED) {
         bigval_t** last_next = sweep_big_list(sweep_mask, &big_objects_marked);
+        // Move all survivors from big_objects_marked list to big_objects list.
         if (big_objects)
             big_objects->prev = last_next;
         *last_next = big_objects;
@@ -961,13 +970,13 @@ static inline gcval_t *reset_page(pool_t *p, gcpage_t *pg, gcval_t *fl)
 
 static __attribute__((noinline)) void  add_page(pool_t *p)
 {
-    char *data = malloc_page();
+    char *data = (char*)malloc_page();
     if (data == NULL)
         jl_throw(jl_memory_exception);
     gcpage_t *pg = page_metadata(data);
     pg->data = data;
     pg->osize = p->osize;
-    pg->ages = malloc((GC_PAGE_SZ/p->osize + 7)/8);
+    pg->ages = (char*)malloc((GC_PAGE_SZ/p->osize + 7)/8);
     gcval_t *fl = reset_page(p, pg, p->newpages);
     p->newpages = fl;
 }
@@ -1164,44 +1173,46 @@ static gcval_t** sweep_page(pool_t* p, gcpage_t* pg, gcval_t **pfl, int sweep_ma
         goto free_page;
     }
 
-    int pg_nfree = 0;
-    gcval_t **pfl_begin = NULL;
-    unsigned char msk = 1; // mask for the age bit in the current age byte
-    while ((char*)v <= lim) {
-        int bits = gc_bits(v);
-        if (!(bits & GC_MARKED)) {
-            *pfl = v;
-            pfl = &v->next;
-            pfl_begin = pfl_begin ? pfl_begin : pfl;
-            pg_nfree++;
-            *ages &= ~msk;
-        }
-        else { // marked young or old
-            if (*ages & msk) { // old enough
-                if (sweep_mask == GC_MARKED || bits == GC_MARKED_NOESC) {
-                    gc_bits(v) = GC_QUEUED; // promote
+    {  // scope to avoid clang goto errors
+        int pg_nfree = 0;
+        gcval_t **pfl_begin = NULL;
+        unsigned char msk = 1; // mask for the age bit in the current age byte
+        while ((char*)v <= lim) {
+            int bits = gc_bits(v);
+            if (!(bits & GC_MARKED)) {
+                *pfl = v;
+                pfl = &v->next;
+                pfl_begin = pfl_begin ? pfl_begin : pfl;
+                pg_nfree++;
+                *ages &= ~msk;
+            }
+            else { // marked young or old
+                if (*ages & msk) { // old enough
+                    if (sweep_mask == GC_MARKED || bits == GC_MARKED_NOESC) {
+                        gc_bits(v) = GC_QUEUED; // promote
+                    }
                 }
+                else if ((sweep_mask & bits) == sweep_mask) {
+                    gc_bits(v) = GC_CLEAN; // unmark
+                }
+                *ages |= msk;
+                freedall = 0;
             }
-            else if ((sweep_mask & bits) == sweep_mask) {
-                gc_bits(v) = GC_CLEAN; // unmark
+            v = (gcval_t*)((char*)v + osize);
+            msk *= 2;
+            if (!msk) {
+                msk = 1;
+                ages++;
             }
-            *ages |= msk;
-            freedall = 0;
         }
-        v = (gcval_t*)((char*)v + osize);
-        msk *= 2;
-        if (!msk) {
-            msk = 1;
-            ages++;
-        }
+
+        pg->fl_begin_offset = pfl_begin ? (char*)pfl_begin - data : (uint16_t)-1;
+        pg->fl_end_offset = pfl_begin ? (char*)pfl - data : (uint16_t)-1;
+
+        pg->nfree = pg_nfree;
+        page_done++;
+        pg->allocd = 0;
     }
-
-    pg->fl_begin_offset = pfl_begin ? (char*)pfl_begin - data : (uint16_t)-1;
-    pg->fl_end_offset = pfl_begin ? (char*)pfl - data : (uint16_t)-1;
-
-    pg->nfree = pg_nfree;
-    page_done++;
-    pg->allocd = 0;
  free_page:
     pg_freedall += freedall;
 
@@ -1259,7 +1270,7 @@ static void gc_sweep_once(int sweep_mask)
 #endif
     sweep_malloced_arrays();
 #ifdef GC_TIME
-    JL_PRINTF(JL_STDOUT, "GC sweep arrays %.2f (freed %d/%d)\n", (clock_now() - t0)*1000, mallocd_array_freed, mallocd_array_total);
+    jl_printf(JL_STDOUT, "GC sweep arrays %.2f (freed %d/%d)\n", (clock_now() - t0)*1000, mallocd_array_freed, mallocd_array_total);
     t0 = clock_now();
     big_total = 0;
     big_freed = 0;
@@ -1267,13 +1278,13 @@ static void gc_sweep_once(int sweep_mask)
 #endif
     sweep_big(sweep_mask);
 #ifdef GC_TIME
-    JL_PRINTF(JL_STDOUT, "GC sweep big %.2f (freed %d/%d with %d rst)\n", (clock_now() - t0)*1000, big_freed, big_total, big_reset);
+    jl_printf(JL_STDOUT, "GC sweep big %.2f (freed %d/%d with %d rst)\n", (clock_now() - t0)*1000, big_freed, big_total, big_reset);
     t0 = clock_now();
 #endif
     if (sweep_mask == GC_MARKED)
         jl_unmark_symbols();
 #ifdef GC_TIME
-    JL_PRINTF(JL_STDOUT, "GC sweep symbols %.2f\n", (clock_now() - t0)*1000);
+    jl_printf(JL_STDOUT, "GC sweep symbols %.2f\n", (clock_now() - t0)*1000);
 #endif
 }
 
@@ -1298,7 +1309,7 @@ static int gc_sweep_inc(int sweep_mask)
 #ifdef GC_TIME
     double sweep_pool_sec = clock_now() - t0;
     double sweep_speed = ((((double)total_pages)*GC_PAGE_SZ)/(1024*1024*1024))/sweep_pool_sec;
-    JL_PRINTF(JL_STDOUT, "GC sweep pools %s %.2f at %.1f GB/s (skipped %d%% of %d, done %d pgs, %d freed with %d lazily) mask %d\n", finished ? "end" : "inc", sweep_pool_sec*1000, sweep_speed, total_pages ? (skipped_pages*100)/total_pages : 0, total_pages, page_done, freed_pages, lazy_freed_pages,  sweep_mask);
+    jl_printf(JL_STDOUT, "GC sweep pools %s %.2f at %.1f GB/s (skipped %d%% of %d, done %d pgs, %d freed with %d lazily) mask %d\n", finished ? "end" : "inc", sweep_pool_sec*1000, sweep_speed, total_pages ? (skipped_pages*100)/total_pages : 0, total_pages, page_done, freed_pages, lazy_freed_pages,  sweep_mask);
 #endif
     return finished;
 }
@@ -1318,7 +1329,7 @@ void grow_mark_stack(void)
     size_t offset = mark_stack - mark_stack_base;
     mark_stack_base = (jl_value_t**)realloc(mark_stack_base, newsz*sizeof(void*));
     if (mark_stack_base == NULL) {
-        JL_PRINTF(JL_STDERR, "Could'nt grow mark stack to : %d\n", newsz);
+        jl_printf(JL_STDERR, "Could'nt grow mark stack to : %d\n", newsz);
         exit(1);
     }
     mark_stack = mark_stack_base + offset;
@@ -1638,7 +1649,7 @@ static int push_root(jl_value_t *v, int d, int bits)
     }
 #ifdef GC_VERIFY
     else {
-        JL_PRINTF(JL_STDOUT, "GC error (probable corruption) :\n");
+        jl_printf(JL_STDOUT, "GC error (probable corruption) :\n");
         jl_(vt);
         abort();
     }
@@ -1942,8 +1953,18 @@ static void gc_verify(void)
 // collector entry point and control
 
 static int is_gc_enabled = 1;
-DLLEXPORT void jl_gc_enable(void)    { is_gc_enabled = 1; }
-DLLEXPORT void jl_gc_disable(void)   { is_gc_enabled = 0; }
+DLLEXPORT int jl_gc_enable(void)
+{
+    int prev = is_gc_enabled;
+    is_gc_enabled = 1;
+    return prev;
+}
+DLLEXPORT int jl_gc_disable(void)
+{
+    int prev = is_gc_enabled;
+    is_gc_enabled = 0;
+    return prev;
+}
 DLLEXPORT int jl_gc_is_enabled(void) { return is_gc_enabled; }
 
 DLLEXPORT int64_t jl_gc_total_bytes(void) { return total_allocd_bytes + allocd_bytes + collect_interval; }
@@ -2059,14 +2080,17 @@ void jl_gc_collect(int full)
         for (int i = 0; i < last_remset->len; i++) {
             uintptr_t item = (uintptr_t)last_remset->items[i];
             void* ptr = (void*)(item & ~(uintptr_t)1);
-            push_root(ptr, 0, gc_bits(ptr));
+            push_root((jl_value_t*)ptr, 0, gc_bits(ptr));
         }
 
         // 2. mark every object in a remembered binding
         int n_bnd_refyoung = 0;
         for (int i = 0; i < rem_bindings.len; i++) {
-            void *ptr = rem_bindings.items[i];
-            if (gc_push_root(((jl_binding_t*)ptr)->value, 0) == GC_MARKED_NOESC) {
+            jl_binding_t *ptr = (jl_binding_t*)rem_bindings.items[i];
+            // A null pointer can happen here when the binding is cleaned up
+            // as an exception is thrown after it was already queued (#10221)
+            if (!ptr->value) continue;
+            if (gc_push_root(ptr->value, 0) == GC_MARKED_NOESC) {
                 rem_bindings.items[n_bnd_refyoung] = ptr;
                 n_bnd_refyoung++;
             }
@@ -2083,7 +2107,7 @@ void jl_gc_collect(int full)
         uint64_t mark_pause = jl_hrtime() - t0;
 #endif
 #ifdef GC_TIME
-        JL_PRINTF(JL_STDOUT, "GC mark pause %.2f ms | scanned %ld kB = %ld + %ld | stack %d -> %d (wb %d) | remset %d %d\n", NS2MS(mark_pause), (scanned_bytes + perm_scanned_bytes)/1024, scanned_bytes/1024, perm_scanned_bytes/1024, saved_mark_sp, mark_sp, wb_activations, last_remset->len, allocd_bytes/1024);
+        jl_printf(JL_STDOUT, "GC mark pause %.2f ms | scanned %ld kB = %ld + %ld | stack %d -> %d (wb %d) | remset %d %d\n", NS2MS(mark_pause), (scanned_bytes + perm_scanned_bytes)/1024, scanned_bytes/1024, perm_scanned_bytes/1024, saved_mark_sp, mark_sp, wb_activations, last_remset->len, allocd_bytes/1024);
         saved_mark_sp = mark_sp;
 #endif
 #ifdef GC_FINAL_STATS
@@ -2214,7 +2238,7 @@ void jl_gc_collect(int full)
         total_fin_time += finalize_time + post_time;
 #endif
 #ifdef GC_TIME
-        JL_PRINTF(JL_STDOUT, "GC sweep pause %.2f ms live %ld kB (freed %d kB EST %d kB [error %d] = %d%% of allocd %d kB b/r %ld/%ld) (%.2f ms in post_mark, %.2f ms in %d fin) (marked in %d inc) mask %d | next in %d kB\n", NS2MS(sweep_pause), live_bytes/1024, SAVE2/1024, estimate_freed/1024, (SAVE2 - estimate_freed), pct, SAVE3/1024, bonus/1024, SAVE/1024, NS2MS(post_time), NS2MS(finalize_time), n_finalized, inc_count, sweep_mask, -allocd_bytes/1024);
+        jl_printf(JL_STDOUT, "GC sweep pause %.2f ms live %ld kB (freed %d kB EST %d kB [error %d] = %d%% of allocd %d kB b/r %ld/%ld) (%.2f ms in post_mark, %.2f ms in %d fin) (marked in %d inc) mask %d | next in %d kB\n", NS2MS(sweep_pause), live_bytes/1024, SAVE2/1024, estimate_freed/1024, (SAVE2 - estimate_freed), pct, SAVE3/1024, bonus/1024, SAVE/1024, NS2MS(post_time), NS2MS(finalize_time), n_finalized, inc_count, sweep_mask, -allocd_bytes/1024);
 #endif
     }
     n_pause++;
@@ -2434,7 +2458,7 @@ static size_t pool_stats(pool_t *p, size_t *pwaste, size_t *np, size_t *pnold)
     *np = npgs;
     *pnold = nold;
     if (npgs != 0) {
-        JL_PRINTF(JL_STDOUT,
+        jl_printf(JL_STDOUT,
                   "%4d : %7d/%7d objects (%3d%% old), %5d pages, %5d kB, %5d kB waste\n",
                   p->osize,
                   nused,
@@ -2460,7 +2484,7 @@ static void all_pool_stats(void)
         nold += nol;
         noldbytes += nol*norm_pools[i].osize;
     }
-    JL_PRINTF(JL_STDOUT,
+    jl_printf(JL_STDOUT,
               "%d objects (%d%% old), %d kB (%d%% old) total allocated, %d total fragments (%d%% overhead), in %d pages\n",
               no, (nold*100)/no, nb/1024, (noldbytes*100)/nb, tw, (tw*100)/nb, tp);
 }
@@ -2495,7 +2519,7 @@ static void big_obj_stats(void)
         ma = ma->next;
     }
 
-    JL_PRINTF(JL_STDOUT, "%d kB (%d%% old) in %d large objects (%d%% old)\n", (nbytes + nbytes_old)/1024, nbytes + nbytes_old ? (nbytes_old*100)/(nbytes + nbytes_old) : 0, nused + nused_old, nused+nused_old ? (nused_old*100)/(nused + nused_old) : 0);
+    jl_printf(JL_STDOUT, "%d kB (%d%% old) in %d large objects (%d%% old)\n", (nbytes + nbytes_old)/1024, nbytes + nbytes_old ? (nbytes_old*100)/(nbytes + nbytes_old) : 0, nused + nused_old, nused+nused_old ? (nused_old*100)/(nused + nused_old) : 0);
 }
 #endif //MEMPROFILE
 

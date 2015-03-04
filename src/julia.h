@@ -306,7 +306,6 @@ extern DLLEXPORT jl_datatype_t *jl_type_type;
 extern DLLEXPORT jl_tvar_t     *jl_typetype_tvar;
 extern DLLEXPORT jl_datatype_t *jl_typetype_type;
 extern DLLEXPORT jl_value_t    *jl_ANY_flag;
-extern DLLEXPORT jl_datatype_t *jl_undef_type;
 extern DLLEXPORT jl_datatype_t *jl_typename_type;
 extern DLLEXPORT jl_datatype_t *jl_typector_type;
 extern DLLEXPORT jl_datatype_t *jl_sym_type;
@@ -323,7 +322,6 @@ extern DLLEXPORT jl_datatype_t *jl_uniontype_type;
 extern DLLEXPORT jl_datatype_t *jl_datatype_type;
 
 extern DLLEXPORT jl_value_t *jl_bottom_type;
-extern DLLEXPORT jl_value_t *jl_top_type;
 extern DLLEXPORT jl_datatype_t *jl_lambda_info_type;
 extern DLLEXPORT jl_datatype_t *jl_module_type;
 extern DLLEXPORT jl_datatype_t *jl_vararg_type;
@@ -434,6 +432,7 @@ DLLEXPORT void gc_wb_slow(void* parent, void* ptr);
 
 static inline void gc_wb_binding(void *bnd, void *val)
 {
+    bnd = (void*)((void**)bnd - 1);
     if (__unlikely((*(uintptr_t*)bnd & 1) == 1 && (*(uintptr_t*)val & 1) == 0))
         gc_queue_binding(bnd);
 }
@@ -947,7 +946,7 @@ DLLEXPORT int julia_trampoline(int argc, const char *argv[], int (*pmain)(int ac
 DLLEXPORT void jl_atexit_hook(void);
 DLLEXPORT void NORETURN jl_exit(int status);
 
-DLLEXPORT const char * jl_get_system_image_cpu_target(const char *fname);
+DLLEXPORT void jl_preload_sysimg_so(const char *fname);
 DLLEXPORT void jl_save_system_image(const char *fname);
 DLLEXPORT void jl_restore_system_image(const char *fname);
 DLLEXPORT int jl_save_new_module(const char *fname, jl_module_t *mod);
@@ -1059,6 +1058,11 @@ STATIC_INLINE int jl_vinfo_sa(jl_array_t *vi)
     return (jl_unbox_long(jl_cellref(vi,2))&16)!=0;
 }
 
+STATIC_INLINE int jl_vinfo_usedundef(jl_array_t *vi)
+{
+    return (jl_unbox_long(jl_cellref(vi,2))&32)!=0;
+}
+
 // calling into julia ---------------------------------------------------------
 
 STATIC_INLINE
@@ -1128,8 +1132,8 @@ extern DLLEXPORT jl_gcframe_t *jl_pgcstack;
 
 void jl_gc_init(void);
 void jl_gc_setmark(jl_value_t *v);
-DLLEXPORT void jl_gc_enable(void);
-DLLEXPORT void jl_gc_disable(void);
+DLLEXPORT int jl_gc_enable(void);
+DLLEXPORT int jl_gc_disable(void);
 DLLEXPORT int jl_gc_is_enabled(void);
 DLLEXPORT int64_t jl_gc_total_bytes(void);
 DLLEXPORT uint64_t jl_gc_total_hrtime(void);
@@ -1313,10 +1317,6 @@ void jl_longjmp(jmp_buf _Buf,int _Value);
 #define JL_STDOUT jl_uv_stdout
 #define JL_STDERR jl_uv_stderr
 #define JL_STDIN  jl_uv_stdin
-#define JL_PRINTF jl_printf
-#define JL_PUTC	  jl_putc
-#define JL_PUTS	  jl_puts
-#define JL_WRITE  jl_write
 
 DLLEXPORT int jl_spawn(char *name, char **argv, uv_loop_t *loop,
                        uv_process_t *proc, jl_value_t *julia_struct,
@@ -1343,10 +1343,6 @@ DLLEXPORT uv_idle_t * jl_make_idle(uv_loop_t *loop, jl_value_t *julia_struct);
 DLLEXPORT int jl_idle_start(uv_idle_t *idle);
 DLLEXPORT int jl_idle_stop(uv_idle_t *idle);
 
-DLLEXPORT int jl_putc(char c, uv_stream_t *stream);
-DLLEXPORT int jl_puts(const char *str, uv_stream_t *stream);
-DLLEXPORT int jl_pututf8(uv_stream_t *s, uint32_t wchar);
-
 DLLEXPORT uv_timer_t *jl_make_timer(uv_loop_t *loop, jl_value_t *julia_struct);
 DLLEXPORT int jl_timer_stop(uv_timer_t *timer);
 
@@ -1372,13 +1368,13 @@ typedef struct {
     uv_file file;
 } jl_uv_file_t;
 
-DLLEXPORT size_t jl_write(uv_stream_t *stream, const char *str, size_t n);
 DLLEXPORT int jl_printf(uv_stream_t *s, const char *format, ...);
 DLLEXPORT int jl_vprintf(uv_stream_t *s, const char *format, va_list args);
+DLLEXPORT void jl_safe_printf(const char *str, ...);
 
-extern DLLEXPORT uv_stream_t *jl_uv_stdin;
-extern DLLEXPORT uv_stream_t *jl_uv_stdout;
-extern DLLEXPORT uv_stream_t *jl_uv_stderr;
+extern DLLEXPORT JL_STREAM *JL_STDIN;
+extern DLLEXPORT JL_STREAM *JL_STDOUT;
+extern DLLEXPORT JL_STREAM *JL_STDERR;
 
 DLLEXPORT JL_STREAM *jl_stdout_stream(void);
 DLLEXPORT JL_STREAM *jl_stdin_stream(void);
@@ -1399,48 +1395,75 @@ void jl_print_gc_stats(JL_STREAM *s);
 // debugging
 void show_execution_point(char *filename, int lno);
 
-// compiler options -----------------------------------------------------------
-
-// Note: need to keep this in sync with its initialization in
-// src/init.c, and with JLCompilerOpts in base/inference.jl
+// julia options -----------------------------------------------------------
+// NOTE: This struct needs to be kept in sync with JLOptions type in base/options.jl
 typedef struct {
+    int8_t version;
+    int8_t quiet;
     const char *julia_home;
     const char *julia_bin;
     const char *build_path;
+    const char *eval;
+    const char *print;
+    const char *postboot;
+    const char *load;
     const char *image_file;
     const char *cpu_target;
+    long   nprocs;
+    const char *machinefile;
+    int8_t isinteractive;
+    int8_t color;
+    int8_t historyfile;
+    int8_t startupfile;
+    int8_t compile_enabled;
     int8_t code_coverage;
     int8_t malloc_log;
-    int8_t check_bounds;
-    int8_t dumpbitcode;
-    int int_literals;
-    int8_t compile_enabled;
     int8_t opt_level;
+    int8_t check_bounds;
+    int    int_literals;
+    int8_t dumpbitcode;
     int8_t depwarn;
     int8_t can_inline;
     int8_t fast_math;
-} jl_compileropts_t;
+    int8_t worker;
+    const char *bindto;
+} jl_options_t;
 
-extern DLLEXPORT jl_compileropts_t jl_compileropts;
+extern DLLEXPORT jl_options_t jl_options;
 
 // Settings for code_coverage and malloc_log
+// NOTE: if these numbers change, test/cmdlineargs.jl will have to be updated
 #define JL_LOG_NONE 0
 #define JL_LOG_USER 1
 #define JL_LOG_ALL  2
 
-#define JL_COMPILEROPT_CHECK_BOUNDS_DEFAULT 0
-#define JL_COMPILEROPT_CHECK_BOUNDS_ON 1
-#define JL_COMPILEROPT_CHECK_BOUNDS_OFF 2
-#define JL_COMPILEROPT_FAST_MATH_DEFAULT 0
-#define JL_COMPILEROPT_FAST_MATH_ON 1
-#define JL_COMPILEROPT_FAST_MATH_OFF 2
-#define JL_COMPILEROPT_COMPILE_DEFAULT 1
-#define JL_COMPILEROPT_COMPILE_OFF 0
-#define JL_COMPILEROPT_COMPILE_ON  1
-#define JL_COMPILEROPT_COMPILE_ALL 2
+#define JL_OPTIONS_CHECK_BOUNDS_DEFAULT 0
+#define JL_OPTIONS_CHECK_BOUNDS_ON 1
+#define JL_OPTIONS_CHECK_BOUNDS_OFF 2
 
-#define JL_COMPILEROPT_DUMPBITCODE_ON 1
-#define JL_COMPILEROPT_DUMPBITCODE_OFF 2
+#define JL_OPTIONS_COMPILE_DEFAULT 1
+#define JL_OPTIONS_COMPILE_OFF 0
+#define JL_OPTIONS_COMPILE_ON  1
+#define JL_OPTIONS_COMPILE_ALL 2
+
+#define JL_OPTIONS_DUMPBITCODE_ON 1
+#define JL_OPTIONS_DUMPBITCODE_OFF 2
+
+#define JL_OPTIONS_COLOR_ON 1
+#define JL_OPTIONS_COLOR_OFF 2
+
+#define JL_OPTIONS_HISTORYFILE_ON 1
+#define JL_OPTIONS_HISTORYFILE_OFF 0
+
+#define JL_OPTIONS_STARTUPFILE_ON 1
+#define JL_OPTIONS_STARTUPFILE_OFF 2
+
+#define JL_OPTIONS_FAST_MATH_ON 1
+#define JL_OPTIONS_FAST_MATH_OFF 2
+#define JL_OPTIONS_FAST_MATH_DEFAULT 0
+
+#define JL_OPTIONS_WORKER_DEFAULT 1
+#define JL_OPTIONS_WORKER_CUSTOM 2
 
 // Version information
 #include "julia_version.h"

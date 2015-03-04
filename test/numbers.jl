@@ -354,6 +354,9 @@ end
 @test base(12,typemin(Int128)) == "-2a695925806818735399a37a20a31b3534a8"
 @test base(12,typemax(Int128)) == "2a695925806818735399a37a20a31b3534a7"
 
+@test hex2num("3ff0000000000000") == 1.
+@test hex2num("4000000000000000") == 2.
+
 # floating-point printing
 @test repr(1.0) == "1.0"
 @test repr(-1.0) == "-1.0"
@@ -1106,6 +1109,8 @@ for yr = Any[
         c = cld(x,y)
         r = rem(x,y)
         m = mod(x,y)
+        d2, r2 = divrem(x,y)
+        f2, m2 = fldmod(x,y)
 
         t1 = isa(x,Rational) && isa(y,Rational) ?
                                promote_type(typeof(num(x)),typeof(num(y))) :
@@ -1127,6 +1132,16 @@ for yr = Any[
         @test 0 <= r < y
         @test x == y*d + r
 
+        @test typeof(d2) == typeof(d)
+        @test typeof(r2) == typeof(r)
+        @test typeof(f2) == typeof(f)
+        @test typeof(m2) == typeof(m)
+
+        @test d2 == d
+        @test r2 == r
+        @test f2 == f
+        @test m2 == m
+
         for X=[-1,1], Y=[-1,1]
             sx = X*x
             sy = Y*y
@@ -1136,6 +1151,8 @@ for yr = Any[
             sc = cld(sx,sy)
             sr = rem(sx,sy)
             sm = mod(sx,sy)
+            sd2, sr2 = divrem(sx,sy)
+            sf2, sm2 = fldmod(sx,sy)
 
             @test typeof(sd) <: t1
             @test typeof(sf) <: t1
@@ -1147,6 +1164,16 @@ for yr = Any[
             @test sy < 0 ? -y < sm <= 0 : 0 <= sm < +y
             @test sx == sy*sd + sr
             @test sx == sy*sf + sm
+
+            @test typeof(sd2) == typeof(sd)
+            @test typeof(sr2) == typeof(sr)
+            @test typeof(sf2) == typeof(sf)
+            @test typeof(sm2) == typeof(sm)
+
+            @test sd2 == sd
+            @test sr2 == sr
+            @test sf2 == sf
+            @test sm2 == sm
         end
     end
 end
@@ -1173,7 +1200,6 @@ end
 @test div(typemin(Int64)  , 1) == -9223372036854775807-1
 @test div(typemin(Int64)  , 2) == -4611686018427387904
 @test div(typemin(Int64)  , 7) == -1317624576693539401
-#@test div(typemin(Int64)  ,-1) == -9223372036854775807-1 # FIXME!
 @test div(typemin(Int64)  ,-2) ==  4611686018427387904
 @test div(typemin(Int64)  ,-7) ==  1317624576693539401
 @test div(typemin(Int64)+1, 1) == -9223372036854775807
@@ -1217,7 +1243,6 @@ end
 @test fld(typemin(Int64)  , 1) == -9223372036854775807-1
 @test fld(typemin(Int64)  , 2) == -4611686018427387904
 @test fld(typemin(Int64)  , 7) == -1317624576693539402
-#@test fld(typemin(Int64)  ,-1) == -9223372036854775807-1 # FIXME!
 @test fld(typemin(Int64)  ,-2) ==  4611686018427387904
 @test fld(typemin(Int64)  ,-7) ==  1317624576693539401
 @test fld(typemin(Int64)+1, 1) == -9223372036854775807
@@ -1261,7 +1286,6 @@ end
 @test cld(typemin(Int64)  , 1) == -9223372036854775807-1
 @test cld(typemin(Int64)  , 2) == -4611686018427387904
 @test cld(typemin(Int64)  , 7) == -1317624576693539401
-#@test cld(typemin(Int64)  ,-1) == -9223372036854775807-1 # FIXME!
 @test cld(typemin(Int64)  ,-2) ==  4611686018427387904
 @test cld(typemin(Int64)  ,-7) ==  1317624576693539402
 @test cld(typemin(Int64)+1, 1) == -9223372036854775807
@@ -1967,7 +1991,7 @@ approx_eq(a, b) = approx_eq(a, b, 1e-6)
     9851, 9857, 9859, 9871, 9883, 9887, 9901, 9907, 9923, 9929, 9931, 9941,
     9949, 9967, 9973 ]
 
-for T in [Int,BigInt], n = [1:1000,1000000]
+for T in [Int,BigInt], n = [1:1000;1000000]
     n = convert(T,n)
     f = factor(n)
     @test n == prod(T[p^k for (p,k)=f])
@@ -2072,14 +2096,33 @@ end
 # other divide-by-zero errors
 @test_throws DivideError div(1,0)
 @test_throws DivideError rem(1,0)
+@test_throws DivideError divrem(1,0)
+@test_throws DivideError fld(1,0)
 @test_throws DivideError mod(1,0)
+@test_throws DivideError fldmod(1,0)
+@test_throws DivideError cld(1,0)
+
 @test_throws DivideError div(-1,0)
 @test_throws DivideError rem(-1,0)
+@test_throws DivideError divrem(-1,0)
+@test_throws DivideError fld(-1,0)
 @test_throws DivideError mod(-1,0)
+@test_throws DivideError fldmod(-1,0)
+@test_throws DivideError cld(-1,0)
+
 @test_throws DivideError div(uint(1),uint(0))
 @test_throws DivideError rem(uint(1),uint(0))
+@test_throws DivideError divrem(uint(1),uint(0))
+@test_throws DivideError fld(uint(1),uint(0))
 @test_throws DivideError mod(uint(1),uint(0))
+@test_throws DivideError fldmod(uint(1),uint(0))
+@test_throws DivideError cld(uint(1),uint(0))
+
 @test_throws DivideError div(typemin(Int),-1)
+@test_throws DivideError fld(typemin(Int),-1)
+@test_throws DivideError cld(typemin(Int),-1)
+@test_throws DivideError divrem(typemin(Int),-1)
+@test_throws DivideError fldmod(typemin(Int),-1)
 @test rem(typemin(Int),-1) == 0
 @test mod(typemin(Int),-1) == 0
 
@@ -2209,7 +2252,7 @@ ndigf(n) = float64(log(float32(n)))
 @test digits(24, 2, 3) == [0, 0, 0, 1, 1]
 @test digits(24, 2, 7) == [0, 0, 0, 1, 1, 0, 0]
 @test digits(100) == [0, 0, 1]
-@test digits(BigInt(2)^128, 2) == [zeros(128), 1]
+@test digits(BigInt(2)^128, 2) == [zeros(128); 1]
 let a = zeros(Int, 3)
     digits!(a, 50)
     @test a == [0, 5, 0]
@@ -2270,12 +2313,12 @@ for x in [1.23, 7, e, 4//5] #[FP, Int, MathConst, Rat]
 end
 
 #eltype{T<:Number}(::Type{T}) = T
-for T in [subtypes(Complex), subtypes(Real)]
+for T in [subtypes(Complex); subtypes(Real)]
     @test eltype(T) == T
 end
 
 #ndims{T<:Number}(::Type{T}) = 0
-for x in [subtypes(Complex), subtypes(Real)]
+for x in [subtypes(Complex); subtypes(Real)]
     @test ndims(x) == 0
 end
 
@@ -2316,3 +2359,31 @@ end
 @test map(cos, 3) == cos(3)
 @test map(tan, 3) == tan(3)
 @test map(log, 3) == log(3)
+
+@test_throws InexactError convert(Uint8, big(300))
+
+# issue #10311
+let n = 1
+    @test n//n + n//big(n)*im == 1//1 + 1//1*im
+end
+
+# BigInt - (small negative) is tricky because gmp only has gmpz_sub_ui
+@test big(-200) - int8(-128) == -72
+
+# n % Type
+for T in Any[Int16, Int32, UInt32, Int64, UInt64, BigInt]
+    if !(T <: Unsigned)
+        @test convert(T, -200) %  Int8 === int8(56)
+        @test convert(T, -200) % UInt8 === 0x38
+        @test convert(T, -300) %  Int8 === int8(-44)
+        @test convert(T, -300) % UInt8 === 0xd4
+        @test convert(T, -128) %  Int8 === int8(-128)
+        @test convert(T, -128) % UInt8 === 0x80
+    end
+    @test convert(T,  127) %  Int8 === int8(127)
+    @test convert(T,  127) % UInt8 === 0x7f
+    @test convert(T,  128) %  Int8 === int8(-128)
+    @test convert(T,  128) % UInt8 === 0x80
+    @test convert(T,  200) %  Int8 === int8(-56)
+    @test convert(T,  300) % UInt8 === 0x2c
+end

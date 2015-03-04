@@ -35,15 +35,15 @@ DLLEXPORT void jl_init_with_image(const char *julia_home_dir, const char *image_
 {
     if (jl_is_initialized()) return;
     libsupport_init();
-    jl_compileropts.julia_home = julia_home_dir;
+    jl_options.julia_home = julia_home_dir;
     if (image_relative_path != NULL)
-        jl_compileropts.image_file = image_relative_path;
+        jl_options.image_file = image_relative_path;
     julia_init(JL_IMAGE_JULIA_HOME);
     //TODO: these should be part of Multi.__init__()
     //currently, we have them here since we may not want them
     //getting unconditionally set from Base.__init__()
     jl_eval_string("Base.init_parallel()");
-    jl_eval_string("Base.init_bind_addr(ARGS)");
+    jl_eval_string("Base.init_bind_addr(Base.JLOptions())");
     jl_eval_string("Base.init_head_sched()");
     jl_exception_clear();
 }
@@ -245,17 +245,17 @@ DLLEXPORT int jl_is_debugbuild(void)
 
 DLLEXPORT jl_value_t *jl_get_julia_home(void)
 {
-    return jl_cstr_to_string(jl_compileropts.julia_home);
+    return jl_cstr_to_string(jl_options.julia_home);
 }
 
 DLLEXPORT jl_value_t *jl_get_julia_bin(void)
 {
-    return jl_cstr_to_string(jl_compileropts.julia_bin);
+    return jl_cstr_to_string(jl_options.julia_bin);
 }
 
 DLLEXPORT jl_value_t *jl_get_image_file(void)
 {
-    return jl_cstr_to_string(jl_compileropts.image_file);
+    return jl_cstr_to_string(jl_options.image_file);
 }
 
 DLLEXPORT int jl_ver_major(void)
