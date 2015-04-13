@@ -47,13 +47,20 @@ function convert{T}(::Type{Tridiagonal{T}}, A::Bidiagonal{T})
 end
 promote_rule{T,S}(::Type{Tridiagonal{T}}, ::Type{Bidiagonal{S}})=Tridiagonal{promote_type(T,S)}
 
-#################
-# BLAS routines #
-#################
+###################
+# LAPACK routines #
+###################
 
 #Singular values
-svdvals{T<:BlasReal}(M::Bidiagonal{T})=LAPACK.bdsdc!(M.isupper?'U':'L', 'N', copy(M.dv), copy(M.ev))
-svd    {T<:BlasReal}(M::Bidiagonal{T})=LAPACK.bdsdc!(M.isupper?'U':'L', 'I', copy(M.dv), copy(M.ev))
+svdvals!{T<:BlasReal}(M::Bidiagonal{T}) = LAPACK.bdsdc!(M.isupper ? 'U' : 'L', 'N', M.dv, M.ev)[1]
+function svd{T<:BlasReal}(M::Bidiagonal{T})
+    d, e, U, Vt, Q, iQ = LAPACK.bdsdc!(M.isupper ? 'U' : 'L', 'I', copy(M.dv), copy(M.ev))
+    return U, d, Vt'
+end
+function svdfact!(M::Bidiagonal, thin::Bool=true)
+    d, e, U, Vt, Q, iQ = LAPACK.bdsdc!(M.isupper ? 'U' : 'L', 'I', M.dv, M.ev)
+    SVD(U, d, Vt)
+end
 
 ####################
 # Generic routines #
@@ -82,8 +89,8 @@ end
 transpose(M::Bidiagonal) = Bidiagonal(M.dv, M.ev, !M.isupper)
 ctranspose(M::Bidiagonal) = Bidiagonal(conj(M.dv), conj(M.ev), !M.isupper)
 
-istriu(M::Bidiagonal) = M.isupper
-istril(M::Bidiagonal) = !M.isupper
+istriu(M::Bidiagonal) = M.isupper || all(M.ev .== 0)
+istril(M::Bidiagonal) = !M.isupper || all(M.ev .== 0)
 
 function diag{T}(M::Bidiagonal{T}, n::Integer=0)
     if n==0
@@ -216,8 +223,3 @@ function eigvecs{T}(M::Bidiagonal{T})
 end
 eigfact(M::Bidiagonal) = Eigen(eigvals(M), eigvecs(M))
 
-#Singular values
-function svdfact(M::Bidiagonal, thin::Bool=true)
-    U, S, V = svd(M)
-    SVD(U, S, V')
-end

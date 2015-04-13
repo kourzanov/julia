@@ -1,5 +1,5 @@
 ***********************************
-Initialisation of the Julia runtime
+Initialization of the Julia runtime
 ***********************************
 
 How does the Julia runtime execute :code:`julia -e 'println("Hello World!")'` ?
@@ -22,7 +22,7 @@ Next `parse_opts()
 is called to process command line options. Note that parse_opts()
 only deals with options that affect code generation or early initialisation. Other
 options are handled later by `process_options() in base/client.jl
-<https://github.com/JuliaLang/julia/blob/master/base/client.jl#L214>`_
+<https://github.com/JuliaLang/julia/blob/master/base/client.jl#L214>`_.
 
 parse_opts() stores command line options in the `global jl_compileropts
 struct
@@ -57,7 +57,7 @@ and finalization.
 `jl_init_frontend()
 <https://github.com/JuliaLang/julia/blob/master/src/ast.c#L119>`_
 loads and initialises a pre-compiled femptolisp image containing
-the scanner/paser;
+the scanner/parser;
 
 `jl_init_types()
 <https://github.com/JuliaLang/julia/blob/master/src/jltypes.c#L2887>`_

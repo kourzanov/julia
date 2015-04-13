@@ -39,6 +39,10 @@ Linear algebra functions in Julia are largely implemented by calling functions f
 
    Compute a convenient factorization (including LU, Cholesky, Bunch-Kaufman, LowerTriangular, UpperTriangular) of A, based upon the type of the input matrix. The return value can then be reused for efficient solving of multiple systems. For example: ``A=factorize(A); x=A\\b; y=A\\C``.
 
+.. function:: full(F)
+
+  Reconstruct the matrix ``A`` from the factorization ``F=factorize(A)``.
+
 .. function:: lu(A) -> L, U, p
 
    Compute the LU factorization of ``A``, such that ``A[p,:] = L*U``.
@@ -387,17 +391,33 @@ Linear algebra functions in Julia are largely implemented by calling functions f
 
    Upper triangle of a matrix.
 
+.. function:: triu(M, k)
+
+   Returns the upper triangle of ``M`` starting from the ``k``th superdiagonal.
+
 .. function:: triu!(M)
 
    Upper triangle of a matrix, overwriting ``M`` in the process.
+
+.. function:: triu!(M, k)
+
+   Returns the upper triangle of ``M`` starting from the ``k``th superdiagonal, overwriting ``M`` in the process.
 
 .. function:: tril(M)
 
    Lower triangle of a matrix.
 
+.. function:: tril(M, k)
+
+   Returns the lower triangle of ``M`` starting from the ``k``th subdiagonal.
+
 .. function:: tril!(M)
 
    Lower triangle of a matrix, overwriting ``M`` in the process.
+
+.. function:: tril!(M, k)
+
+   Returns the lower triangle of ``M`` starting from the ``k``th subdiagonal, overwriting ``M`` in the process.
 
 .. function:: diagind(M[, k])
 
@@ -622,9 +642,18 @@ Linear algebra functions in Julia are largely implemented by calling functions f
 
 .. function:: eigs(A, [B,]; nev=6, which="LM", tol=0.0, maxiter=300, sigma=nothing, ritzvec=true, v0=zeros((0,))) -> (d,[v,],nconv,niter,nmult,resid)
 
-   ``eigs`` computes eigenvalues ``d`` of ``A`` using Lanczos or Arnoldi iterations for real symmetric or general nonsymmetric matrices respectively. If ``B`` is provided, the generalized eigen-problem is solved.  The following keyword arguments are supported:
+   Computes eigenvalues ``d`` of ``A`` using Lanczos or Arnoldi iterations for
+   real symmetric or general nonsymmetric matrices respectively. If ``B`` is
+   provided, the generalized eigenproblem is solved.
+
+   The following keyword arguments are supported:
     * ``nev``: Number of eigenvalues
-    * ``ncv``: Number of Krylov vectors used in the computation; should satisfy ``nev+1 <= ncv <= n`` for real symmetric problems and ``nev+2 <= ncv <= n`` for other problems; default is ``ncv = max(20,2*nev+1)``.
+    * ``ncv``: Number of Krylov vectors used in the computation; should satisfy
+       ``nev+1 <= ncv <= n`` for real symmetric problems and ``nev+2 <= ncv <= n``
+       for other problems, where ``n`` is the size of the input matrix ``A``.
+       The default is ``ncv = max(20,2*nev+1)``.
+       Note that these restrictions limit the input matrix ``A`` to be of
+       dimension at least 2.
     * ``which``: type of eigenvalues to compute. See the note below.
 
       ========= ======================================================================================================================
@@ -658,12 +687,15 @@ Linear algebra functions in Julia are largely implemented by calling functions f
 
 .. function:: svds(A; nsv=6, ritzvec=true, tol=0.0, maxiter=1000) -> (left_sv, s, right_sv, nconv, niter, nmult, resid)
 
-   ``svds`` computes largest singular values ``s`` of ``A`` using Lanczos or Arnoldi iterations. Uses ``eigs`` underneath. Inputs are:
-    * ``A``: Linear operator. It can either subtype of AbstractArray (e.g., sparse matrix) or duck typed. For duck typing ``A`` has to support ``size(A)``, ``eltype(A)``, ``A * vector`` and ``A' * vector``.
+   ``svds`` computes largest singular values ``s`` of ``A`` using Lanczos or Arnoldi iterations.
+   Uses :func:`eigs` underneath.
+
+   Inputs are:
+    * ``A``: Linear operator. It can either subtype of ``AbstractArray`` (e.g., sparse matrix) or duck typed. For duck typing ``A`` has to support ``size(A)``, ``eltype(A)``, ``A * vector`` and ``A' * vector``.
     * ``nsv``: Number of singular values.
     * ``ritzvec``: Whether to return the left and right singular vectors ``left_sv`` and ``right_sv``, default is ``true``. If ``false`` the singular vectors are omitted from the output.
-    * ``tol``: tolerance, see ``eigs``.
-    * ``maxiter``: Maximum number of iterations, see ``eigs``.
+    * ``tol``: tolerance, see :func:`eigs`.
+    * ``maxiter``: Maximum number of iterations, see :func:`eigs`.
 
    **Example**::
 
@@ -719,7 +751,7 @@ Usually a function has 4 methods defined, one each for ``Float64``,
    sum of the absolute values of the first ``n`` elements of array ``X`` with
    stride ``incx``.
 
-.. function:: axpy!(n, a, X, incx, Y, incy)
+.. function:: axpy!(a, X, Y)
 
    Overwrite ``Y`` with ``a*X + Y``.  Returns ``Y``.
 

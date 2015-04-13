@@ -89,7 +89,7 @@ Function                                            Description
                                                     distributed random values
 :func:`eye(n) <eye>`                                ``n``-by-``n`` identity matrix
 :func:`eye(m, n) <eye>`                             ``m``-by-``n`` identity matrix
-:func:`linspace(start, stop, n) <linspace>`         vector of ``n`` linearly-spaced elements from ``start`` to ``stop``
+:func:`linspace(start, stop, n) <linspace>`         range of ``n`` linearly spaced elements from ``start`` to ``stop``
 :func:`fill!(A, x) <fill!>`                         fill the array ``A`` with the value ``x``
 :func:`fill(x, dims) <fill>`                        create an array filled with the value ``x``
 =================================================== =====================================================================
@@ -220,7 +220,7 @@ The general syntax for indexing into an n-dimensional array A is::
 
 where each I\_k may be:
 
-1. A scalar value
+1. A scalar integer
 2. A ``Range`` of the form ``:``, ``a:b``, or ``a:b:c``
 3. An arbitrary integer vector, including the empty vector ``[]``
 4. A boolean vector
@@ -443,7 +443,7 @@ The ``AbstractArray`` type includes anything vaguely array-like, and
 implementations of it might be quite different from conventional
 arrays. For example, elements might be computed on request rather than
 stored.  However, any concrete ``AbstractArray{T,N}`` type should
-generally implement at least :func:`size(A) <size>` (returing an ``Int`` tuple),
+generally implement at least :func:`size(A) <size>` (returning an ``Int`` tuple),
 :func:`getindex(A,i) <getindex>` and :func:`getindex(A,i1,...,iN) <getindex>`;
 mutable arrays should also implement :func:`setindex!`.  It
 is recommended that these operations have nearly constant time complexity,

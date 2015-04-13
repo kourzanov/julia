@@ -4,12 +4,12 @@ Julia v0.4.0 Release Notes
 New language features
 ---------------------
 
-  * Function-call overloading: for arbitrary objects `x` (not of type
+  * Function call overloading: for arbitrary objects `x` (not of type
     `Function`), `x(...)` is transformed into `call(x, ...)`, and `Base.call`
     can be overloaded as desired.  Constructors are now a special case of
-    this mechanism, which allows e.g. constructors for abstract types
-    and typealiases.  `T(...)` falls back to `convert(T, x)`, so all
-    `convert` methods implicitly define a constructor ([#8712], [#2403]).
+    this mechanism, which allows e.g. constructors for abstract types.
+    `T(...)` falls back to `convert(T, x)`, so all `convert` methods implicitly
+    define a constructor ([#8712], [#2403]).
 
   * Unicode version 7 is now supported for identifiers etcetera ([#7917]).
 
@@ -24,10 +24,43 @@ New language features
     and macros in packages and user code ([#8791]). Type `?@doc` at the repl
     to see the current syntax and more information.
 
-  * Enums are now supported through the `@enum EnumName EnumValue1 EnumValue2` syntax. Enum member values also support abitrary value assignment by the `@enum EnumName EnumValue1=1 EnumValue2=10 EnumValue3=20` syntax.
-
 Language changes
 ----------------
+
+  * Significant improvements to `ccall` and `cfunction`
+
+    * As a safer alternative to creating pointers (`Ptr`), the managed reference type
+      `Ref` has been added. A `Ref` points to the data contained by a value in an
+      abstract sense, and in a way that is GC-safe. For example, `Ref(2)` points to
+      a storage location that contains the integer `2`, and `Ref(array,3)` points
+      to the third element of an array. A `Ref` can be automatically converted to a
+      native pointer when passed to a `ccall`.
+
+    * When passing a by-reference argument to `ccall`, you can now write `Ref(x)`
+      instead of `&x`. Alternatively, you can declare the argument type to be
+      `Ref{T}` instead of `T`, and just pass `x`.
+
+    * `ccall` is now lowered to call `unsafe_convert(T, cconvert(T, x))` on each
+      argument. `cconvert` falls back to `convert`, but can be used to convert an
+      argument to an arbitrarily-different representation more suitable for passing
+      to C. `unsafe_convert` then handles conversions to `Ptr`.
+
+    * `ccall` and `cfunction` now support correctly passing and returning structs,
+      following the platform ABI.
+      It is essential to declare argument and return types accurately.
+      For example, a C `int` must be passed as a 32-bit integer type (e.g. `Int32`,
+      or another 32-bit `bitstype`).
+      A `Float32` or an `immutable` struct with a size of 32 bits is not equivalent.
+
+    * `cfunction` arguments of struct-like Julia types are now passed by value.
+      If `Ref{T}` is used as a `cfunction` argument type, it will look up the
+      method applicable to `T`, but pass the argument by reference (as Julia functions
+      usually do). However, this should only be used for objects allocated by Julia,
+      and for `isbits` types.
+
+  * `convert(Ptr,x)` is deprecated for most types, replaced by `unsafe_convert`.
+    You can still `convert` between pointer types, and between pointers and `Int`
+    or `UInt`.
 
   * `[x,y]` constructs a vector of `x` and `y` instead of concatenating them
     ([#3737], [#2488], [#8599]).
@@ -87,6 +120,8 @@ Library improvements
   * New multidimensional iterators and index types for efficient
     iteration over general AbstractArrays
 
+  * Enums are now supported through the `@enum EnumName EnumValue1 EnumValue2` syntax. Enum member values also support abitrary value assignment by the `@enum EnumName EnumValue1=1 EnumValue2=10 EnumValue3=20` syntax.
+
   * `LinAlg` improvements
 
     * The `LinAlg` module is now exported.
@@ -109,7 +144,24 @@ Library improvements
 
     * Add sparse least squares to ``\`` by adding ``qrfact`` for sparse matrices based on the SPQR library. ([#10180])
 
+  * String improvements
+
+    * `graphemes(s)` returns an iterator over grapheme substrings of `s` ([#9261]).
+
+    * Character predicates such as `islower()`, `isspace()`, etc. use
+      utf8proc to provide uniform cross-platform behavior and
+      up-to-date, locale-independent support for Unicode standards
+      ([#5939]).
+
+    * `reverseind` function to convert indices in reversed strings (e.g. from
+      reversed regex searches) to indices in the original string ([#9249]).
+
+    * `charwidth(c)` and `strwidth(s)` now return up-to-date cross-platform
+      results (via utf8proc) ([#10659]): Julia now likes pizza ([#3721]).
+
   * Other improvements
+
+    * You can now tab complete Emoji characters from the REPL, with `\:name:<tab>` ([#10709])
 
     * `gc_enable`, `gc_disable` returns previous GC state.
 
@@ -142,15 +194,6 @@ Library improvements
     `pq = PriorityQueue(KeyType, ValueType, OrderType)` otherwise ([#8011]).
 
     * Efficient `mean` and `median` for ranges ([#8089]).
-
-    * `graphemes(s)` returns an iterator over grapheme substrings of `s` ([#9261]).
-
-    * Character predicates such as `islower()`, `isspace()`, etc. use utf8proc/libmojibake
-    to provide uniform cross-platform behavior and up-to-date, locale-independent support
-    for Unicode standards ([#5939]).
-
-    * `reverseind` function to convert indices in reversed strings (e.g. from
-    reversed regex searches) to indices in the original string ([#9249]).
 
     * New `Nullable` type for missing data ([#8152]).
 
@@ -188,14 +231,26 @@ Library improvements
     * ClusterManager - Performance improvements([#9309]) and support for changing transports([#9434])
 
     * Equality (`==`) and inequality (`<`/`<=`) comparisons are now correct
-  across all numeric types ([#9133], [#9198]).
+      across all numeric types ([#9133], [#9198]).
 
     * Rational arithmetic throws errors on overflow ([#8672]).
 
     * Added Base.get_process_title / Base.set_process_title. ([#9957])
 
+    * `readavailable` returns a byte vector instead of a string.
+
+    * `lock` and `unlock` which operate on `ReentrantLock`. Useful to lock a stream during
+      concurrent writes from multiple tasks
+
+    * `code_llvm` now outputs stripped IR without debug info or other attached metadata.
+      Use `code_llvm_raw` for the unstripped output ([#10747]).
+
+    * `linspace` now returns a `LinSpace` object which lazily computes linear interpolation of values between the start and stop values. It "lifts" endpoints which are approximately rational in the same manner as the `colon` operator.
+
 Deprecated or removed
 ---------------------
+
+  * indexing with Reals that are not subtypes of Integers (Rationals, FloatingPoint, etc.) has been deprecated ([#10458]).
 
   * `push!(A)` has been deprecated, use `append!` instead of splatting arguments to `push!` ([#10400]).
 
@@ -219,9 +274,9 @@ Deprecated or removed
   * `{...}` syntax is deprecated in favor of `Any[...]` ([#8578]).
 
   * `itrunc`, `ifloor`, `iceil` and `iround` are deprecated in favour of
-  `trunc{T<:Integer}(T,x)`, `floor{T<:Integer}(T,x)`, etc.. `trunc` is now
-  always bound-checked;`Base.unsafe_trunc` provides the old unchecked `itrunc`
-  behaviour ([#9133]).
+    `trunc{T<:Integer}(T,x)`, `floor{T<:Integer}(T,x)`, etc.. `trunc` is now
+    always bound-checked;`Base.unsafe_trunc` provides the old unchecked `itrunc`
+    behaviour ([#9133]).
 
   * `squeeze` now requires that passed dimension(s) are an `Int` or tuple of `Int`s;
     calling `squeeze` with an arbitrary iterator is deprecated ([#9271]).
@@ -237,6 +292,26 @@ Deprecated or removed
 
   * The operators `|>`, `.>`, `>>`, and `.>>` as used for process I/O redirection
     are replaced with the `pipe` function ([#5349]).
+
+  * `flipud(A)` and `fliplr(A)` have been deprecated in favor of `flipdim(A, 1)` and
+    `flipdim(A, 2)`, respectively ([#10446]).
+
+  * Numeric conversion functions whose names are lower-case versions of type
+    names have been removed. To convert a scalar, use the type name, e.g.
+    `Int32(x)`. To convert an array to a different element type, use
+    `Array{T}(x)`, `map(T,x)`, or `round(T,x)`. To parse a string as an integer
+    or floating-point number, use `parse` ([#1470], [#6211]).
+
+  * Low-level functions from the C library and dynamic linker have been moved to
+    modules `Libc` and `Libdl`, respectively ([#10328]).
+
+  * The functions `parseint`, `parsefloat`, `float32_isvalid`, and `float64_isvalid`
+    have been replaced by `parse` and `tryparse` with a type argument
+    ([#3631], [#5704], [#9487], [#10543]).
+
+  * the --int-literals compiler option is no longer accepted.
+
+  * Instead of `linrange` use `linspace`.
 
 Julia v0.3.0 Release Notes
 ==========================
@@ -963,6 +1038,7 @@ Too numerous to mention.
 [#987]: https://github.com/JuliaLang/julia/issues/987
 [#1195]: https://github.com/JuliaLang/julia/issues/1195
 [#1268]: https://github.com/JuliaLang/julia/issues/1268
+[#1470]: https://github.com/JuliaLang/julia/issues/1470
 [#1484]: https://github.com/JuliaLang/julia/issues/1484
 [#1539]: https://github.com/JuliaLang/julia/issues/1539
 [#1571]: https://github.com/JuliaLang/julia/issues/1571
@@ -1020,11 +1096,13 @@ Too numerous to mention.
 [#3483]: https://github.com/JuliaLang/julia/issues/3483
 [#3523]: https://github.com/JuliaLang/julia/issues/3523
 [#3605]: https://github.com/JuliaLang/julia/issues/3605
+[#3631]: https://github.com/JuliaLang/julia/issues/3631
 [#3649]: https://github.com/JuliaLang/julia/issues/3649
 [#3665]: https://github.com/JuliaLang/julia/issues/3665
 [#3688]: https://github.com/JuliaLang/julia/issues/3688
 [#3697]: https://github.com/JuliaLang/julia/issues/3697
 [#3719]: https://github.com/JuliaLang/julia/issues/3719
+[#3721]: https://github.com/JuliaLang/julia/issues/3721
 [#3737]: https://github.com/JuliaLang/julia/issues/3737
 [#3759]: https://github.com/JuliaLang/julia/issues/3759
 [#3790]: https://github.com/JuliaLang/julia/issues/3790
@@ -1108,6 +1186,7 @@ Too numerous to mention.
 [#5671]: https://github.com/JuliaLang/julia/issues/5671
 [#5677]: https://github.com/JuliaLang/julia/issues/5677
 [#5703]: https://github.com/JuliaLang/julia/issues/5703
+[#5704]: https://github.com/JuliaLang/julia/issues/5704
 [#5726]: https://github.com/JuliaLang/julia/issues/5726
 [#5737]: https://github.com/JuliaLang/julia/issues/5737
 [#5748]: https://github.com/JuliaLang/julia/issues/5748
@@ -1131,6 +1210,7 @@ Too numerous to mention.
 [#6169]: https://github.com/JuliaLang/julia/issues/6169
 [#6179]: https://github.com/JuliaLang/julia/issues/6179
 [#6197]: https://github.com/JuliaLang/julia/issues/6197
+[#6211]: https://github.com/JuliaLang/julia/issues/6211
 [#6212]: https://github.com/JuliaLang/julia/issues/6212
 [#6270]: https://github.com/JuliaLang/julia/issues/6270
 [#6273]: https://github.com/JuliaLang/julia/issues/6273
@@ -1227,6 +1307,7 @@ Too numerous to mention.
 [#9425]: https://github.com/JuliaLang/julia/issues/9425
 [#9434]: https://github.com/JuliaLang/julia/issues/9434
 [#9452]: https://github.com/JuliaLang/julia/issues/9452
+[#9487]: https://github.com/JuliaLang/julia/issues/9487
 [#9569]: https://github.com/JuliaLang/julia/issues/9569
 [#9575]: https://github.com/JuliaLang/julia/issues/9575
 [#9578]: https://github.com/JuliaLang/julia/issues/9578
@@ -1235,10 +1316,21 @@ Too numerous to mention.
 [#9734]: https://github.com/JuliaLang/julia/issues/9734
 [#9745]: https://github.com/JuliaLang/julia/issues/9745
 [#9779]: https://github.com/JuliaLang/julia/issues/9779
+[#9862]: https://github.com/JuliaLang/julia/issues/9862
 [#9957]: https://github.com/JuliaLang/julia/issues/9957
 [#10024]: https://github.com/JuliaLang/julia/issues/10024
 [#10031]: https://github.com/JuliaLang/julia/issues/10031
 [#10075]: https://github.com/JuliaLang/julia/issues/10075
 [#10117]: https://github.com/JuliaLang/julia/issues/10117
+[#10150]: https://github.com/JuliaLang/julia/issues/10150
 [#10180]: https://github.com/JuliaLang/julia/issues/10180
 [#10228]: https://github.com/JuliaLang/julia/issues/10228
+[#10328]: https://github.com/JuliaLang/julia/issues/10328
+[#10332]: https://github.com/JuliaLang/julia/issues/10332
+[#10333]: https://github.com/JuliaLang/julia/issues/10333
+[#10400]: https://github.com/JuliaLang/julia/issues/10400
+[#10446]: https://github.com/JuliaLang/julia/issues/10446
+[#10458]: https://github.com/JuliaLang/julia/issues/10458
+[#10543]: https://github.com/JuliaLang/julia/issues/10543
+[#10659]: https://github.com/JuliaLang/julia/issues/10659
+[#10709]: https://github.com/JuliaLang/julia/issues/10709

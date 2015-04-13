@@ -14,9 +14,9 @@ function git_contributors(dir::AbstractString, n::Int=typemax(Int))
         m == nothing && continue
         commits, name, email = m.captures
         if haskey(contrib,email)
-            contrib[email][1] += int(commits)
+            contrib[email][1] += parse(Int,commits)
         else
-            contrib[email] = [int(commits),name]
+            contrib[email] = [parse(Int,commits), name]
         end
     end
     names = Dict()
@@ -60,7 +60,7 @@ function package(
             $pkg.jl $(isnew ? "generated" : "regenerated") files.
 
                 license:  $license
-                authors:  $(join([authors...],", "))
+                authors:  $(join(vcat(authors),", "))
                 years:    $years
                 user:     $user
 
@@ -106,7 +106,7 @@ function license(pkg::AbstractString, license::AbstractString,
                  force::Bool=false)
     genfile(pkg,"LICENSE.md",force) do io
         if !haskey(LICENSES,license)
-            licenses = join(sort!([keys(LICENSES)...], by=lowercase), ", ")
+            licenses = join(sort!(collect(keys(LICENSES)), by=lowercase), ", ")
             error("$license is not a known license choice, choose one of: $licenses.")
         end
         print(io, LICENSES[license](pkg, string(years), authors))

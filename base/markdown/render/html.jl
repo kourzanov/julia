@@ -5,7 +5,11 @@ include("rich.jl")
 function withtag(f, io::IO, tag, attrs...)
     print(io, "<$tag")
     for (attr, value) in attrs
-        print(io, " $attr=\"$value\"")
+        print(io, " ")
+        htmlesc(io, attr)
+        print(io, "=\"")
+        htmlesc(io, value)
+        print(io, "\"")
     end
     f == nothing && return print(io, " />")
 
@@ -15,6 +19,32 @@ function withtag(f, io::IO, tag, attrs...)
 end
 
 tag(io::IO, tag, attrs...) = withtag(nothing, io, tag, attrs...)
+
+const _htmlescape_chars = Dict('<'=>"&lt;",   '>'=>"&gt;",
+                               '"'=>"&quot;", '&'=>"&amp;",
+                               # ' '=>"&nbsp;",
+                               )
+for ch in "'`!@\$\%()=+{}[]"
+    _htmlescape_chars[ch] = "&#$(Int(ch));"
+end
+
+function htmlesc(io::IO, s::String)
+    # s1 = replace(s, r"&(?!(\w+|\#\d+);)", "&amp;")
+    for ch in s
+        print(io, get(_htmlescape_chars, ch, ch))
+    end
+end
+function htmlesc(io::IO, s::Symbol)
+    htmlesc(io, string(s))
+end
+function htmlesc(io::IO, xs::Union(String, Symbol)...)
+    for s in xs
+        htmlesc(io, s)
+    end
+end
+function htmlesc(s::Union(String, Symbol))
+    sprint(htmlesc, s)
+end
 
 # Block elements
 
@@ -35,8 +65,10 @@ end
 
 function html(io::IO, code::Code)
     withtag(io, :pre) do
-        withtag(io, :code) do
-            print(io, code.code)
+        maybe_lang = code.language != "" ? Any[:class=>"language-$(code.language)"] : []
+        withtag(io, :code, maybe_lang...) do
+            htmlesc(io, code.code)
+            # TODO should print newline if this is longer than one line ?
         end
     end
 end
@@ -49,19 +81,25 @@ end
 
 function html(io::IO, md::BlockQuote)
     withtag(io, :blockquote) do
-        html(io, block.content)
+        println(io)
+        html(io, md.content)
     end
 end
 
 function html(io::IO, md::List)
-    withtag(io, :ul) do
+    withtag(io, md.ordered ? :ol : :ul) do
         for item in md.items
+            println(io)
             withtag(io, :li) do
                 htmlinline(io, item)
-                println(io)
             end
         end
+        println(io)
     end
+end
+
+function html(io::IO, md::HorizontalRule)
+    tag(io, :hr)
 end
 
 html(io::IO, x) = tohtml(io, x)
@@ -76,12 +114,12 @@ end
 
 function htmlinline(io::IO, code::Code)
     withtag(io, :code) do
-        print(io, code.code)
+        htmlesc(io, code.code)
     end
 end
 
-function htmlinline(io::IO, md::String)
-    print(io, md)
+function htmlinline(io::IO, md::Union(Symbol, String))
+    htmlesc(io, md)
 end
 
 function htmlinline(io::IO, md::Bold)

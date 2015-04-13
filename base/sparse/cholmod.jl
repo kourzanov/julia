@@ -21,13 +21,26 @@ using Base.SparseMatrix: AbstractSparseMatrix, SparseMatrixCSC, increment, indty
 
 include("cholmod_h.jl")
 
+### These offsets are defined in SuiteSparse_wrapper.c
+const common_size = ccall((:jl_cholmod_common_size,:libsuitesparse_wrapper),Int,())
+
+const cholmod_com_offsets = Array(Csize_t, 19)
+ccall((:jl_cholmod_common_offsets, :libsuitesparse_wrapper),
+    Void, (Ptr{Csize_t},), cholmod_com_offsets)
+
+const common_supernodal = (1:4) + cholmod_com_offsets[4]
+const common_final_ll = (1:4) + cholmod_com_offsets[7]
+const common_print = (1:4) + cholmod_com_offsets[13]
+const common_itype = (1:4) + cholmod_com_offsets[18]
+const common_dtype = (1:4) + cholmod_com_offsets[19]
+
 ## macro to generate the name of the C function according to the integer type
 macro cholmod_name(nm,typ) string("cholmod_", eval(typ) == SuiteSparse_long ? "l_" : "", nm) end
 
 for Ti in IndexTypes
     @eval begin
         function common(::Type{$Ti})
-            a = fill(0xff, cholmod_com_sz)
+            a = fill(0xff, common_size)
             @isok ccall((@cholmod_name "start" $Ti
                 , :libcholmod), Cint, (Ptr{UInt8},), a)
             set_print_level(a, 0) # no printing from CHOLMOD by default
@@ -36,18 +49,69 @@ for Ti in IndexTypes
     end
 end
 
-### These offsets are defined in SuiteSparse_wrapper.c
-const cholmod_com_offsets = Array(Csize_t, 19)
-ccall((:jl_cholmod_common_offsets, :libsuitesparse_wrapper),
-      Void, (Ptr{Csize_t},), cholmod_com_offsets)
-const common_supernodal = (1:4) + cholmod_com_offsets[4]
-const common_final_ll = (1:4) + cholmod_com_offsets[7]
-const common_print = (1:4) + cholmod_com_offsets[13]
-const common_itype = (1:4) + cholmod_com_offsets[18]
-const common_dtype = (1:4) + cholmod_com_offsets[19]
+const version_array = Array(Cint, 3)
+if Libdl.dlsym(Libdl.dlopen("libcholmod"), :cholmod_version) != C_NULL
+    ccall((:cholmod_version, :libcholmod), Cint, (Ptr{Cint},), version_array)
+else
+    ccall((:jl_cholmod_version, :libsuitesparse_wrapper), Cint, (Ptr{Cint},), version_array)
+end
+const version = VersionNumber(version_array...)
+
+function __init__()
+    if Libdl.dlsym(Libdl.dlopen("libcholmod"), :cholmod_version) == C_NULL
+        warn("""
+
+            CHOLMOD version incompatibility
+
+            Julia was compiled with CHOLMOD version $version, but is currently linked with a
+            version older than 2.1.0. This might cause Julia to terminate when working with
+            sparse matrices for operations involving factorization of a matrix, e.g. solving
+            systems of equations with \\.
+
+            It is recommended that you either upgrade the package that provides CHOLMOD or
+            download the OS X or generic Linux binary from www.julialang.org, which is
+            shipped with the correct versions of all dependencies.
+        """)
+    else
+        tmp = Array(Cint, 3)
+        ccall((:cholmod_version, :libcholmod), Cint, (Ptr{Cint},), version_array)
+        ccall((:jl_cholmod_version, :libsuitesparse_wrapper), Cint, (Ptr{Cint},), tmp)
+        if tmp != version_array
+            warn("""
+
+                CHOLMOD version incompatibility
+
+                Julia was compiled with CHOLMOD version $version, but is currently linked
+                with version $(VersionNumber(tmp...)). This might cause Julia to terminate when working
+                with sparse matrices for operations involving factorization of a matrix,
+                e.g. solving systems of equations with \\.
+
+                It is recommended that you either upgrade the package that provides CHOLMOD
+                or download the OS X or generic Linux binary from www.julialang.org, which
+                is shipped with the correct versions of all dependencies.
+            """)
+        end
+    end
+
+    intsize = Int(ccall((:jl_cholmod_sizeof_long,:libsuitesparse_wrapper),Csize_t,()))
+    if intsize != 4length(IndexTypes)
+        warn("""
+
+            CHOLMOD integer size incompatibility
+
+            Julia was compiled with a version of CHOLMOD that supported $(32length(IndexTypes)) bit integers,
+            but is currently linked with version that supports $(8intsize) integers. This might
+            cause Julia to terminate when working with sparse matrices for operations
+            involving factorization of a matrix, e.g. solving systems of equations with \\.
+
+            This problem can be fixed by downloading the OS X or generic Linux binary from
+            www.julialang.org, which are shipped with the correct versions of all dependencies.
+        """)
+    end
+end
 
 function set_print_level(cm::Array{UInt8}, lev::Integer)
-    cm[common_print] = reinterpret(UInt8, [int32(lev)])
+    cm[common_print] = reinterpret(UInt8, [Int32(lev)])
 end
 
 ####################
@@ -274,7 +338,7 @@ end
 
 ### cholmod_check.h ###
 function check_dense{T<:VTypes}(A::Dense{T})
-    bool(ccall((:cholmod_l_check_dense, :libcholmod), Cint,
+    Bool(ccall((:cholmod_l_check_dense, :libcholmod), Cint,
         (Ptr{C_Dense{T}}, Ptr{UInt8}),
          A.p, common(SuiteSparse_long)))
 end
@@ -367,13 +431,13 @@ for Ti in IndexTypes
         end
 
         function check_sparse{Tv<:VTypes}(A::Sparse{Tv,$Ti})
-            bool(ccall((@cholmod_name("check_sparse", $Ti),:libcholmod), Cint,
+            Bool(ccall((@cholmod_name("check_sparse", $Ti),:libcholmod), Cint,
                     (Ptr{C_Sparse{Tv,$Ti}}, Ptr{UInt8}),
                         A.p, common($Ti)))
         end
 
         function check_factor{Tv<:VTypes}(F::Factor{Tv,$Ti})
-            bool(ccall((@cholmod_name("check_factor", $Ti),:libcholmod), Cint,
+            Bool(ccall((@cholmod_name("check_factor", $Ti),:libcholmod), Cint,
                     (Ptr{C_Factor{Tv,$Ti}}, Ptr{UInt8}),
                         F.p, common($Ti)))
         end
@@ -588,7 +652,7 @@ for Ti in IndexTypes
         end
 
         # Autodetects the types
-        function read_sparse(file::CFILE, ::Type{$Ti})
+        function read_sparse(file::Libc.FILE, ::Type{$Ti})
             ptr = ccall((@cholmod_name("read_sparse", $Ti), :libcholmod), Ptr{C_SparseVoid},
                 (Ptr{Void}, Ptr{UInt8}),
                     file.ptr, common($Ti))
@@ -598,6 +662,13 @@ for Ti in IndexTypes
             s = Sparse(ptr)
             finalizer(s, free!)
             s
+        end
+
+        function read_sparse(file::IO, T)
+            cfile = Libc.FILE(file)
+            try return read_sparse(cfile, T)
+            finally close(cfile)
+            end
         end
     end
 end
@@ -727,7 +798,7 @@ Sparse(A::Dense) = dense_to_sparse(A, Cint)
 Sparse(L::Factor) = factor_to_sparse!(copy(L))
 function Sparse(filename::ByteString)
     open(filename) do f
-        return read_sparse(CFILE(f), SuiteSparse_long)
+        return read_sparse(f, SuiteSparse_long)
     end
 end
 
@@ -816,9 +887,9 @@ eltype{T<:VTypes}(A::Sparse{T}) = T
 function show(io::IO, F::Factor)
     s = unsafe_load(F.p)
     println(io, typeof(F))
-    @printf(io, "type: %12s\n", bool(s.is_ll) ? "LLt" : "LDLt")
-    @printf(io, "method: %10s\n", bool(s.is_super) ? "supernodal" : "simplicial")
-    @printf(io, "maxnnz: %10d\n", int(s.nzmax))
+    @printf(io, "type: %12s\n", Bool(s.is_ll) ? "LLt" : "LDLt")
+    @printf(io, "method: %10s\n", Bool(s.is_super) ? "supernodal" : "simplicial")
+    @printf(io, "maxnnz: %10d\n", Int(s.nzmax))
     @printf(io, "nnz: %13d\n", nnz(Sparse(F)))
 end
 
@@ -832,7 +903,7 @@ copy(A::Factor) = copy_factor(A)
 
 function size(A::Union(Dense,Sparse))
     s = unsafe_load(A.p)
-    return (int(s.nrow), int(s.ncol))
+    return (Int(s.nrow), Int(s.ncol))
 end
 function size(F::Factor, i::Integer)
     if i < 1
@@ -840,7 +911,7 @@ function size(F::Factor, i::Integer)
     end
     s = unsafe_load(F.p)
     if i <= 2
-        return int(s.n)
+        return Int(s.n)
     end
     return 1
 end
@@ -864,10 +935,10 @@ function getindex{T}(A::Sparse{T}, i0::Integer, i1::Integer)
     s.stype < 0 && i0 < i1 && return conj(A[i1,i0])
     s.stype > 0 && i0 > i1 && return conj(A[i1,i0])
 
-    r1 = int(unsafe_load(s.p, i1) + 1)
-    r2 = int(unsafe_load(s.p, i1 + 1))
+    r1 = Int(unsafe_load(s.p, i1) + 1)
+    r2 = Int(unsafe_load(s.p, i1 + 1))
     (r1 > r2) && return zero(T)
-    r1 = int(searchsortedfirst(pointer_to_array(s.i, (s.nzmax,), false), i0 - 1, r1, r2, Base.Order.Forward))
+    r1 = Int(searchsortedfirst(pointer_to_array(s.i, (s.nzmax,), false), i0 - 1, r1, r2, Base.Order.Forward))
     ((r1 > r2) || (unsafe_load(s.i, r1) + 1 != i0)) ? zero(T) : unsafe_load(s.x, r1)
 end
 
@@ -1006,7 +1077,7 @@ ldltfact{Ti}(A::Hermitian{Complex{Float64},SparseMatrixCSC{Complex{Float64},Ti}}
 function update!{Tv<:VTypes,Ti<:ITypes}(F::Factor{Tv,Ti}, A::Sparse{Tv,Ti})
     cm = common(Ti)
     s = unsafe_load(F.p)
-    if bool(s.is_ll)
+    if Bool(s.is_ll)
         cm[common_final_ll] = reinterpret(UInt8, [one(Cint)]) # Hack! makes it a llt
     end
     factorize!(A, F, cm)
@@ -1014,7 +1085,7 @@ end
 function update!{Tv<:VTypes,Ti<:ITypes}(F::Factor{Tv,Ti}, A::Sparse{Tv,Ti}, β::Tv)
     cm = common(Ti)
     s = unsafe_load(F.p)
-    if bool(s.is_ll)
+    if Bool(s.is_ll)
         cm[common_final_ll] = reinterpret(UInt8, [one(Cint)]) # Hack! makes it a llt
     end
     factorize_p!(A, β, Ti[0:size(F, 1) - 1;], F, cm)
@@ -1039,9 +1110,9 @@ Ac_ldiv_B(L::Factor, B::SparseMatrixCSC) = Ac_ldiv_B(L, Sparse(B))
 ## Other convenience methods
 function diag{Tv}(F::Factor{Tv})
     f = unsafe_load(F.p)
-    res = Base.zeros(Tv, int(f.n))
+    res = Base.zeros(Tv, Int(f.n))
     xv  = f.x
-    if bool(f.is_super)
+    if Bool(f.is_super)
         px = f.px
         pos = 1
         for i in 1:f.nsuper
@@ -1070,7 +1141,7 @@ function logdet{Tv<:VTypes,Ti<:ITypes}(F::Factor{Tv,Ti})
     f = unsafe_load(F.p)
     res = zero(Tv)
     for d in diag(F) res += log(abs(d)) end
-    bool(f.is_ll) ? 2res : res
+    Bool(f.is_ll) ? 2res : res
 end
 
 det(L::Factor) = exp(logdet(L))
@@ -1079,9 +1150,13 @@ function isposdef{Tv<:VTypes,Ti}(A::SparseMatrixCSC{Tv,Ti})
     if !ishermitian(A)
         return false
     end
-    f = cholfact(A)
-    s = unsafe_load(f.p)
-    return s.minor == size(A,1)
+    try
+        f = cholfact(A)
+    catch e
+        isa(e, LinAlg.PosDefException) || rethrow(e)
+        return false
+    end
+    true
 end
 
 function issym(A::Sparse)

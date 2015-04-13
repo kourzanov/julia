@@ -56,7 +56,8 @@ static const char opts[]  =
     " -J, --sysimage <file>     Start up with the given system image file\n"
     " -C, --cpu-target <target> Limit usage of cpu features up to <target>\n\n"
 
-    " -p, --procs <n>           Run n local processes\n"
+    " -p, --procs {N|auto}      Integer value N launches N additional local worker processes\n"
+    "                           'auto' launches as many workers as the number of local cores\n"
     " --machinefile <file>      Run processes on hosts listed in <file>\n\n"
 
     " -i                        Force isinteractive() to be true\n"
@@ -77,7 +78,6 @@ static const char opts[]  =
     " -O, --optimize\n"
     "                           Run time-intensive code optimizations\n"
     " --check-bounds={yes|no}   Emit bounds checks always or never (ignoring declarations)\n"
-    " --int-literals={32|64}    Select integer literal size independent of platform\n"
     " --dump-bitcode={yes|no}   Dump bitcode for the system image (used with --build)\n"
     " --depwarn={yes|no}        Enable or disable syntax and method deprecation warnings\n"
     " --inline={yes|no}         Control whether inlining is permitted (overrides functions declared as @inline)\n";
@@ -93,7 +93,6 @@ void parse_opts(int *argcp, char ***argvp)
            opt_code_coverage,
            opt_track_allocation,
            opt_check_bounds,
-           opt_int_literals,
            opt_dump_bitcode,
            opt_depwarn,
            opt_inline,
@@ -128,24 +127,33 @@ void parse_opts(int *argcp, char ***argvp)
         { "track-allocation",optional_argument, 0, opt_track_allocation },
         { "optimize",        no_argument,       0, 'O' },
         { "check-bounds",    required_argument, 0, opt_check_bounds },
-        { "int-literals",    required_argument, 0, opt_int_literals },
         { "dump-bitcode",    required_argument, 0, opt_dump_bitcode },
         { "depwarn",         required_argument, 0, opt_depwarn },
         { "inline",          required_argument, 0, opt_inline },
         { "math-mode",       required_argument, 0, opt_math_mode },
         // hidden command line options
         { "build",           required_argument, 0, 'b' },
-        { "worker",          optional_argument, 0, opt_worker },
+        { "worker",          no_argument,       0, opt_worker },
         { "bind-to",         required_argument, 0, opt_bind_to },
         { "lisp",            no_argument,       &lisp_prompt, 1 },
         { 0, 0, 0, 0 }
     };
+    // getopt handles argument parsing up to -- delineator
+    int lastind = optind;
+    int argc = *argcp;
+    if (argc > 0) {
+        for (int i=0; i < argc; i++) {
+            if (!strcmp((*argvp)[i], "--")) {
+                argc = i;
+                break;
+            }
+        }
+    }
     int c;
     char *endptr;
     opterr = 0;
     int skip = 0;
-    int lastind = optind;
-    while ((c = getopt_long(*argcp,*argvp,shortopts,longopts,0)) != -1) {
+    while ((c = getopt_long(argc,*argvp,shortopts,longopts,0)) != -1) {
         switch (c) {
         case 0:
             break;
@@ -186,9 +194,14 @@ void parse_opts(int *argcp, char ***argvp)
             break;
         case 'p': // procs
             errno = 0;
-            jl_options.nprocs = strtol(optarg, &endptr, 10);
-            if (errno != 0 || optarg == endptr || *endptr != 0 || jl_options.nprocs < 1)
-                jl_errorf("julia: -p,--procs=<n> must be an integer >= 1\n");
+            if (!strcmp(optarg,"auto")) {
+                jl_options.nprocs = jl_cpu_cores();
+            }
+            else {
+                jl_options.nprocs = strtol(optarg, &endptr, 10);
+                if (errno != 0 || optarg == endptr || *endptr != 0 || jl_options.nprocs < 1)
+                    jl_errorf("julia: -p,--procs=<n> must be an integer >= 1\n");
+            }
             break;
         case opt_machinefile:
             jl_options.machinefile = strdup(optarg);
@@ -278,14 +291,6 @@ void parse_opts(int *argcp, char ***argvp)
             else
                 jl_errorf("julia: invalid argument to --check-bounds={yes|no} (%s)\n", optarg);
             break;
-        case opt_int_literals:
-            if (!strcmp(optarg,"32"))
-                jl_options.int_literals = 32;
-            else if (!strcmp(optarg,"64"))
-                jl_options.int_literals = 64;
-            else
-                jl_errorf("julia: invalid argument to --int-literals={32|64} (%s)\n", optarg);
-            break;
         case opt_dump_bitcode:
             if (!strcmp(optarg,"yes"))
                 jl_options.dumpbitcode = JL_OPTIONS_DUMPBITCODE_ON;
@@ -323,15 +328,7 @@ void parse_opts(int *argcp, char ***argvp)
                 jl_options.image_file = NULL;
             break;
         case opt_worker:
-            if (optarg != NULL)
-                if (!strcmp(optarg,"default"))
-                    jl_options.worker = JL_OPTIONS_WORKER_DEFAULT;
-                else if (!strcmp(optarg,"custom"))
-                    jl_options.worker = JL_OPTIONS_WORKER_CUSTOM;
-                else
-                    jl_errorf("julia: invalid argument to --worker={default|custom} (%s)\n", optarg);
-            else
-                jl_options.worker = JL_OPTIONS_WORKER_DEFAULT;
+            jl_options.worker = 1;
             break;
         case opt_bind_to:
             jl_options.bindto = strdup(optarg);
@@ -347,9 +344,8 @@ void parse_opts(int *argcp, char ***argvp)
     *argvp += optind;
     *argcp -= optind;
     if (jl_options.image_file==NULL && *argcp > 0) {
-        if (strcmp((*argvp)[0], "-")) {
+        if (strcmp((*argvp)[0], "-"))
             program = (*argvp)[0];
-        }
     }
 }
 
@@ -424,7 +420,7 @@ static int true_main(int argc, char *argv[])
         int i;
         for (i=0; i < argc; i++) {
             jl_value_t *s = (jl_value_t*)jl_cstr_to_string(argv[i]);
-            s->type = (jl_value_t*)jl_utf8_string_type;
+            jl_set_typeof(s,jl_utf8_string_type);
             jl_arrayset(args, s, i);
         }
     }

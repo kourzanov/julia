@@ -10,8 +10,8 @@
 @test length(1:0) == 0
 @test length(0.0:-0.5) == 0
 @test length(1:2:0) == 0
-L32 = linspace(int32(1), int32(4), 4)
-L64 = linspace(int64(1), int64(4), 4)
+L32 = linspace(Int32(1), Int32(4), 4)
+L64 = linspace(Int64(1), Int64(4), 4)
 @test L32[1] == 1 && L64[1] == 1
 @test L32[2] == 2 && L64[2] == 2
 @test L32[3] == 3 && L64[3] == 3
@@ -106,8 +106,8 @@ end
 @test intersect(reverse(typemin(Int):2:typemax(Int)),typemin(Int):2:typemax(Int)) == reverse(typemin(Int):2:typemax(Int))
 @test intersect(typemin(Int):2:typemax(Int),reverse(typemin(Int):2:typemax(Int))) == typemin(Int):2:typemax(Int)
 
-@test 0 in uint(0):100:typemax(Uint)
-@test last(uint(0):100:typemax(Uint)) in uint(0):100:typemax(Uint)
+@test 0 in UInt(0):100:typemax(Uint)
+@test last(UInt(0):100:typemax(Uint)) in UInt(0):100:typemax(Uint)
 @test -9223372036854775790 in -9223372036854775790:100:9223372036854775710
 @test -9223372036854775690 in -9223372036854775790:100:9223372036854775710
 @test -90 in -9223372036854775790:100:9223372036854775710
@@ -125,7 +125,7 @@ end
 
 r = 0.0:0.01:1.0
 @test (r[30] in r)
-r = (-4*int64(maxintfloat(is(Int,Int32) ? Float32 : Float64))):5
+r = (-4*Int64(maxintfloat(is(Int,Int32) ? Float32 : Float64))):5
 @test (3 in r)
 @test (3.0 in r)
 
@@ -183,13 +183,13 @@ let s = 0
 
     # loops past typemax(Int)
     n = 0
-    s = int128(0)
+    s = Int128(0)
     for i = typemax(UInt64)-2:typemax(UInt64)
         n += 1
         s += i
     end
     @test n == 3
-    @test s == 3*int128(typemax(UInt64)) - 3
+    @test s == 3*Int128(typemax(UInt64)) - 3
 
     # loops over empty ranges
     s = 0
@@ -199,7 +199,7 @@ let s = 0
     @test s == 0
 
     s = 0
-    for i = int128(typemax(Int128)):int128(typemin(Int128))
+    for i = Int128(typemax(Int128)):Int128(typemin(Int128))
         s += 1
     end
     @test s == 0
@@ -207,11 +207,11 @@ end
 
 # sums (see #5798)
 if WORD_SIZE == 64
-    @test sum(int128(1:10^18)) == div(10^18 * (int128(10^18)+1), 2)
-    @test sum(int128(1:10^18-1)) == div(10^18 * (int128(10^18)-1), 2)
+    @test sum(Int128(1):10^18) == div(10^18 * (Int128(10^18)+1), 2)
+    @test sum(Int128(1):10^18-1) == div(10^18 * (Int128(10^18)-1), 2)
 else
-    @test sum(int64(1:10^9)) == div(10^9 * (int64(10^9)+1), 2)
-    @test sum(int64(1:10^9-1)) == div(10^9 * (int64(10^9)-1), 2)
+    @test sum(Int64(1):10^9) == div(10^9 * (Int64(10^9)+1), 2)
+    @test sum(Int64(1):10^9-1) == div(10^9 * (Int64(10^9)-1), 2)
 end
 
 # operations with scalars
@@ -232,22 +232,22 @@ end
 
 # tricky floating-point ranges
 
-@test [0.1:0.1:0.3;]   == [1:3;]./10
-@test [0.0:0.1:0.3;]   == [0:3;]./10
-@test [0.3:-0.1:-0.1;] == [3:-1:-1;]./10
-@test [0.1:-0.1:-0.3;] == [1:-1:-3;]./10
-@test [0.0:0.1:1.0;]   == [0:10;]./10
-@test [0.0:-0.1:1.0;]  == []
-@test [0.0:0.1:-1.0;]  == []
-@test [0.0:-0.1:-1.0;] == [0:-1:-10;]./10
-@test [1.0:1/49:27.0;] == [49:1323;]./49
-@test [0.0:0.7:2.1;]   == [0:7:21;]./10
-@test [0.0:1.1:3.3;]   == [0:11:33;]./10
-@test [0.1:1.1:3.4;]   == [1:11:34;]./10
-@test [0.0:1.3:3.9;]   == [0:13:39;]./10
-@test [0.1:1.3:4.0;]   == [1:13:40;]./10
-@test [1.1:1.1:3.3;]   == [11:11:33;]./10
-@test [0.3:0.1:1.1;]   == [3:1:11;]./10
+@test [0.1:0.1:0.3;]   == [linspace(0.1,0.3,3);]     == [1:3;]./10
+@test [0.0:0.1:0.3;]   == [linspace(0.0,0.3,4);]     == [0:3;]./10
+@test [0.3:-0.1:-0.1;] == [linspace(0.3,-0.1,5);]    == [3:-1:-1;]./10
+@test [0.1:-0.1:-0.3;] == [linspace(0.1,-0.3,5);]    == [1:-1:-3;]./10
+@test [0.0:0.1:1.0;]   == [linspace(0.0,1.0,11);]    == [0:10;]./10
+@test [0.0:-0.1:1.0;]  == [linspace(0.0,1.0,0);]     == []
+@test [0.0:0.1:-1.0;]  == [linspace(0.0,-1.0,0);]    == []
+@test [0.0:-0.1:-1.0;] == [linspace(0.0,-1.0,11);]   == [0:-1:-10;]./10
+@test [1.0:1/49:27.0;] == [linspace(1.0,27.0,1275);] == [49:1323;]./49
+@test [0.0:0.7:2.1;]   == [linspace(0.0,2.1,4);]     == [0:7:21;]./10
+@test [0.0:1.1:3.3;]   == [linspace(0.0,3.3,4);]     == [0:11:33;]./10
+@test [0.1:1.1:3.4;]   == [linspace(0.1,3.4,4);]     == [1:11:34;]./10
+@test [0.0:1.3:3.9;]   == [linspace(0.0,3.9,4);]     == [0:13:39;]./10
+@test [0.1:1.3:4.0;]   == [linspace(0.1,4.0,4);]     == [1:13:40;]./10
+@test [1.1:1.1:3.3;]   == [linspace(1.1,3.3,3);]     == [11:11:33;]./10
+@test [0.3:0.1:1.1;]   == [linspace(0.3,1.1,9);]     == [3:1:11;]./10
 
 @test [0.0:1.0:5.5;]   == [0:10:55;]./10
 @test [0.0:-1.0:0.5;]  == []
@@ -272,8 +272,10 @@ for T = (Float32, Float64,),# BigFloat),
     start = convert(T,a)/den
     step  = convert(T,s)/den
     stop  = convert(T,(a+(n-1)*s))/den
+    vals  = T[a:s:a+(n-1)*s;]./den
     r = start:step:stop
-    @test [r;] == T[a:s:a+(n-1)*s;]./den
+    @test [r;] == vals
+    @test [linspace(start, stop, length(r));] == vals
     # issue #7420
     n = length(r)
     @test [r[1:n];] == [r;]
@@ -284,13 +286,78 @@ for T = (Float32, Float64,),# BigFloat),
     @test [r[n:-2:1];] == [r;][n:-2:1]
 end
 
+# linspace & ranges with very small endpoints
+for T = (Float32, Float64)
+    z = zero(T)
+    u = eps(z)
+    @test first(linspace(u,u,0)) == u
+    @test last(linspace(u,u,0)) == u
+    @test first(linspace(-u,u,0)) == -u
+    @test last(linspace(-u,u,0)) == u
+    @test [linspace(-u,u,0);] == []
+    @test [linspace(-u,-u,1);] == [-u]
+    @test [linspace(-u,u,2);] == [-u,u]
+    @test [linspace(-u,u,3);] == [-u,0,u]
+    @test [linspace(-u,u,4);] == [-u,0,0,u]
+    @test [linspace(-u,u,4);][2] === -z
+    @test [linspace(-u,u,4);][3] === z
+    @test first(linspace(-u,-u,0)) == -u
+    @test last(linspace(-u,-u,0)) == -u
+    @test first(linspace(u,-u,0)) == u
+    @test last(linspace(u,-u,0)) == -u
+    @test [linspace(u,-u,0);] == []
+    @test [linspace(u,u,1);] == [u]
+    @test [linspace(u,-u,2);] == [u,-u]
+    @test [linspace(u,-u,3);] == [u,0,-u]
+    @test [linspace(u,-u,4);] == [u,0,0,-u]
+    @test [linspace(u,-u,4);][2] === z
+    @test [linspace(u,-u,4);][3] === -z
+    v = [linspace(-u,u,12);]
+    @test length(v) == 12
+    @test issorted(v) && unique(v) == [-u,0,0,u]
+    @test [-3u:u:3u;] == [linspace(-3u,3u,7);] == [-3:3;].*u
+    @test [3u:-u:-3u;] == [linspace(3u,-3u,7);] == [3:-1:-3;].*u
+end
+
+# linspace with very large endpoints
+for T = (Float32, Float64)
+    a = realmax()
+    for i = 1:5
+        @test [linspace(a,a,1);] == [a]
+        @test [linspace(-a,-a,1);] == [-a]
+        b = realmax()
+        for j = 1:5
+            @test [linspace(-a,b,0);] == []
+            @test [linspace(-a,b,2);] == [-a,b]
+            @test [linspace(-a,b,3);] == [-a,(b-a)/2,b]
+            @test [linspace(a,-b,0);] == []
+            @test [linspace(a,-b,2);] == [a,-b]
+            @test [linspace(a,-b,3);] == [a,(a-b)/2,-b]
+            for c = maxintfloat(T)-3:maxintfloat(T)
+                s = linspace(-a,b,c)
+                @test first(s) == -a
+                @test last(s) == b
+                c <= typemax(Int) && @test length(s) == c
+                @test s.len == c
+                s = linspace(a,-b,c)
+                @test first(s) == a
+                @test last(s) == -b
+                c <= typemax(Int) && @test length(s) == c
+                @test s.len == c
+            end
+            b = prevfloat(b)
+        end
+        a = prevfloat(a)
+    end
+end
+
 # near-equal ranges
 @test 0.0:0.1:1.0 != 0.0f0:0.1f0:1.0f0
 
 # comparing and hashing ranges
 let
-    Rs = Range[1:2, int32(1:3:17), int64(1:3:17), 1:0, 17:-3:0,
-               0.0:0.1:1.0, float32(0.0:0.1:1.0)]
+    Rs = Range[1:2, map(Int32,1:3:17), map(Int64,1:3:17), 1:0, 17:-3:0,
+               0.0:0.1:1.0, map(Float32,0.0:0.1:1.0)]
     for r in Rs
         ar = collect(r)
         @test r != ar
@@ -325,9 +392,9 @@ for s in 3:100
     @test length(typemax(Int):-s:typemin(Int)) == length(big(typemax(Int)):big(-s):big(typemin(Int)))
 end
 
-@test length(uint(1):uint(1):uint(0)) == 0
-@test length(typemax(UInt):uint(1):(typemax(UInt)-1)) == 0
-@test length(typemax(UInt):uint(2):(typemax(UInt)-1)) == 0
+@test length(UInt(1):UInt(1):UInt(0)) == 0
+@test length(typemax(UInt):UInt(1):(typemax(UInt)-1)) == 0
+@test length(typemax(UInt):UInt(2):(typemax(UInt)-1)) == 0
 @test length((typemin(Int)+3):5:(typemin(Int)+1)) == 0
 
 # issue #6364
@@ -351,13 +418,13 @@ r = -0.004532318104333742:1.2597349521122731e-5:0.008065031416788989
 @test_throws BoundsError r[0:10]
 @test_throws BoundsError r[1:10000]
 
-r = linrange(1/3,5/7,6)
+r = linspace(1/3,5/7,6)
 @test length(r) == 6
 @test r[1] == 1/3
 @test abs(r[end] - 5/7) <= eps(5/7)
-r = linrange(0.25,0.25,1)
+r = linspace(0.25,0.25,1)
 @test length(r) == 1
-@test_throws Exception linrange(0.25,0.5,1)
+@test_throws Exception linspace(0.25,0.5,1)
 
 # issue #7426
 @test [typemax(Int):1:typemax(Int);] == [typemax(Int)]
@@ -377,8 +444,8 @@ end
 # issue #7709
 @test length(map(identity, 0x01:0x05)) == 5
 @test length(map(identity, 0x0001:0x0005)) == 5
-@test length(map(identity, uint64(1):uint64(5))) == 5
-@test length(map(identity, uint128(1):uint128(5))) == 5
+@test length(map(identity, UInt64(1):UInt64(5))) == 5
+@test length(map(identity, UInt128(1):UInt128(5))) == 5
 
 # mean/median
 for f in (mean, median)

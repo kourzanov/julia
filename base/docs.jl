@@ -32,10 +32,6 @@ function doc(obj)
     end
 end
 
-function doc(obj::Union(Symbol, AbstractString))
-    doc(current_module().(symbol(obj)))
-end
-
 # Function / Method support
 
 function newmethod(defs)
@@ -197,7 +193,7 @@ function docm(meta, def)
 end
 
 function docm(ex)
-    haskey(keywords, ex) && return keywords[ex]
+    isa(ex,Symbol) && haskey(keywords, ex) && return keywords[ex]
     isexpr(ex, :->) && return docm(ex.args...)
     isexpr(ex, :call) && return :(doc($(esc(ex.args[1])), @which $(esc(ex))))
     isexpr(ex, :macrocall) && (ex = namify(ex))
@@ -341,20 +337,24 @@ catdoc(md::MD...) = MD(md...)
 
 # REPL help
 
-function repl_search(s)
+function repl_search(io::IO, s)
     pre = "search:"
-    print(pre)
-    printmatches(s, completions(s), cols=Base.tty_size()[2]-length(pre))
-    println("\n")
+    print(io, pre)
+    printmatches(io, s, completions(s), cols=Base.tty_size()[2]-length(pre))
+    println(io, "\n")
 end
 
-function repl_corrections(s)
-    print("Couldn't find ")
-    Markdown.with_output_format(:cyan, STDOUT) do io
+repl_search(s) = repl_search(STDOUT, s)
+
+function repl_corrections(io::IO, s)
+    print(io, "Couldn't find ")
+    Markdown.with_output_format(:cyan, io) do io
         println(io, s)
     end
-    print_correction(s)
+    print_correction(io, s)
 end
+
+repl_corrections(s) = repl_corrections(STDOUT, s)
 
 macro repl (ex)
     quote
@@ -408,7 +408,7 @@ avgdistance(xs) =
 function fuzzyscore(needle, haystack)
     score = 0.
     is, acro = bestmatch(needle, haystack)
-    score += (acro?2:1)length(is) # Matched characters
+    score += (acro?2:1)*length(is) # Matched characters
     score -= 2(length(needle)-length(is)) # Missing characters
     !acro && (score -= avgdistance(is)/10) # Contiguous
     !isempty(is) && (score -= mean(is)/100) # Closer to beginning
@@ -492,14 +492,16 @@ end
 
 print_joined_cols(args...; cols = Base.tty_size()[2]) = print_joined_cols(STDOUT, args...; cols=cols)
 
-function print_correction(word)
+function print_correction(io, word)
     cors = levsort(word, accessible(current_module()))
     pre = "Perhaps you meant "
-    print(pre)
-    print_joined_cols(cors, ", ", " or "; cols = Base.tty_size()[2]-length(pre))
-    println()
+    print(io, pre)
+    print_joined_cols(io, cors, ", ", " or "; cols = Base.tty_size()[2]-length(pre))
+    println(io)
     return
 end
+
+print_correction(word) = print_correction(STDOUT, word)
 
 # Completion data
 

@@ -16,7 +16,7 @@ extern "C" {
 #include <setjmp.h>
 #ifndef _OS_WINDOWS_
 #  define jl_jmp_buf sigjmp_buf
-#  if defined(__arm__)
+#  if defined(_CPU_ARM_)
 #    define MAX_ALIGN 8
 #  else
 #    define MAX_ALIGN sizeof(void*)
@@ -39,6 +39,9 @@ extern "C" {
 #define NORETURN
 #endif
 
+#define container_of(ptr, type, member) \
+    ((type *) ((char *)(ptr) - offsetof(type, member)))
+
 #ifdef _MSC_VER
 #if _WIN64
 #define JL_ATTRIBUTE_ALIGN_PTRSIZE(x) __declspec(align(8)) x
@@ -51,20 +54,72 @@ extern "C" {
 #define JL_ATTRIBUTE_ALIGN_PTRSIZE(x)
 #endif
 
+// threading ------------------------------------------------------------------
+
+// WARNING: Threading support is incomplete.  Changing the 1 to a 0 will break Julia.
+// Nonetheless, we define JL_THREAD and use it to give advanced notice to maintainers
+// of what eventual threading support will change.
+#if 1
+// Definition for compiling non-thread-safe Julia.
+#  define JL_THREAD
+#elif !defined(_OS_WINDOWS_)
+// Definition for compiling Julia on platforms with GCC __thread.
+#  define JL_THREAD __thread
+#else
+// Definition for compiling Julia on Windows
+#  define JL_THREAD __declspec(thread)
+#endif
+
 // core data types ------------------------------------------------------------
 
-#ifdef OVERLAP_TUPLE_LEN
-#define JL_DATA_TYPE    \
-    size_t type : 52;   \
-    size_t _resvd : 12;
-#else
+#ifndef _COMPILER_MICROSOFT_
 #define JL_DATA_TYPE \
-    struct _jl_value_t *type;
+    struct _jl_value_t *fieldptr0[0];
+#else
+#define JL_DATA_TYPE
 #endif
 
 typedef struct _jl_value_t {
     JL_DATA_TYPE
+    struct _jl_value_t *fieldptr[];
 } jl_value_t;
+
+typedef struct {
+    union {
+        jl_value_t *type;
+        uintptr_t type_bits;
+        struct {
+            uintptr_t gc_bits:2;
+#ifdef OVERLAP_TUPLE_LEN
+#ifdef _P64
+            uintptr_t unmarked:50;
+#else
+#error OVERLAP_TUPLE_LEN requires 64-bit pointers
+#endif
+            uintptr_t length:12;
+#endif
+        };
+    };
+#ifdef _P64
+    uintptr_t realign16;
+#endif
+    jl_value_t value;
+} jl_taggedvalue_t;
+
+#define jl_astaggedvalue__MACRO(v) container_of((v),jl_taggedvalue_t,value)
+#define jl_typeof__MACRO(v) ((jl_value_t*)(jl_astaggedvalue__MACRO(v)->type_bits&~(size_t)3))
+#define jl_astaggedvalue jl_astaggedvalue__MACRO
+#define jl_typeof jl_typeof__MACRO
+//#define jl_set_typeof(v,t) (jl_astaggedvalue(v)->type = (jl_value_t*)(t))
+static inline void jl_set_typeof(void *v, void *t)
+{
+    jl_taggedvalue_t *tag = jl_astaggedvalue(v);
+#ifdef _P64
+    tag->realign16 = 0xA1164A1164A11640ull;
+#endif
+    tag->type = (jl_value_t*)t;
+}
+#define jl_typeis(v,t) (jl_typeof(v)==(jl_value_t*)(t))
 
 typedef struct _jl_sym_t {
     JL_DATA_TYPE
@@ -80,11 +135,8 @@ typedef struct _jl_gensym_t {
 } jl_gensym_t;
 
 typedef struct {
-#ifdef OVERLAP_TUPLE_LEN
-    size_t type : 52;
-    size_t length : 12;
-#else
     JL_DATA_TYPE
+#ifndef OVERLAP_TUPLE_LEN
     size_t length;
 #endif
     jl_value_t *data[];
@@ -162,14 +214,15 @@ typedef struct _jl_lambda_info_t {
     // used to avoid infinite recursion
     int8_t inInference : 1;
     int8_t inCompile : 1;
-    jl_fptr_t fptr;        // jlcall entry point
-    void *functionObject;  // jlcall llvm Function
-    void *cFunctionObject; // c callable llvm Function
-    int32_t functionID; // index that this function will have in the codegen table
-    int32_t cFunctionID; // index that this cFunction will have in the codegen table
-} jl_lambda_info_t;
+    jl_fptr_t fptr;             // jlcall entry point
+    void *functionObject;       // jlcall llvm Function
+    void *cFunctionList;        // c callable llvm Functions
 
-#define LAMBDA_INFO_NW (NWORDS(sizeof(jl_lambda_info_t))-1)
+    // specialized llvm Function (common core for the other two)
+    void *specFunctionObject;
+    int32_t functionID; // index that this function will have in the codegen table
+    int32_t specFunctionID; // index that this specFunction will have in the codegen table
+} jl_lambda_info_t;
 
 typedef struct _jl_function_t {
     JL_DATA_TYPE
@@ -365,15 +418,18 @@ extern DLLEXPORT jl_datatype_t *jl_float64_type;
 extern DLLEXPORT jl_datatype_t *jl_floatingpoint_type;
 extern DLLEXPORT jl_datatype_t *jl_number_type;
 extern DLLEXPORT jl_datatype_t *jl_void_type;
+extern DLLEXPORT jl_datatype_t *jl_complex_type;
+extern DLLEXPORT jl_datatype_t *jl_signed_type;
 extern DLLEXPORT jl_datatype_t *jl_voidpointer_type;
 extern DLLEXPORT jl_datatype_t *jl_pointer_type;
+extern DLLEXPORT jl_datatype_t *jl_ref_type;
 
 extern DLLEXPORT jl_value_t *jl_array_uint8_type;
 extern DLLEXPORT jl_value_t *jl_array_any_type;
 extern DLLEXPORT jl_value_t *jl_array_symbol_type;
 extern DLLEXPORT jl_datatype_t *jl_expr_type;
 extern DLLEXPORT jl_datatype_t *jl_symbolnode_type;
-extern DLLEXPORT jl_datatype_t *jl_getfieldnode_type;
+extern DLLEXPORT jl_datatype_t *jl_globalref_type;
 extern DLLEXPORT jl_datatype_t *jl_linenumbernode_type;
 extern DLLEXPORT jl_datatype_t *jl_labelnode_type;
 extern DLLEXPORT jl_datatype_t *jl_gotonode_type;
@@ -422,58 +478,175 @@ extern jl_sym_t *simdloop_sym; extern jl_sym_t *meta_sym;
 extern jl_sym_t *arrow_sym; extern jl_sym_t *ldots_sym;
 extern jl_sym_t *inert_sym;
 
+// gc -------------------------------------------------------------------------
 
-// GC write barrier
+#ifdef JL_GC_MARKSWEEP
+typedef struct _jl_gcframe_t {
+    size_t nroots;
+    struct _jl_gcframe_t *prev;
+    // actual roots go here
+} jl_gcframe_t;
 
-DLLEXPORT void gc_queue_root(void *root);
-void gc_queue_binding(void *bnd);
+// NOTE: it is the caller's responsibility to make sure arguments are
+// rooted. foo(f(), g()) will not work, and foo can't do anything about it,
+// so the caller must do
+// jl_value_t *x=NULL, *y=NULL; JL_GC_PUSH(&x, &y);
+// x = f(); y = g(); foo(x, y)
+
+extern DLLEXPORT JL_THREAD jl_gcframe_t *jl_pgcstack;
+
+#define JL_GC_PUSH(...)                                                   \
+  void *__gc_stkf[] = {(void*)((VA_NARG(__VA_ARGS__)<<1)|1), jl_pgcstack, \
+                       __VA_ARGS__};                                      \
+  jl_pgcstack = (jl_gcframe_t*)__gc_stkf;
+
+#define JL_GC_PUSH1(arg1)                                                 \
+  void *__gc_stkf[] = {(void*)3, jl_pgcstack, arg1};                      \
+  jl_pgcstack = (jl_gcframe_t*)__gc_stkf;
+
+#define JL_GC_PUSH2(arg1, arg2)                                           \
+  void *__gc_stkf[] = {(void*)5, jl_pgcstack, arg1, arg2};                \
+  jl_pgcstack = (jl_gcframe_t*)__gc_stkf;
+
+#define JL_GC_PUSH3(arg1, arg2, arg3)                                     \
+  void *__gc_stkf[] = {(void*)7, jl_pgcstack, arg1, arg2, arg3};          \
+  jl_pgcstack = (jl_gcframe_t*)__gc_stkf;
+
+#define JL_GC_PUSH4(arg1, arg2, arg3, arg4)                               \
+  void *__gc_stkf[] = {(void*)9, jl_pgcstack, arg1, arg2, arg3, arg4};    \
+  jl_pgcstack = (jl_gcframe_t*)__gc_stkf;
+
+#define JL_GC_PUSH5(arg1, arg2, arg3, arg4, arg5)                               \
+  void *__gc_stkf[] = {(void*)11, jl_pgcstack, arg1, arg2, arg3, arg4, arg5};    \
+  jl_pgcstack = (jl_gcframe_t*)__gc_stkf;
+
+#define JL_GC_PUSHARGS(rts_var,n)                               \
+  rts_var = ((jl_value_t**)alloca(((n)+2)*sizeof(jl_value_t*)))+2;    \
+  ((void**)rts_var)[-2] = (void*)(((size_t)n)<<1);              \
+  ((void**)rts_var)[-1] = jl_pgcstack;                          \
+  jl_pgcstack = (jl_gcframe_t*)&(((void**)rts_var)[-2])
+
+#define JL_GC_POP() (jl_pgcstack = jl_pgcstack->prev)
+
+void jl_gc_init(void);
+void jl_gc_setmark(jl_value_t *v);
+DLLEXPORT int jl_gc_enable(void);
+DLLEXPORT int jl_gc_disable(void);
+DLLEXPORT int jl_gc_is_enabled(void);
+DLLEXPORT int64_t jl_gc_total_bytes(void);
+DLLEXPORT uint64_t jl_gc_total_hrtime(void);
+int64_t diff_gc_total_bytes(void);
+void sync_gc_total_bytes(void);
+
+DLLEXPORT void jl_gc_collect(int);
+DLLEXPORT void jl_gc_preserve(jl_value_t *v);
+DLLEXPORT void jl_gc_unpreserve(void);
+DLLEXPORT int jl_gc_n_preserved_values(void);
+
+DLLEXPORT void jl_gc_add_finalizer(jl_value_t *v, jl_function_t *f);
+DLLEXPORT void jl_finalize(jl_value_t *o);
+DLLEXPORT jl_weakref_t *jl_gc_new_weakref(jl_value_t *value);
+void jl_gc_free_array(jl_array_t *a);
+void jl_gc_track_malloced_array(jl_array_t *a);
+void jl_gc_count_allocd(size_t sz);
+void jl_gc_run_all_finalizers(void);
+DLLEXPORT jl_value_t *alloc_1w(void);
+DLLEXPORT jl_value_t *alloc_2w(void);
+DLLEXPORT jl_value_t *alloc_3w(void);
+void *allocb(size_t sz);
+void *reallocb(void*, size_t);
+DLLEXPORT jl_value_t *allocobj(size_t sz);
+
+DLLEXPORT void jl_clear_malloc_data(void);
+DLLEXPORT int64_t jl_gc_num_pause(void);
+DLLEXPORT int64_t jl_gc_num_full_sweep(void);
+
+// GC write barriers
+DLLEXPORT void gc_queue_root(jl_value_t *root); // root isa jl_value_t*
+void gc_queue_binding(jl_binding_t *bnd);
 void gc_setmark_buf(void *buf, int);
-DLLEXPORT void gc_wb_slow(void* parent, void* ptr);
 
-static inline void gc_wb_binding(void *bnd, void *val)
+static inline void gc_wb_binding(jl_binding_t *bnd, void *val) // val isa jl_value_t*
 {
-    bnd = (void*)((void**)bnd - 1);
-    if (__unlikely((*(uintptr_t*)bnd & 1) == 1 && (*(uintptr_t*)val & 1) == 0))
+    if (__unlikely((*((uintptr_t*)bnd-1) & 1) == 1 && (*(uintptr_t*)jl_astaggedvalue(val) & 1) == 0))
         gc_queue_binding(bnd);
 }
 
-static inline void gc_wb(void *parent, void *ptr)
+static inline void gc_wb(void *parent, void *ptr) // parent and ptr isa jl_value_t*
 {
-    if (__unlikely((*((uintptr_t*)parent) & 1) == 1 &&
-                   (*((uintptr_t*)ptr) & 1) == 0))
-        gc_queue_root(parent);
+    if (__unlikely((*((uintptr_t*)jl_astaggedvalue(parent)) & 1) == 1 &&
+                   (*((uintptr_t*)jl_astaggedvalue(ptr)) & 1) == 0))
+        gc_queue_root((jl_value_t*)parent);
 }
 
-static inline void gc_wb_buf(void *parent, void *bufptr)
+static inline void gc_wb_buf(void *parent, void *bufptr) // parent isa jl_value_t*
 {
     // if parent is marked and buf is not
-    if (__unlikely((*((uintptr_t*)parent) & 1) == 1))
+    if (__unlikely((*((uintptr_t*)jl_astaggedvalue(parent)) & 1) == 1))
         //                   (*((uintptr_t*)bufptr) & 3) != 1))
-        gc_setmark_buf(bufptr, *(uintptr_t*)parent & 3);
+        gc_setmark_buf(bufptr, *(uintptr_t*)jl_astaggedvalue(parent) & 3);
 }
 
-static inline void gc_wb_back(void *ptr)
+static inline void gc_wb_back(void *ptr) // ptr isa jl_value_t*
 {
     // if ptr is marked
-    if(__unlikely((*((uintptr_t*)ptr) & 1) == 1)) {
-        gc_queue_root(ptr);
+    if(__unlikely((*((uintptr_t*)jl_astaggedvalue(ptr)) & 1) == 1)) {
+        gc_queue_root((jl_value_t*)ptr);
     }
 }
 
+#else // No Garbage Collection
+
+#define JL_GC_PUSH(...) ;
+#define JL_GC_PUSH1(...) ;
+#define JL_GC_PUSH2(...) ;
+#define JL_GC_PUSH3(...) ;
+#define JL_GC_PUSH4(...) ;
+#define JL_GC_PUSH5(...) ;
+#define JL_GC_PUSHARGS(rts_var,n) rts_var = ((jl_value_t**)alloca((n)*sizeof(jl_value_t*)));
+#define JL_GC_POP()
+
+#define jl_gc_preserve(v) ((void)(v))
+#define jl_gc_unpreserve()
+#define jl_gc_n_preserved_values() (0)
+
+#define allocb(nb)    malloc(nb)
+DLLEXPORT jl_value_t *allocobj(size_t sz);
+STATIC_INLINE jl_value_t *alloc_1w() { return allocobj(1*sizeof(void*)); }
+STATIC_INLINE jl_value_t *alloc_2w() { return allocobj(2*sizeof(void*)); }
+STATIC_INLINE jl_value_t *alloc_3w() { return allocobj(3*sizeof(void*)); }
+
+DLLEXPORT void jl_gc_add_finalizer(jl_value_t *v, jl_function_t *f);
+
+int64_t diff_gc_total_bytes(void);
+#define sync_gc_total_bytes()
+#define jl_gc_collect(arg);
+#define jl_gc_enable() (0)
+#define jl_gc_disable() (0)
+#define jl_gc_is_enabled() (0)
+#define jl_gc_track_malloced_array(a)
+#define jl_gc_count_allocd(sz)
+
+#define gc_wb_binding(bnd, val)
+#define gc_wb(parent, ptr)
+#define gc_wb_buf(parent, bufptr)
+#define gc_wb_back(ptr)
+
+#endif
+
+DLLEXPORT void *jl_gc_managed_malloc(size_t sz);
+DLLEXPORT void *jl_gc_managed_realloc(void *d, size_t sz, size_t oldsz, int isaligned, jl_value_t* owner);
 
 // object accessors -----------------------------------------------------------
 
 #ifdef OVERLAP_TUPLE_LEN
-#define jl_typeof(v) ((jl_value_t*)((uptrint_t)((jl_value_t*)(v))->type & 0x000ffffffffffffeULL))
+#define jl_tuple_len(t)   (jl_astaggedvalue(t)->length)
+#define jl_tuple_set_len_unsafe(t,n) (jl_astaggedvalue(t)->length=(n))
 #else
-#define jl_typeof(v) ((jl_value_t*)((uptrint_t)((jl_value_t*)(v))->type & ((uintptr_t)~3)))
-#endif
-
-#define jl_typeis(v,t) (jl_typeof(v)==(jl_value_t*)(t))
-
 #define jl_tuple_len(t)   (((jl_tuple_t*)(t))->length)
 #define jl_tuple_set_len_unsafe(t,n) (((jl_tuple_t*)(t))->length=(n))
-#define jl_tuple_data(t)   (((jl_tuple_t*)(t))->data)
+#endif
+#define jl_tuple_data(t)  (((jl_tuple_t*)(t))->data)
 #define TUPLE_DATA_OFFSET offsetof(jl_tuple_t,data)/sizeof(void*)
 
 #ifdef STORE_ARRAY_LEN
@@ -514,8 +687,8 @@ STATIC_INLINE jl_value_t *jl_cellset(void *a, size_t i, void *x)
     return (jl_value_t*)x;
 }
 
-# define jl_t0(t) jl_tupleref(t,0)
-# define jl_t1(t) jl_tupleref(t,1)
+#define jl_t0(t) jl_tupleref(t,0)
+#define jl_t1(t) jl_tupleref(t,1)
 
 #define jl_exprarg(e,n) (((jl_value_t**)jl_array_data(((jl_expr_t*)(e))->args))[n])
 #define jl_exprargset(e, n, v) jl_cellset(((jl_expr_t*)(e))->args, n, v)
@@ -524,26 +697,25 @@ STATIC_INLINE jl_value_t *jl_cellset(void *a, size_t i, void *x)
 
 #define jl_symbolnode_sym(s) ((jl_sym_t*)jl_fieldref(s,0))
 #define jl_symbolnode_type(s) (jl_fieldref(s,1))
-#define jl_linenode_line(x) (((ptrint_t*)x)[1])
-#define jl_labelnode_label(x) (((ptrint_t*)x)[1])
-#define jl_gotonode_label(x) (((ptrint_t*)x)[1])
-#define jl_getfieldnode_val(s) (jl_fieldref(s,0))
-#define jl_getfieldnode_name(s) ((jl_sym_t*)jl_fieldref(s,1))
-#define jl_getfieldnode_type(s) (jl_fieldref(s,2))
+#define jl_linenode_line(x) (((ptrint_t*)x)[0])
+#define jl_labelnode_label(x) (((ptrint_t*)x)[0])
+#define jl_gotonode_label(x) (((ptrint_t*)x)[0])
+#define jl_globalref_mod(s) ((jl_module_t*)jl_fieldref(s,0))
+#define jl_globalref_name(s) ((jl_sym_t*)jl_fieldref(s,1))
 
 #define jl_tparam0(t) jl_tupleref(((jl_datatype_t*)(t))->parameters, 0)
 #define jl_tparam1(t) jl_tupleref(((jl_datatype_t*)(t))->parameters, 1)
 
 
 #define jl_cell_data(a)   ((jl_value_t**)((jl_array_t*)a)->data)
-#define jl_string_data(s) ((char*)((jl_array_t*)((jl_value_t**)(s))[1])->data)
-#define jl_iostr_data(s)  ((char*)((jl_array_t*)((jl_value_t**)(s))[1])->data)
+#define jl_string_data(s) ((char*)((jl_array_t*)(s)->fieldptr[0])->data)
+#define jl_iostr_data(s)  ((char*)((jl_array_t*)(s)->fieldptr[0])->data)
 
 #define jl_gf_mtable(f) ((jl_methtable_t*)((jl_function_t*)(f))->env)
 #define jl_gf_name(f)   (jl_gf_mtable(f)->name)
 
 // get a pointer to the data in a datatype
-#define jl_data_ptr(v)  (&((void**)(v))[1])
+#define jl_data_ptr(v)  (((jl_value_t*)v)->fieldptr)
 
 // struct type info
 #define jl_field_offset(st,i) (((jl_datatype_t*)st)->fields[i].offset)
@@ -582,7 +754,7 @@ STATIC_INLINE jl_value_t *jl_cellset(void *a, size_t i, void *x)
 #define jl_is_gensym(v)      jl_typeis(v,jl_gensym_type)
 #define jl_is_expr(v)        jl_typeis(v,jl_expr_type)
 #define jl_is_symbolnode(v)  jl_typeis(v,jl_symbolnode_type)
-#define jl_is_getfieldnode(v)  jl_typeis(v,jl_getfieldnode_type)
+#define jl_is_globalref(v)   jl_typeis(v,jl_globalref_type)
 #define jl_is_labelnode(v)   jl_typeis(v,jl_labelnode_type)
 #define jl_is_gotonode(v)    jl_typeis(v,jl_gotonode_type)
 #define jl_is_quotenode(v)   jl_typeis(v,jl_quotenode_type)
@@ -646,10 +818,28 @@ STATIC_INLINE int jl_is_array(void *v)
     return jl_is_array_type(t);
 }
 
-STATIC_INLINE int jl_is_cpointer_type(void *t)
+STATIC_INLINE int jl_is_cpointer_type(jl_value_t *t)
 {
     return (jl_is_datatype(t) &&
             ((jl_datatype_t*)(t))->name == jl_pointer_type->name);
+}
+
+STATIC_INLINE int jl_is_abstract_ref_type(jl_value_t *t)
+{
+    return (jl_is_datatype(t) &&
+            ((jl_datatype_t*)(t))->name == jl_ref_type->name);
+}
+
+STATIC_INLINE jl_value_t *jl_is_ref_type(jl_value_t *t)
+{
+    if (!jl_is_datatype(t)) return 0;
+    jl_datatype_t *dt = (jl_datatype_t*)t;
+    while (dt != jl_any_type && dt->name != dt->super->name) {
+        if (dt->name == jl_ref_type->name)
+            return (jl_value_t*)dt;
+        dt = dt->super;
+    }
+    return 0;
 }
 
 STATIC_INLINE int jl_is_vararg_type(jl_value_t *v)
@@ -748,8 +938,8 @@ DLLEXPORT jl_value_t *jl_method_def(jl_sym_t *name, jl_value_t **bp, jl_value_t 
                                     jl_tuple_t *argtypes, jl_function_t *f, jl_value_t *isstaged,
                                     jl_value_t *call_func, int iskw);
 DLLEXPORT jl_value_t *jl_box_bool(int8_t x);
-DLLEXPORT jl_value_t *jl_box_int8(int32_t x);
-DLLEXPORT jl_value_t *jl_box_uint8(uint32_t x);
+DLLEXPORT jl_value_t *jl_box_int8(int8_t x);
+DLLEXPORT jl_value_t *jl_box_uint8(uint8_t x);
 DLLEXPORT jl_value_t *jl_box_int16(int16_t x);
 DLLEXPORT jl_value_t *jl_box_uint16(uint16_t x);
 DLLEXPORT jl_value_t *jl_box_int32(int32_t x);
@@ -760,7 +950,7 @@ DLLEXPORT jl_value_t *jl_box_uint64(uint64_t x);
 DLLEXPORT jl_value_t *jl_box_float32(float x);
 DLLEXPORT jl_value_t *jl_box_float64(double x);
 DLLEXPORT jl_value_t *jl_box_voidpointer(void *x);
-DLLEXPORT jl_value_t *jl_box_gensym(ssize_t x);
+DLLEXPORT jl_value_t *jl_box_gensym(size_t x);
 DLLEXPORT jl_value_t *jl_box8 (jl_datatype_t *t, int8_t  x);
 DLLEXPORT jl_value_t *jl_box16(jl_datatype_t *t, int16_t x);
 DLLEXPORT jl_value_t *jl_box32(jl_datatype_t *t, int32_t x);
@@ -781,13 +971,13 @@ DLLEXPORT ssize_t jl_unbox_gensym(jl_value_t *v);
 
 #ifdef _P64
 #define jl_box_long(x)   jl_box_int64(x)
-#define jl_box_ulong(x)   jl_box_uint64(x)
+#define jl_box_ulong(x)  jl_box_uint64(x)
 #define jl_unbox_long(x) jl_unbox_int64(x)
 #define jl_is_long(x)    jl_is_int64(x)
 #define jl_long_type     jl_int64_type
 #else
 #define jl_box_long(x)   jl_box_int32(x)
-#define jl_box_ulong(x)   jl_box_uint32(x)
+#define jl_box_ulong(x)  jl_box_uint32(x)
 #define jl_unbox_long(x) jl_unbox_int32(x)
 #define jl_is_long(x)    jl_is_int32(x)
 #define jl_long_type     jl_int32_type
@@ -800,7 +990,7 @@ DLLEXPORT jl_value_t *jl_get_nth_field_checked(jl_value_t *v, size_t i);
 DLLEXPORT void        jl_set_nth_field(jl_value_t *v, size_t i, jl_value_t *rhs);
 DLLEXPORT int         jl_field_isdefined(jl_value_t *v, size_t i);
 DLLEXPORT jl_value_t *jl_get_field(jl_value_t *o, char *fld);
-DLLEXPORT void       *jl_value_ptr(jl_value_t *a);
+DLLEXPORT jl_value_t *jl_value_ptr(jl_value_t *a);
 
 // arrays
 
@@ -1080,108 +1270,6 @@ DLLEXPORT jl_value_t *jl_call3(jl_function_t *f, jl_value_t *a, jl_value_t *b, j
 // interfacing with Task runtime
 DLLEXPORT void jl_yield();
 
-// gc -------------------------------------------------------------------------
-
-#ifdef JL_GC_MARKSWEEP
-typedef struct _jl_gcframe_t {
-    size_t nroots;
-    struct _jl_gcframe_t *prev;
-    // actual roots go here
-} jl_gcframe_t;
-
-// NOTE: it is the caller's responsibility to make sure arguments are
-// rooted. foo(f(), g()) will not work, and foo can't do anything about it,
-// so the caller must do
-// jl_value_t *x=NULL, *y=NULL; JL_GC_PUSH(&x, &y);
-// x = f(); y = g(); foo(x, y)
-
-extern DLLEXPORT jl_gcframe_t *jl_pgcstack;
-
-#define JL_GC_PUSH(...)                                                   \
-  void *__gc_stkf[] = {(void*)((VA_NARG(__VA_ARGS__)<<1)|1), jl_pgcstack, \
-                       __VA_ARGS__};                                      \
-  jl_pgcstack = (jl_gcframe_t*)__gc_stkf;
-
-#define JL_GC_PUSH1(arg1)                                                 \
-  void *__gc_stkf[] = {(void*)3, jl_pgcstack, arg1};                      \
-  jl_pgcstack = (jl_gcframe_t*)__gc_stkf;
-
-#define JL_GC_PUSH2(arg1, arg2)                                           \
-  void *__gc_stkf[] = {(void*)5, jl_pgcstack, arg1, arg2};                \
-  jl_pgcstack = (jl_gcframe_t*)__gc_stkf;
-
-#define JL_GC_PUSH3(arg1, arg2, arg3)                                     \
-  void *__gc_stkf[] = {(void*)7, jl_pgcstack, arg1, arg2, arg3};          \
-  jl_pgcstack = (jl_gcframe_t*)__gc_stkf;
-
-#define JL_GC_PUSH4(arg1, arg2, arg3, arg4)                               \
-  void *__gc_stkf[] = {(void*)9, jl_pgcstack, arg1, arg2, arg3, arg4};    \
-  jl_pgcstack = (jl_gcframe_t*)__gc_stkf;
-
-#define JL_GC_PUSH5(arg1, arg2, arg3, arg4, arg5)                               \
-  void *__gc_stkf[] = {(void*)11, jl_pgcstack, arg1, arg2, arg3, arg4, arg5};    \
-  jl_pgcstack = (jl_gcframe_t*)__gc_stkf;
-
-#define JL_GC_PUSHARGS(rts_var,n)                               \
-  rts_var = ((jl_value_t**)alloca(((n)+2)*sizeof(jl_value_t*)))+2;    \
-  ((void**)rts_var)[-2] = (void*)(((size_t)n)<<1);              \
-  ((void**)rts_var)[-1] = jl_pgcstack;                          \
-  jl_pgcstack = (jl_gcframe_t*)&(((void**)rts_var)[-2])
-
-#define JL_GC_POP() (jl_pgcstack = jl_pgcstack->prev)
-
-void jl_gc_init(void);
-void jl_gc_setmark(jl_value_t *v);
-DLLEXPORT int jl_gc_enable(void);
-DLLEXPORT int jl_gc_disable(void);
-DLLEXPORT int jl_gc_is_enabled(void);
-DLLEXPORT int64_t jl_gc_total_bytes(void);
-DLLEXPORT uint64_t jl_gc_total_hrtime(void);
-int64_t diff_gc_total_bytes(void);
-void sync_gc_total_bytes(void);
-
-DLLEXPORT void jl_gc_collect(int);
-DLLEXPORT void jl_gc_preserve(jl_value_t *v);
-DLLEXPORT void jl_gc_unpreserve(void);
-DLLEXPORT int jl_gc_n_preserved_values(void);
-
-DLLEXPORT void jl_gc_add_finalizer(jl_value_t *v, jl_function_t *f);
-DLLEXPORT void jl_finalize(jl_value_t *o);
-DLLEXPORT jl_weakref_t *jl_gc_new_weakref(jl_value_t *value);
-void *jl_gc_managed_malloc(size_t sz);
-void *jl_gc_managed_realloc(void *d, size_t sz, size_t oldsz, int isaligned, jl_value_t* owner);
-void jl_gc_free_array(jl_array_t *a);
-void jl_gc_track_malloced_array(jl_array_t *a);
-void jl_gc_count_allocd(size_t sz);
-void jl_gc_run_all_finalizers(void);
-DLLEXPORT void *alloc_2w(void);
-DLLEXPORT void *alloc_3w(void);
-DLLEXPORT void *alloc_4w(void);
-void *allocb(size_t sz);
-void *reallocb(void*, size_t);
-DLLEXPORT void *allocobj(size_t sz);
-
-DLLEXPORT void jl_clear_malloc_data(void);
-DLLEXPORT int64_t jl_gc_num_pause(void);
-DLLEXPORT int64_t jl_gc_num_full_sweep(void);
-
-#else
-
-#define JL_GC_PUSH(...) ;
-#define JL_GC_PUSHARGS(rts,n) ;
-#define JL_GC_POP()
-
-#define jl_gc_preserve(v) ((void)(v))
-#define jl_gc_unpreserve()
-#define jl_gc_n_preserved_values() (0)
-
-STATIC_INLINE void *alloc_2w() { return allocobj(2*sizeof(void*)); }
-STATIC_INLINE void *alloc_3w() { return allocobj(3*sizeof(void*)); }
-STATIC_INLINE void *alloc_4w() { return allocobj(4*sizeof(void*)); }
-#define allocb(nb)    malloc(nb)
-#define allocobj(nb)  malloc(nb)
-#endif
-
 // async signal handling ------------------------------------------------------
 
 #include <signal.h>
@@ -1237,15 +1325,17 @@ typedef struct _jl_task_t {
 
     // current exception handler
     jl_handler_t *eh;
+#ifdef JL_GC_MARKSWEEP
     // saved gc stack top for context switches
     jl_gcframe_t *gcstack;
+#endif
     // current module, or NULL if this task has not set one
     jl_module_t *current_module;
 } jl_task_t;
 
-extern DLLEXPORT jl_task_t * volatile jl_current_task;
-extern DLLEXPORT jl_task_t *jl_root_task;
-extern DLLEXPORT jl_value_t *jl_exception_in_transit;
+extern DLLEXPORT JL_THREAD jl_task_t * volatile jl_current_task;
+extern DLLEXPORT JL_THREAD jl_task_t *jl_root_task;
+extern DLLEXPORT JL_THREAD jl_value_t *jl_exception_in_transit;
 
 DLLEXPORT jl_task_t *jl_new_task(jl_function_t *start, size_t ssize);
 jl_value_t *jl_switchto(jl_task_t *t, jl_value_t *arg);
@@ -1420,7 +1510,6 @@ typedef struct {
     int8_t malloc_log;
     int8_t opt_level;
     int8_t check_bounds;
-    int    int_literals;
     int8_t dumpbitcode;
     int8_t depwarn;
     int8_t can_inline;
@@ -1462,9 +1551,6 @@ extern DLLEXPORT jl_options_t jl_options;
 #define JL_OPTIONS_FAST_MATH_OFF 2
 #define JL_OPTIONS_FAST_MATH_DEFAULT 0
 
-#define JL_OPTIONS_WORKER_DEFAULT 1
-#define JL_OPTIONS_WORKER_CUSTOM 2
-
 // Version information
 #include "julia_version.h"
 
@@ -1473,6 +1559,17 @@ DLLEXPORT extern int jl_ver_minor(void);
 DLLEXPORT extern int jl_ver_patch(void);
 DLLEXPORT extern int jl_ver_is_release(void);
 DLLEXPORT extern const char* jl_ver_string(void);
+
+// nullable struct representations
+typedef struct {
+    uint8_t isnull;
+    double value;
+} jl_nullable_float64_t;
+
+typedef struct {
+    uint8_t isnull;
+    float value;
+} jl_nullable_float32_t;
 
 #ifdef __cplusplus
 }

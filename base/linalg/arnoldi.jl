@@ -16,14 +16,15 @@ function eigs(A, B;
     isgeneral = B !== I
     sym = issym(A) && !iscmplx
     nevmax=sym ? n-1 : n-2
+    nevmax > 0 || throw(ArgumentError("Input matrix A is too small. Use eigfact instead."))
     if nev > nevmax
+        warn("Adjusting nev from $nev to $nevmax")
         nev = nevmax
-        warn("nev should be at most $nevmax")
     end
-    nev > 0 || throw(ArgumentError("requested number of eigen values (nev) must be ≥ 1, got $nev"))
+    nev > 0 || throw(ArgumentError("requested number of eigenvalues (nev) must be ≥ 1, got $nev"))
     ncvmin = nev + (sym ? 1 : 2)
     if ncv < ncvmin
-        warn("ncv should be at least $ncvmin")
+        warn("Adjusting ncv from $ncv to $ncvmin")
         ncv = ncvmin
     end
     ncv = blas_int(min(ncv, n))
@@ -87,7 +88,7 @@ function eigs(A, B;
             F = factorize(sigma==zero(T) ? A : A - UniformScaling(sigma))
             solveSI(x) = F \ x
         end
-    else                    # Generalized eigen problem
+    else                    # Generalized eigenproblem
         matvecB(x) = B * x
         if !isshift         #    Regular inverse mode
             mode       = 2
@@ -105,9 +106,15 @@ function eigs(A, B;
        ARPACK.aupd_wrapper(T, matvecA, matvecB, solveSI, n, sym, iscmplx, bmat, nev, ncv, whichstr, tol, maxiter, mode, v0)
 
     # Postprocessing to get eigenvalues and eigenvectors
-    return ARPACK.eupd_wrapper(T, n, sym, iscmplx, bmat, nev, whichstr, ritzvec, TOL,
+    output = ARPACK.eupd_wrapper(T, n, sym, iscmplx, bmat, nev, whichstr, ritzvec, TOL,
                                  resid, ncv, v, ldv, sigma, iparam, ipntr, workd, workl, lworkl, rwork)
 
+    # Issue 10495, 10701: Check that all eigenvalues are converged
+    nev = length(output[1])
+    nconv = output[ritzvec ? 3 : 2]
+    nev ≤ nconv || warn("not all wanted Ritz pairs converged. Requested: $nev, converged: $nconv")
+
+    return output
 end
 
 

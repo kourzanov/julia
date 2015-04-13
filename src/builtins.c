@@ -39,21 +39,16 @@ DLLEXPORT void NORETURN jl_error(const char *str)
     jl_throw(jl_new_struct(jl_errorexception_type, msg));
 }
 
-DLLEXPORT void NORETURN jl_errorf(const char *fmt, ...)
-{
-    va_list args;
-    va_start(args, fmt);
+extern int vasprintf(char **str, const char *fmt, va_list ap);
 
-    if (jl_errorexception_type == NULL) {
+static void NORETURN jl_vexceptionf(jl_datatype_t *exception_type, const char *fmt, va_list args)
+{
+    if (exception_type == NULL) {
         jl_vprintf(JL_STDERR, fmt, args);
         jl_exit(1);
     }
-
     char *str = NULL;
     int ok = vasprintf(&str, fmt, args);
-
-    va_end(args);
-
     jl_value_t *msg;
     if (ok < 0) {  // vasprintf failed
         msg = jl_cstr_to_string("internal error: could not display error message");
@@ -63,20 +58,23 @@ DLLEXPORT void NORETURN jl_errorf(const char *fmt, ...)
         free(str);
     }
     JL_GC_PUSH1(&msg);
-    jl_throw(jl_new_struct(jl_errorexception_type, msg));
+    jl_throw(jl_new_struct(exception_type, msg));
+}
+
+DLLEXPORT void NORETURN jl_errorf(const char *fmt, ...)
+{
+    va_list args;
+    va_start(args, fmt);
+    jl_vexceptionf(jl_errorexception_type, fmt, args);
+    va_end(args);
 }
 
 DLLEXPORT void NORETURN jl_exceptionf(jl_datatype_t *exception_type, const char *fmt, ...)
 {
     va_list args;
-    ios_t buf;
-    ios_mem(&buf, 0);
     va_start(args, fmt);
-    ios_vprintf(&buf, fmt, args);
+    jl_vexceptionf(exception_type, fmt, args);
     va_end(args);
-    jl_value_t *msg = jl_takebuf_string(&buf);
-    JL_GC_PUSH1(&msg);
-    jl_throw(jl_new_struct(exception_type, msg));
 }
 
 void NORETURN jl_too_few_args(const char *fname, int min)
@@ -730,20 +728,43 @@ DLLEXPORT void *jl_array_ptr(jl_array_t *a)
 {
     return a->data;
 }
-DLLEXPORT void *jl_value_ptr(jl_value_t *a)
+DLLEXPORT jl_value_t *jl_value_ptr(jl_value_t *a)
 {
-    return (void*)a;
+    return a;
 }
 
 // printing -------------------------------------------------------------------
 
-DLLEXPORT int jl_substrtod(char *str, size_t offset, int len, double *out)
+int substr_isspace(char *p, char *pend)
+{
+    while (p != pend) {
+        if (!isspace((unsigned char)*p)) {
+            return 0;
+        }
+        p++;
+    }
+    return 1;
+}
+
+int str_isspace(char *p)
+{
+    while (*p != '\0') {
+        if (!isspace((unsigned char)*p)) {
+            return 0;
+        }
+        p++;
+    }
+    return 1;
+}
+
+DLLEXPORT jl_nullable_float64_t jl_try_substrtod(char *str, size_t offset, int len)
 {
     char *p;
-    errno = 0;
     char *bstr = str+offset;
     char *pend = bstr+len;
     int err = 0;
+
+    errno = 0;
     if (!(*pend == '\0' || isspace((unsigned char)*pend) || *pend == ',')) {
         // confusing data outside substring. must copy.
         char *newstr = (char*)malloc(len+1);
@@ -752,38 +773,67 @@ DLLEXPORT int jl_substrtod(char *str, size_t offset, int len, double *out)
         bstr = newstr;
         pend = bstr+len;
     }
-    *out = strtod_c(bstr, &p);
-    if (p == bstr ||
-        (errno==ERANGE && (*out==0 || *out==HUGE_VAL || *out==-HUGE_VAL)))
+    double out = strtod_c(bstr, &p);
+
+    if (errno==ERANGE && (out==0 || out==HUGE_VAL || out==-HUGE_VAL)) {
         err = 1;
-    // Deal with case where the substring might be something like "1 ",
-    // which is OK, and "1 X", which we don't allow.
-    while (p != pend) {
-        if (!isspace((unsigned char)*p)) {
-            err = 1;
-            break;
-        }
-        p++;
     }
+    else if (p == bstr) {
+        err = 1;
+    }
+    else {
+        // Deal with case where the substring might be something like "1 ",
+        // which is OK, and "1 X", which we don't allow.
+        err = substr_isspace(p, pend) ? 0 : 1;
+    }
+
     if (bstr != str+offset)
         free(bstr);
-    return err;
+
+    jl_nullable_float64_t ret = {(uint8_t)err, out};
+    return ret;
+}
+
+DLLEXPORT jl_nullable_float64_t jl_try_strtod(char *str)
+{
+    char *p;
+    int err = 0;
+
+    errno = 0;
+    double out = strtod_c(str, &p);
+
+    if (errno==ERANGE && (out==0 || out==HUGE_VAL || out==-HUGE_VAL)) {
+        err = 1;
+    }
+    else if (p == str) {
+        err = 1;
+    }
+    else {
+        err = str_isspace(p) ? 0 : 1;
+    }
+
+    jl_nullable_float64_t ret = {(uint8_t)err, out};
+    return ret;
+}
+
+DLLEXPORT int jl_substrtod(char *str, size_t offset, int len, double *out)
+{
+    jl_nullable_float64_t nd = jl_try_substrtod(str, offset, len);
+    if (0 == nd.isnull) {
+        *out = nd.value;
+        return 0;
+    }
+    return 1;
 }
 
 DLLEXPORT int jl_strtod(char *str, double *out)
 {
-    char *p;
-    errno = 0;
-    *out = strtod_c(str, &p);
-    if (p == str ||
-        (errno==ERANGE && (*out==0 || *out==HUGE_VAL || *out==-HUGE_VAL)))
-        return 1;
-    while (*p != '\0') {
-        if (!isspace((unsigned char)*p))
-            return 1;
-        p++;
+    jl_nullable_float64_t nd = jl_try_strtod(str);
+    if (0 == nd.isnull) {
+        *out = nd.value;
+        return 0;
     }
-    return 0;
+    return 1;
 }
 
 // MSVC pre-2013 did not define HUGE_VALF
@@ -791,13 +841,14 @@ DLLEXPORT int jl_strtod(char *str, double *out)
 #define HUGE_VALF (1e25f * 1e25f)
 #endif
 
-DLLEXPORT int jl_substrtof(char *str, int offset, int len, float *out)
+DLLEXPORT jl_nullable_float32_t jl_try_substrtof(char *str, size_t offset, int len)
 {
     char *p;
-    errno = 0;
     char *bstr = str+offset;
     char *pend = bstr+len;
     int err = 0;
+
+    errno = 0;
     if (!(*pend == '\0' || isspace((unsigned char)*pend) || *pend == ',')) {
         // confusing data outside substring. must copy.
         char *newstr = (char*)malloc(len+1);
@@ -807,46 +858,73 @@ DLLEXPORT int jl_substrtof(char *str, int offset, int len, float *out)
         pend = bstr+len;
     }
 #if defined(_OS_WINDOWS_) && !defined(_COMPILER_MINGW_)
-    *out = (float)strtod_c(bstr, &p);
+    float out = (float)strtod_c(bstr, &p);
 #else
-    *out = strtof_c(bstr, &p);
+    float out = strtof_c(bstr, &p);
 #endif
 
-    if (p == bstr ||
-        (errno==ERANGE && (*out==0 || *out==HUGE_VALF || *out==-HUGE_VALF)))
+    if (errno==ERANGE && (out==0 || out==HUGE_VALF || out==-HUGE_VALF)) {
         err = 1;
-    // Deal with case where the substring might be something like "1 ",
-    // which is OK, and "1 X", which we don't allow.
-    while (p != pend) {
-        if (!isspace((unsigned char)*p)) {
-            err = 1;
-            break;
-        }
-        p++;
     }
+    else if (p == bstr) {
+        err = 1;
+    }
+    else {
+        // Deal with case where the substring might be something like "1 ",
+        // which is OK, and "1 X", which we don't allow.
+        err = substr_isspace(p, pend) ? 0 : 1;
+    }
+
     if (bstr != str+offset)
         free(bstr);
-    return err;
+
+    jl_nullable_float32_t ret = {(uint8_t)err, out};
+    return ret;
+}
+
+DLLEXPORT jl_nullable_float32_t jl_try_strtof(char *str)
+{
+    char *p;
+    int err = 0;
+
+    errno = 0;
+#if defined(_OS_WINDOWS_) && !defined(_COMPILER_MINGW_)
+    float out = (float)strtod_c(str, &p);
+#else
+    float out = strtof_c(str, &p);
+#endif
+    if (errno==ERANGE && (out==0 || out==HUGE_VALF || out==-HUGE_VALF)) {
+        err = 1;
+    }
+    else if (p == str) {
+        err = 1;
+    }
+    else {
+        err = str_isspace(p) ? 0 : 1;
+    }
+
+    jl_nullable_float32_t ret = {(uint8_t)err, out};
+    return ret;
+}
+
+DLLEXPORT int jl_substrtof(char *str, int offset, int len, float *out)
+{
+    jl_nullable_float32_t nf = jl_try_substrtof(str, offset, len);
+    if (0 == nf.isnull) {
+        *out = nf.value;
+        return 0;
+    }
+    return 1;
 }
 
 DLLEXPORT int jl_strtof(char *str, float *out)
 {
-    char *p;
-    errno = 0;
-#if defined(_OS_WINDOWS_) && !defined(_COMPILER_MINGW_)
-    *out = (float)strtod_c(str, &p);
-#else
-    *out = strtof_c(str, &p);
-#endif
-    if (p == str ||
-        (errno==ERANGE && (*out==0 || *out==HUGE_VALF || *out==-HUGE_VALF)))
-        return 1;
-    while (*p != '\0') {
-        if (!isspace((unsigned char)*p))
-            return 1;
-        p++;
+    jl_nullable_float32_t nf = jl_try_strtof(str);
+    if (0 == nf.isnull) {
+        *out = nf.value;
+        return 0;
     }
-    return 0;
+    return 1;
 }
 
 // showing --------------------------------------------------------------------
@@ -894,7 +972,7 @@ void jl_show(jl_value_t *stream, jl_value_t *v)
 
 extern int jl_in_inference;
 extern int jl_boot_file_loaded;
-int jl_eval_with_compiler_p(jl_expr_t *expr, int compileloops);
+int jl_eval_with_compiler_p(jl_expr_t *expr, int compileloops, jl_module_t *m);
 
 void jl_trampoline_compile_function(jl_function_t *f, int always_infer, jl_tuple_t *sig)
 {
@@ -908,7 +986,7 @@ void jl_trampoline_compile_function(jl_function_t *f, int always_infer, jl_tuple
                 f->linfo->ast = jl_uncompress_ast(f->linfo, f->linfo->ast);
                 gc_wb(f->linfo, f->linfo->ast);
             }
-            if (always_infer || jl_eval_with_compiler_p(jl_lam_body((jl_expr_t*)f->linfo->ast),1)) {
+            if (always_infer || jl_eval_with_compiler_p(jl_lam_body((jl_expr_t*)f->linfo->ast),1,f->linfo->module)) {
                 jl_type_infer(f->linfo, sig, f->linfo);
             }
         }
@@ -1156,6 +1234,7 @@ void jl_init_primitives(void)
     add_builtin("IntrinsicFunction", (jl_value_t*)jl_intrinsic_type);
     add_builtin("Function", (jl_value_t*)jl_function_type);
     add_builtin("LambdaStaticData", (jl_value_t*)jl_lambda_info_type);
+    add_builtin("Ref", (jl_value_t*)jl_ref_type);
     add_builtin("Ptr", (jl_value_t*)jl_pointer_type);
     add_builtin("Box", (jl_value_t*)jl_box_type);
     add_builtin("Task", (jl_value_t*)jl_task_type);
@@ -1200,13 +1279,15 @@ static size_t jl_show_tuple(JL_STREAM *out, jl_tuple_t *t, char *opn, char *cls,
     return n;
 }
 
-#define MAX_DEPTH 5
+#define MAX_DEPTH 25
 
 size_t jl_static_show_x(JL_STREAM *out, jl_value_t *v, int depth)
 {
     // mimic jl_show, but never calling a julia method
     size_t n = 0;
-    if(depth > MAX_DEPTH) return 0; // cheap way of bailing out of cycles
+    if(depth > MAX_DEPTH) { // cheap way of bailing out of cycles
+        return jl_printf(out, "•");
+    }
     depth++;
     if (v == NULL) {
         n += jl_printf(out, "#<null>");
@@ -1214,8 +1295,8 @@ size_t jl_static_show_x(JL_STREAM *out, jl_value_t *v, int depth)
     else if (jl_typeof(v) == NULL) {
         n += jl_printf(out, "<?::#null>");
     }
-    else if ((uptrint_t)v->type < 4096U) {
-        n += jl_printf(out, "<?::#%d>", (int)(uptrint_t)v->type);
+    else if (jl_astaggedvalue(v)->type_bits < 4096U) {
+        n += jl_printf(out, "<?::#%d>", (int)jl_astaggedvalue(v)->type_bits);
     }
     else if (jl_is_lambda_info(v)) {
         jl_lambda_info_t *li = (jl_lambda_info_t*)v;
@@ -1353,11 +1434,9 @@ size_t jl_static_show_x(JL_STREAM *out, jl_value_t *v, int depth)
         n += jl_printf(out, "%s::", jl_symbolnode_sym(v)->name);
         n += jl_static_show_x(out, jl_symbolnode_type(v), depth);
     }
-    else if (jl_is_getfieldnode(v)) {
-        n += jl_static_show_x(out, jl_getfieldnode_val(v), depth);
-        n += jl_printf(out, ".%s", jl_getfieldnode_name(v)->name);
-        n += jl_printf(out, "::");
-        n += jl_static_show_x(out, jl_getfieldnode_type(v), depth);
+    else if (jl_is_globalref(v)) {
+        n += jl_static_show_x(out, (jl_value_t*)jl_globalref_mod(v), depth);
+        n += jl_printf(out, ".%s", jl_globalref_name(v)->name);
     }
     else if (jl_is_labelnode(v)) {
         n += jl_printf(out, "%d:", jl_labelnode_label(v));

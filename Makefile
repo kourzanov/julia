@@ -69,6 +69,9 @@ julia-deps: git-submodules |  $(DIRS) $(build_datarootdir)/julia/base $(build_da
 julia-base: julia-deps
 	@$(MAKE) $(QUIET_MAKE) -C base
 
+julia-libccalltest:
+	@$(MAKE) $(QUIET_MAKE) -C test libccalltest
+
 julia-src-%: julia-deps
 	@$(MAKE) $(QUIET_MAKE) -C src libjulia-$*
 
@@ -78,7 +81,7 @@ julia-ui-%: julia-src-%
 julia-sysimg-% : julia-ui-% julia-base
 	@$(MAKE) $(QUIET_MAKE) LD_LIBRARY_PATH=$(build_libdir):$(LD_LIBRARY_PATH) JULIA_EXECUTABLE="$(JULIA_EXECUTABLE_$*)" $(build_private_libdir)/sys.$(SHLIB_EXT)
 
-julia-debug julia-release : julia-% : julia-sysimg-% julia-symlink-%
+julia-debug julia-release : julia-% : julia-symlink-% julia-sysimg-% julia-libccalltest
 
 debug release : % : julia-%
 
@@ -455,6 +458,7 @@ clean: | $(CLEAN_TARGETS)
 	@$(MAKE) -C doc clean
 	@$(MAKE) -C src clean
 	@$(MAKE) -C ui clean
+	@$(MAKE) -C test clean
 	@rm -f julia
 	@rm -f *~ *# *.tar.gz
 	@rm -f $(build_bindir)/stringreplace \
@@ -533,7 +537,7 @@ endif
 	cd dist-extras && \
 	$(JLDOWNLOAD) http://downloads.sourceforge.net/sevenzip/7z920_extra.7z && \
 	$(JLDOWNLOAD) https://unsis.googlecode.com/files/nsis-2.46.5-Unicode-setup.exe && \
-	$(JLDOWNLOAD) ftp://ftp.tigress.co.uk/public/gpl/6.0.0/busybox/busybox.exe && \
+	$(JLDOWNLOAD) busybox.exe http://intgat.tigress.co.uk/rmy/files/busybox/busybox-w32-TIG-1778-g15efec6.exe && \
 	chmod a+x 7z.exe && \
 	chmod a+x 7z.dll && \
 	$(call spawn,./7z.exe) x -y -onsis nsis-2.46.5-Unicode-setup.exe && \

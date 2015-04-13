@@ -61,6 +61,7 @@ debug && println("(Automatic) Square LU decomposition")
     @test_approx_eq (l*u)[invperm(p),:] a
     @test_approx_eq a * inv(lua) eye(n)
     @test norm(a*(lua\b) - b, 1) < ε*κ*n*2 # Two because the right hand side has two columns
+    @test_approx_eq full(lua) a
 
 debug && println("Thin LU")
     lua   = lufact(a[:,1:n1])
@@ -77,6 +78,17 @@ debug && println("QR decomposition (without pivoting)")
     @test_approx_eq q*full(q, thin=false)' eye(n)
     @test_approx_eq q*r a
     @test_approx_eq_eps a*(qra\b) b 3000ε
+    @test_approx_eq full(qra) a
+
+debug && println("Thin QR decomposition (without pivoting)")
+    qra   = qrfact(a[:,1:n1], Val{false})
+    q,r   = qra[:Q], qra[:R]
+    @test_approx_eq q'*full(q, thin=false) eye(n)
+    @test_approx_eq q'*full(q) eye(n, n1)
+    @test_approx_eq q*r a[:,1:n1]
+    @test_approx_eq_eps q*b[1:n1] full(q)*b[1:n1] 100ε
+    @test_approx_eq_eps q*b full(q, thin=false)*b 100ε
+    @test_throws DimensionMismatch q*b[1:n1 + 1]
 
 debug && println("(Automatic) Fat (pivoted) QR decomposition") # Pivoting is only implemented for BlasFloats
     qrpa  = factorize(a[1:n1,:])
@@ -87,6 +99,7 @@ debug && println("(Automatic) Fat (pivoted) QR decomposition") # Pivoting is onl
     @test_approx_eq q*r isa(qrpa,QRPivoted) ? a[1:n1,p] : a[1:n1,:]
     @test_approx_eq isa(qrpa, QRPivoted) ? q*r[:,invperm(p)] : q*r a[1:n1,:]
     @test_approx_eq_eps a[1:n1,:]*(qrpa\b[1:n1]) b[1:n1] 5000ε
+    @test_approx_eq full(qrpa) a[1:5,:]
 
 debug && println("(Automatic) Thin (pivoted) QR decomposition") # Pivoting is only implemented for BlasFloats
     qrpa  = factorize(a[:,1:n1])
@@ -96,32 +109,7 @@ debug && println("(Automatic) Thin (pivoted) QR decomposition") # Pivoting is on
     @test_approx_eq q*full(q, thin=false)' eye(n)
     @test_approx_eq q*r isa(qrpa, QRPivoted) ? a[:,p] : a[:,1:n1]
     @test_approx_eq isa(qrpa, QRPivoted) ? q*r[:,invperm(p)] : q*r a[:,1:n1]
-
-debug && println("symmetric eigen-decomposition")
-    if eltya != BigFloat && eltyb != BigFloat # Revisit when implemented in julia
-        d,v   = eig(asym)
-        @test_approx_eq asym*v[:,1] d[1]*v[:,1]
-        @test_approx_eq v*Diagonal(d)*v' asym
-        @test isequal(eigvals(asym[1]), eigvals(asym[1:1,1:1]))
-        @test_approx_eq abs(eigfact(Hermitian(asym), 1:2)[:vectors]'v[:,1:2]) eye(eltya, 2)
-        eig(Hermitian(asym), 1:2) # same result, but checks that method works
-        @test_approx_eq abs(eigfact(Hermitian(asym), d[1]-10*eps(d[1]), d[2]+10*eps(d[2]))[:vectors]'v[:,1:2]) eye(eltya, 2)
-        eig(Hermitian(asym), d[1]-10*eps(d[1]), d[2]+10*eps(d[2])) # same result, but checks that method works
-        @test_approx_eq eigvals(Hermitian(asym), 1:2) d[1:2]
-        @test_approx_eq eigvals(Hermitian(asym), d[1]-10*eps(d[1]), d[2]+10*eps(d[2])) d[1:2]
-
-        # relation to svdvals
-        @test sum(sort(abs(eigvals(Hermitian(asym))))) == sum(sort(svdvals(Hermitian(asym))))
-
-        # cond
-        @test_approx_eq cond(Hermitian(asym)) cond(asym)
-
-        # rank
-        let
-            A = a[:,1:5]*a[:,1:5]'
-            @test rank(A) == rank(Hermitian(A))
-        end
-    end
+    @test_approx_eq full(qrpa) a[:,1:5]
 
 debug && println("non-symmetric eigen decomposition")
     if eltya != BigFloat && eltyb != BigFloat # Revisit when implemented in julia
@@ -158,6 +146,7 @@ debug && println("Schur")
         @test_approx_eq sort(real(f[:values])) sort(real(d))
         @test_approx_eq sort(imag(f[:values])) sort(imag(d))
         @test istriu(f[:Schur]) || iseltype(a,Real)
+        @test_approx_eq full(f) a
     end
 
 debug && println("Reorder Schur")
@@ -168,7 +157,7 @@ debug && println("Reorder Schur")
         S = schurfact(ordschura)
         select = bitrand(n)
         O = ordschur(S, select)
-        bool(sum(select)) && @test_approx_eq S[:values][find(select)] O[:values][1:sum(select)]
+        Bool(sum(select)) && @test_approx_eq S[:values][find(select)] O[:values][1:sum(select)]
         @test_approx_eq O[:vectors]*O[:Schur]*O[:vectors]' ordschura
     end
 
@@ -203,6 +192,7 @@ debug && println("singular value decomposition")
     if eltya != BigFloat && eltyb != BigFloat # Revisit when implemented in julia
         usv = svdfact(a)
         @test_approx_eq usv[:U]*scale(usv[:S],usv[:Vt]) a
+        @test_approx_eq full(usv) a
     end
 
 debug && println("Generalized svd")

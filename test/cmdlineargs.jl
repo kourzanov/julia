@@ -58,7 +58,7 @@ let exename = joinpath(JULIA_HOME, Base.julia_exename())
     # NOTE: this test only holds true when there is a sys.{dll,dylib,so} shared library present.
     # The tests are also limited to unix platforms at the moment because loading the system image
     # not turned on for Window's binary builds at the moment.
-    @unix_only if dlopen_e(splitext(bytestring(Base.JLOptions().image_file))[1]) != C_NULL
+    @unix_only if Libdl.dlopen_e(splitext(bytestring(Base.JLOptions().image_file))[1]) != C_NULL
         @test !success(`$exename -C invalidtarget`)
         @test !success(`$exename --cpu-target=invalidtarget`)
     end
@@ -90,46 +90,46 @@ let exename = joinpath(JULIA_HOME, Base.julia_exename())
     @test !success(`$exename --color=false`)
 
     # --history-file
-    @test readchomp(`$exename -E "bool(Base.JLOptions().historyfile)" --history-file=yes`) == "true"
-    @test readchomp(`$exename -E "bool(Base.JLOptions().historyfile)" --history-file=no`) == "false"
+    @test readchomp(`$exename -E "Bool(Base.JLOptions().historyfile)" --history-file=yes`) == "true"
+    @test readchomp(`$exename -E "Bool(Base.JLOptions().historyfile)" --history-file=no`) == "false"
     # deprecated
-    @test readchomp(`$exename -E "bool(Base.JLOptions().historyfile)" --no-history-file`) == "false"
+    @test readchomp(`$exename -E "Bool(Base.JLOptions().historyfile)" --no-history-file`) == "false"
     @test !success(`$exename --history-file=false`)
 
     # --startup-file
     let JL_OPTIONS_STARTUPFILE_ON = 1,
         JL_OPTIONS_STARTUPFILE_OFF = 2
-        @test int(readchomp(`$exename -E "Base.JLOptions().startupfile" --startup-file=yes`)) == JL_OPTIONS_STARTUPFILE_ON
-        @test int(readchomp(`$exename -E "Base.JLOptions().startupfile" --startup-file=no`)) == JL_OPTIONS_STARTUPFILE_OFF
+        @test parse(Int,readchomp(`$exename -E "Base.JLOptions().startupfile" --startup-file=yes`)) == JL_OPTIONS_STARTUPFILE_ON
+        @test parse(Int,readchomp(`$exename -E "Base.JLOptions().startupfile" --startup-file=no`)) == JL_OPTIONS_STARTUPFILE_OFF
     end
     @test !success(`$exename --startup-file=false`)
 
     # --code-coverage
-    @test readchomp(`$exename -E "bool(Base.JLOptions().code_coverage)"`) == "false"
-    @test readchomp(`$exename -E "bool(Base.JLOptions().code_coverage)" --code-coverage=none`) == "false"
+    @test readchomp(`$exename -E "Bool(Base.JLOptions().code_coverage)"`) == "false"
+    @test readchomp(`$exename -E "Bool(Base.JLOptions().code_coverage)" --code-coverage=none`) == "false"
 
-    @test readchomp(`$exename -E "bool(Base.JLOptions().code_coverage)" --code-coverage`) == "true"
-    @test readchomp(`$exename -E "bool(Base.JLOptions().code_coverage)" --code-coverage=user`) == "true"
+    @test readchomp(`$exename -E "Bool(Base.JLOptions().code_coverage)" --code-coverage`) == "true"
+    @test readchomp(`$exename -E "Bool(Base.JLOptions().code_coverage)" --code-coverage=user`) == "true"
 
     # --track-allocation
-    @test readchomp(`$exename -E "bool(Base.JLOptions().malloc_log)"`) == "false"
-    @test readchomp(`$exename -E "bool(Base.JLOptions().malloc_log)" --track-allocation=none`) == "false"
+    @test readchomp(`$exename -E "Bool(Base.JLOptions().malloc_log)"`) == "false"
+    @test readchomp(`$exename -E "Bool(Base.JLOptions().malloc_log)" --track-allocation=none`) == "false"
 
-    @test readchomp(`$exename -E "bool(Base.JLOptions().malloc_log)" --track-allocation`) == "true"
-    @test readchomp(`$exename -E "bool(Base.JLOptions().malloc_log)" --track-allocation=user`) == "true"
+    @test readchomp(`$exename -E "Bool(Base.JLOptions().malloc_log)" --track-allocation`) == "true"
+    @test readchomp(`$exename -E "Bool(Base.JLOptions().malloc_log)" --track-allocation=user`) == "true"
 
     # --optimize
-    @test readchomp(`$exename -E "bool(Base.JLOptions().opt_level)"`) == "false"
-    @test readchomp(`$exename -E "bool(Base.JLOptions().opt_level)" -O`) == "true"
-    @test readchomp(`$exename -E "bool(Base.JLOptions().opt_level)" --optimize`) == "true"
+    @test readchomp(`$exename -E "Bool(Base.JLOptions().opt_level)"`) == "false"
+    @test readchomp(`$exename -E "Bool(Base.JLOptions().opt_level)" -O`) == "true"
+    @test readchomp(`$exename -E "Bool(Base.JLOptions().opt_level)" --optimize`) == "true"
 
     # --check-bounds
     let JL_OPTIONS_CHECK_BOUNDS_DEFAULT = 0,
         JL_OPTIONS_CHECK_BOUNDS_ON = 1,
         JL_OPTIONS_CHECK_BOUNDS_OFF = 2
-        @test int(readchomp(`$exename -E "int(Base.JLOptions().check_bounds)"`)) == JL_OPTIONS_CHECK_BOUNDS_DEFAULT
-        @test int(readchomp(`$exename -E "int(Base.JLOptions().check_bounds)" --check-bounds=yes`)) == JL_OPTIONS_CHECK_BOUNDS_ON
-        @test int(readchomp(`$exename -E "int(Base.JLOptions().check_bounds)" --check-bounds=no`)) == JL_OPTIONS_CHECK_BOUNDS_OFF
+        @test parse(Int,readchomp(`$exename -E "Int(Base.JLOptions().check_bounds)"`)) == JL_OPTIONS_CHECK_BOUNDS_DEFAULT
+        @test parse(Int,readchomp(`$exename -E "Int(Base.JLOptions().check_bounds)" --check-bounds=yes`)) == JL_OPTIONS_CHECK_BOUNDS_ON
+        @test parse(Int,readchomp(`$exename -E "Int(Base.JLOptions().check_bounds)" --check-bounds=no`)) == JL_OPTIONS_CHECK_BOUNDS_OFF
     end
     # check-bounds takes yes/no as argument
     @test !success(`$exename -E "exit(0)" --check-bounds=false`)
@@ -140,18 +140,18 @@ let exename = joinpath(JULIA_HOME, Base.julia_exename())
     @test !success(`$exename --depwarn=false`)
 
     # --inline
-    @test readchomp(`$exename -E "bool(Base.JLOptions().can_inline)"`) == "true"
-    @test readchomp(`$exename --inline=yes -E "bool(Base.JLOptions().can_inline)"`) == "true"
-    @test readchomp(`$exename --inline=no -E "bool(Base.JLOptions().can_inline)"`) == "false"
+    @test readchomp(`$exename -E "Bool(Base.JLOptions().can_inline)"`) == "true"
+    @test readchomp(`$exename --inline=yes -E "Bool(Base.JLOptions().can_inline)"`) == "true"
+    @test readchomp(`$exename --inline=no -E "Bool(Base.JLOptions().can_inline)"`) == "false"
     # --inline takes yes/no as arugment
     @test !success(`$exename --inline=false`)
 
     # --fast-math
     let JL_OPTIONS_FAST_MATH_DEFAULT = 0,
         JL_OPTIONS_FAST_MATH_OFF = 2
-        @test int(readchomp(`$exename -E "int(Base.JLOptions().fast_math)"`)) == JL_OPTIONS_FAST_MATH_DEFAULT
-        @test int(readchomp(`$exename --math-mode=user -E "int(Base.JLOptions().fast_math)"`)) == JL_OPTIONS_FAST_MATH_DEFAULT
-        @test int(readchomp(`$exename --math-mode=ieee -E "int(Base.JLOptions().fast_math)"`)) == JL_OPTIONS_FAST_MATH_OFF
+        @test parse(Int,readchomp(`$exename -E "Int(Base.JLOptions().fast_math)"`)) == JL_OPTIONS_FAST_MATH_DEFAULT
+        @test parse(Int,readchomp(`$exename --math-mode=user -E "Int(Base.JLOptions().fast_math)"`)) == JL_OPTIONS_FAST_MATH_DEFAULT
+        @test parse(Int,readchomp(`$exename --math-mode=ieee -E "Int(Base.JLOptions().fast_math)"`)) == JL_OPTIONS_FAST_MATH_OFF
     end
     # --math-mode takes ieee/user as argument
     @test !success(`$exename --math-mode=fast`)
@@ -165,11 +165,18 @@ let exename = joinpath(JULIA_HOME, Base.julia_exename())
             # write a julia source file that just prints ARGS to STDOUT and exits
             open(testfile, "w") do io
                 println(io, "println(ARGS)")
+                println(io, "exit(0)")
             end
             @test readchomp(`$exename $testfile foo -bar --baz`) ==  "UTF8String[\"foo\",\"-bar\",\"--baz\"]"
+            @test readchomp(`$exename $testfile -- foo -bar --baz`) ==  "UTF8String[\"foo\",\"-bar\",\"--baz\"]"
+            @test readchomp(`$exename -L $testfile -- foo -bar --baz`) ==  "UTF8String[\"foo\",\"-bar\",\"--baz\"]"
             @test !success(`$exename --foo $testfile`)
+            @test !success(`$exename -L $testfile -- foo -bar -- baz`)
         finally
             rm(testfile)
         end
     end
+
+    # issue #10562
+    @test readchomp(`$exename -e 'println(ARGS);' ''`) == "UTF8String[\"\"]"
 end

@@ -206,7 +206,7 @@ function squeeze(A::AbstractArray, dims::Dims)
     reshape(A, d::typeof(_sub(size(A), dims)))
 end
 
-squeeze(A::AbstractArray, dim::Integer) = squeeze(A, (int(dim),))
+squeeze(A::AbstractArray, dim::Integer) = squeeze(A, (Int(dim),))
 
 function copy!(dest::AbstractArray, src)
     i = 1
@@ -337,69 +337,27 @@ end
 
 zero{T}(x::AbstractArray{T}) = fill!(similar(x), zero(T))
 
-## iteration support for arrays as ranges ##
+## iteration support for arrays by iterating over `eachindex` in the array ##
+# Allows fast iteration by default for both LinearFast and LinearSlow arrays
 
-start(A::AbstractArray) = _start(A,linearindexing(A))
-_start(::AbstractArray,::LinearFast) = 1
-next(a::AbstractArray,i) = (a[i],i+1)
-done(a::AbstractArray,i) = (i > length(a))
+# While the definitions for LinearFast are all simple enough to inline on their
+# own, LinearSlow's CartesianRange is more complicated and requires explicit
+# inlining. The real @inline macro is not available this early in the bootstrap,
+# so this internal macro splices the meta Expr directly into the function body.
+macro _inline_meta()
+    Expr(:meta, :inline)
+end
+start(A::AbstractArray) = (@_inline_meta(); itr = eachindex(A); (itr, start(itr)))
+next(A::AbstractArray,i) = (@_inline_meta(); (idx, s) = next(i[1], i[2]); (A[idx], (i[1], s)))
+done(A::AbstractArray,i) = done(i[1], i[2])
+
+# eachindex iterates over all indices. LinearSlow definitions are later.
+eachindex(A::AbstractArray) = (@_inline_meta; eachindex(linearindexing(A), A))
+eachindex(::LinearFast, A::AbstractArray) = 1:length(A)
+
 isempty(a::AbstractArray) = (length(a) == 0)
 
 ## Conversions ##
-
-for (f,t) in ((:char,   Char),
-              (:int,    Int),
-              (:int8,   Int8),
-              (:int16,  Int16),
-              (:int32,  Int32),
-              (:int64,  Int64),
-              (:int128, Int128),
-              (:uint,   UInt),
-              (:uint8,  UInt8),
-              (:uint16, UInt16),
-              (:uint32, UInt32),
-              (:uint64, UInt64),
-              (:uint128,UInt128))
-    @eval begin
-        ($f)(x::AbstractArray{$t}) = x
-        ($f)(x::AbstractArray{$t}) = x
-
-        function ($f)(x::AbstractArray)
-            y = similar(x,$t)
-            i = 1
-            for e in x
-                y[i] = ($f)(e)
-                i += 1
-            end
-            y
-        end
-    end
-end
-
-for (f,t) in ((:integer, Integer),
-              (:unsigned, Unsigned))
-    @eval begin
-        ($f){T<:$t}(x::AbstractArray{T}) = x
-        ($f){T<:$t}(x::AbstractArray{T}) = x
-
-        function ($f)(x::AbstractArray)
-            y = similar(x,typeof(($f)(one(eltype(x)))))
-            i = 1
-            for e in x
-                y[i] = ($f)(e)
-                i += 1
-            end
-            y
-        end
-    end
-end
-
-big{T<:FloatingPoint,N}(x::AbstractArray{T,N}) = convert(AbstractArray{BigFloat,N}, x)
-big{T<:FloatingPoint,N}(x::AbstractArray{Complex{T},N}) = convert(AbstractArray{Complex{BigFloat},N}, x)
-big{T<:Integer,N}(x::AbstractArray{T,N}) = convert(AbstractArray{BigInt,N}, x)
-
-bool(x::AbstractArray{Bool}) = x
-bool(x::AbstractArray) = copy!(similar(x,Bool), x)
 
 convert{T,N  }(::Type{AbstractArray{T,N}}, A::AbstractArray{T,N}) = A
 convert{T,S,N}(::Type{AbstractArray{T,N}}, A::AbstractArray{S,N}) = copy!(similar(A,T), A)
@@ -407,13 +365,9 @@ convert{T,S,N}(::Type{AbstractArray{T  }}, A::AbstractArray{S,N}) = convert(Abst
 
 convert{T,N}(::Type{Array}, A::AbstractArray{T,N}) = convert(Array{T,N}, A)
 
-for (f,T) in ((:float16,    Float16),
-              (:float32,    Float32),
-              (:float64,    Float64),
-              (:complex64,  Complex64),
-              (:complex128, Complex128))
-    @eval ($f){S,N}(x::AbstractArray{S,N}) = convert(AbstractArray{$T,N}, x)
-end
+big{T<:FloatingPoint,N}(x::AbstractArray{T,N}) = convert(AbstractArray{BigFloat,N}, x)
+big{T<:FloatingPoint,N}(x::AbstractArray{Complex{T},N}) = convert(AbstractArray{Complex{BigFloat},N}, x)
+big{T<:Integer,N}(x::AbstractArray{T,N}) = convert(AbstractArray{BigInt,N}, x)
 
 float{T<:FloatingPoint}(x::AbstractArray{T}) = x
 complex{T<:Complex}(x::AbstractArray{T}) = x
@@ -434,17 +388,20 @@ end
 
 full(x::AbstractArray) = x
 
+map(::Type{Integer},  a::Array) = map!(Integer, similar(a,typeof(Integer(one(eltype(a))))), a)
+map(::Type{Signed},   a::Array) = map!(Signed, similar(a,typeof(Signed(one(eltype(a))))), a)
+map(::Type{Unsigned}, a::Array) = map!(Unsigned, similar(a,typeof(Unsigned(one(eltype(a))))), a)
+
 ## range conversions ##
 
-for fn in _numeric_conversion_func_names
+map{T<:Real}(::Type{T}, r::StepRange) = T(r.start):T(r.step):T(last(r))
+map{T<:Real}(::Type{T}, r::UnitRange) = T(r.start):T(last(r))
+map{T<:FloatingPoint}(::Type{T}, r::FloatRange) = FloatRange(T(r.start), T(r.step), r.len, T(r.divisor))
+
+for fn in (:float,:big)
     @eval begin
         $fn(r::StepRange) = $fn(r.start):$fn(r.step):$fn(last(r))
         $fn(r::UnitRange) = $fn(r.start):$fn(last(r))
-    end
-end
-
-for fn in (:float,:float16,:float32,:float64,:big)
-    @eval begin
         $fn(r::FloatRange) = FloatRange($fn(r.start), $fn(r.step), r.len, $fn(r.divisor))
     end
 end
@@ -502,7 +459,7 @@ function flipdim(A::AbstractArray, d::Integer)
     B = similar(A)
     nnd = 0
     for i = 1:nd
-        nnd += int(size(A,i)==1 || i==d)
+        nnd += Int(size(A,i)==1 || i==d)
     end
     if nnd==nd
         # flip along the only non-singleton dimension
@@ -518,10 +475,7 @@ function flipdim(A::AbstractArray, d::Integer)
     return B
 end
 
-flipud(A::AbstractArray) = flipdim(A, 1)
-fliplr(A::AbstractArray) = flipdim(A, 2)
-
-circshift(a::AbstractArray, shiftamt::Real) = circshift(a, [integer(shiftamt)])
+circshift(a::AbstractArray, shiftamt::Real) = circshift(a, [Integer(shiftamt)])
 function circshift{T,N}(a::AbstractArray{T,N}, shiftamts)
     I = ()
     for i=1:N
@@ -1031,24 +985,24 @@ function repmat(a::AbstractVector, m::Int)
 end
 
 sub2ind(dims) = 1
-sub2ind(dims, i::Integer) = int(i)
-sub2ind(dims, i::Integer, j::Integer) = sub2ind(dims, int(i), int(j))
+sub2ind(dims, i::Integer) = Int(i)
+sub2ind(dims, i::Integer, j::Integer) = sub2ind(dims, Int(i), Int(j))
 sub2ind(dims, i::Int, j::Int) = (j-1)*dims[1] + i
-sub2ind(dims, i0::Integer, i1::Integer, i2::Integer) = sub2ind(dims, int(i0),int(i1),int(i2))
+sub2ind(dims, i0::Integer, i1::Integer, i2::Integer) = sub2ind(dims, Int(i0),Int(i1),Int(i2))
 sub2ind(dims, i0::Int, i1::Int, i2::Int) =
     i0 + dims[1]*((i1-1) + dims[2]*(i2-1))
 sub2ind(dims, i0::Integer, i1::Integer, i2::Integer, i3::Integer) =
-    sub2ind(dims, int(i0),int(i1),int(i2),int(i3))
+    sub2ind(dims, Int(i0),Int(i1),Int(i2),Int(i3))
 sub2ind(dims, i0::Int, i1::Int, i2::Int, i3::Int) =
     i0 + dims[1]*((i1-1) + dims[2]*((i2-1) + dims[3]*(i3-1)))
 
 function sub2ind(dims, I::Integer...)
     ndims = length(dims)
-    index = int(I[1])
+    index = Int(I[1])
     stride = 1
     for k=2:ndims
         stride = stride * dims[k-1]
-        index += (int(I[k])-1) * stride
+        index += (Int(I[k])-1) * stride
     end
     return index
 end
@@ -1084,7 +1038,7 @@ function ind2sub(dims::(Integer,Integer...), ind::Int)
     return tuple(ind, sub...)
 end
 
-ind2sub(dims::(Integer...), ind::Integer) = ind2sub(dims, int(ind))
+ind2sub(dims::(Integer...), ind::Integer) = ind2sub(dims, Int(ind))
 ind2sub(dims::(), ind::Integer) = ind==1 ? () : throw(BoundsError())
 ind2sub(dims::(Integer,), ind::Int) = (ind,)
 ind2sub(dims::(Integer,Integer), ind::Int) =
@@ -1310,7 +1264,7 @@ end
 
 
 # using promote_type
-function promote_to!{T}(f, offs, dest::AbstractArray{T}, A::AbstractArray)
+function promote_to!{T,F}(f::F, offs, dest::AbstractArray{T}, A::AbstractArray)
     # map to dest array, checking the type of each result. if a result does not
     # match, do a type promotion and re-dispatch.
     @inbounds for i = offs:length(A)
@@ -1341,15 +1295,15 @@ function map_promote(f, A::AbstractArray)
 end
 
 ## 1 argument
-map!(f, A::AbstractArray) = map!(f, A, A)
-function map!(f, dest::AbstractArray, A::AbstractArray)
+map!{F}(f::F, A::AbstractArray) = map!(f, A, A)
+function map!{F}(f::F, dest::AbstractArray, A::AbstractArray)
     for i = 1:length(A)
         dest[i] = f(A[i])
     end
     return dest
 end
 
-function map_to!{T}(f, offs, dest::AbstractArray{T}, A::AbstractArray)
+function map_to!{T,F}(f::F, offs, dest::AbstractArray{T}, A::AbstractArray)
     # map to dest array, checking the type of each result. if a result does not
     # match, widen the result type and re-dispatch.
     @inbounds for i = offs:length(A)
@@ -1369,7 +1323,9 @@ function map_to!{T}(f, offs, dest::AbstractArray{T}, A::AbstractArray)
 end
 
 function map(f, A::AbstractArray)
-    if isempty(A); return similar(A); end
+    if isempty(A)
+        return isa(f,Type) ? similar(A,f) : similar(A)
+    end
     first = f(A[1])
     dest = similar(A, typeof(first))
     dest[1] = first
@@ -1377,14 +1333,14 @@ function map(f, A::AbstractArray)
 end
 
 ## 2 argument
-function map!(f, dest::AbstractArray, A::AbstractArray, B::AbstractArray)
+function map!{F}(f::F, dest::AbstractArray, A::AbstractArray, B::AbstractArray)
     for i = 1:length(A)
         dest[i] = f(A[i], B[i])
     end
     return dest
 end
 
-function map_to!{T}(f, offs, dest::AbstractArray{T}, A::AbstractArray, B::AbstractArray)
+function map_to!{T,F}(f::F, offs, dest::AbstractArray{T}, A::AbstractArray, B::AbstractArray)
     @inbounds for i = offs:length(A)
         el = f(A[i], B[i])
         S = typeof(el)
@@ -1412,7 +1368,7 @@ function map(f, A::AbstractArray, B::AbstractArray)
 end
 
 ## N argument
-function map!(f, dest::AbstractArray, As::AbstractArray...)
+function map!{F}(f::F, dest::AbstractArray, As::AbstractArray...)
     n = length(As[1])
     i = 1
     ith = a->a[i]
@@ -1422,7 +1378,7 @@ function map!(f, dest::AbstractArray, As::AbstractArray...)
     return dest
 end
 
-function map_to!{T}(f, offs, dest::AbstractArray{T}, As::AbstractArray...)
+function map_to!{T,F}(f::F, offs, dest::AbstractArray{T}, As::AbstractArray...)
     local i
     ith = a->a[i]
     @inbounds for i = offs:length(As[1])
@@ -1457,43 +1413,3 @@ push!(A, a, b) = push!(push!(A, a), b)
 push!(A, a, b, c...) = push!(push!(A, a, b), c...)
 unshift!(A, a, b) = unshift!(unshift!(A, b), a)
 unshift!(A, a, b, c...) = unshift!(unshift!(A, c...), a, b)
-
-# Fill S (resized as needed) with a random subsequence of A, where
-# each element of A is included in S with independent probability p.
-# (Note that this is different from the problem of finding a random
-#  size-m subset of A where m is fixed!)
-function randsubseq!(S::AbstractArray, A::AbstractArray, p::Real)
-    0 <= p <= 1 || throw(ArgumentError("probability $p not in [0,1]"))
-    n = length(A)
-    p == 1 && return copy!(resize!(S, n), A)
-    empty!(S)
-    p == 0 && return S
-    nexpected = p * length(A)
-    sizehint!(S, round(Int,nexpected + 5*sqrt(nexpected)))
-    if p > 0.15 # empirical threshold for trivial O(n) algorithm to be better
-        for i = 1:n
-            rand() <= p && push!(S, A[i])
-        end
-    else
-        # Skip through A, in order, from each element i to the next element i+s
-        # included in S. The probability that the next included element is
-        # s==k (k > 0) is (1-p)^(k-1) * p, and hence the probability (CDF) that
-        # s is in {1,...,k} is 1-(1-p)^k = F(k).   Thus, we can draw the skip s
-        # from this probability distribution via the discrete inverse-transform
-        # method: s = ceil(F^{-1}(u)) where u = rand(), which is simply
-        # s = ceil(log(rand()) / log1p(-p)).
-        L = 1 / log1p(-p)
-        i = 0
-        while true
-            s = log(rand()) * L # note that rand() < 1, so s > 0
-            s >= n - i && return S # compare before ceil to avoid overflow
-            push!(S, A[i += ceil(Int,s)])
-        end
-        # [This algorithm is similar in spirit to, but much simpler than,
-        #  the one by Vitter for a related problem in "Faster methods for
-        #  random sampling," Comm. ACM Magazine 7, 703-718 (1984).]
-    end
-    return S
-end
-
-randsubseq{T}(A::AbstractArray{T}, p::Real) = randsubseq!(T[], A, p)

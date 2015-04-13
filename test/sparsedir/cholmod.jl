@@ -34,10 +34,10 @@ using Base.SparseMatrix.CHOLMOD
 ## rcond     9.5e-06
 
 A = CHOLMOD.Sparse(48, 48,
-            int32([0,1,2,3,6,9,12,15,18,20,25,30,34,36,39,43,47,52,58,62,67,71,77,84,90,93,95,
+            Int32[0,1,2,3,6,9,12,15,18,20,25,30,34,36,39,43,47,52,58,62,67,71,77,84,90,93,95,
                   98,103,106,110,115,119,123,130,136,142,146,150,155,161,167,174,182,189,197,
-                  207,215,224]), # zero-based column pointers
-            int32([0,1,2,1,2,3,0,2,4,0,1,5,0,4,6,1,3,7,2,8,1,3,7,8,9,0,4,6,8,10,5,6,7,11,6,12,
+                  207,215,224], # zero-based column pointers
+            Int32[0,1,2,1,2,3,0,2,4,0,1,5,0,4,6,1,3,7,2,8,1,3,7,8,9,0,4,6,8,10,5,6,7,11,6,12,
                   7,11,13,8,10,13,14,9,13,14,15,8,10,12,14,16,7,11,12,13,16,17,0,12,16,18,1,
                   5,13,15,19,2,4,14,20,3,13,15,19,20,21,2,4,12,16,18,20,22,1,5,17,18,19,23,0,
                   5,24,1,25,2,3,26,2,3,25,26,27,4,24,28,0,5,24,29,6,11,24,28,30,7,25,27,31,8,
@@ -45,7 +45,7 @@ A = CHOLMOD.Sparse(48, 48,
                   13,31,35,37,14,15,32,34,38,14,15,33,37,38,39,16,32,34,36,38,40,12,17,31,35,
                   36,37,41,12,16,17,18,23,36,40,42,13,14,15,19,37,39,43,13,14,15,20,21,38,43,
                   44,13,14,15,20,21,37,39,43,44,45,12,16,17,22,36,40,42,46,12,16,17,18,23,41,
-                  42,46,47]),
+                  42,46,47],
                  [2.83226851852e6,1.63544753086e6,1.72436728395e6,-2.0e6,-2.08333333333e6,
                   1.00333333333e9,1.0e6, -2.77777777778e6,1.0675e9,2.08333333333e6,
                   5.55555555555e6,1.53533333333e9,-3333.33333333,-1.0e6,2.83226851852e6,
@@ -107,13 +107,13 @@ x = chma\B
 
 #lp_afiro example
 afiro = CHOLMOD.Sparse(27, 51,
-            int32([0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,23,25,27,29,33,37,
-                      41,45,47,49,51,53,55,57,59,63,65,67,69,71,75,79,83,87,89,91,93,95,97,
-                      99,101,102]),
-            int32([2,3,6,7,8,9,12,13,16,17,18,19,20,21,22,23,24,25,26,0,1,2,23,0,3,0,21,
-                      1,25,4,5,6,24,4,5,7,24,4,5,8,24,4,5,9,24,6,20,7,20,8,20,9,20,3,4,4,22,
-                      5,26,10,11,12,21,10,13,10,23,10,20,11,25,14,15,16,22,14,15,17,22,14,
-                      15,18,22,14,15,19,22,16,20,17,20,18,20,19,20,13,15,15,24,14,26,15]),
+            Int32[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,23,25,27,29,33,37,
+                  41,45,47,49,51,53,55,57,59,63,65,67,69,71,75,79,83,87,89,91,93,95,97,
+                  99,101,102],
+            Int32[2,3,6,7,8,9,12,13,16,17,18,19,20,21,22,23,24,25,26,0,1,2,23,0,3,0,21,
+                  1,25,4,5,6,24,4,5,7,24,4,5,8,24,4,5,9,24,6,20,7,20,8,20,9,20,3,4,4,22,
+                  5,26,10,11,12,21,10,13,10,23,10,20,11,25,14,15,16,22,14,15,17,22,14,
+                  15,18,22,14,15,19,22,16,20,17,20,18,20,19,20,13,15,15,24,14,26,15],
                      [1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,
                       -1.0,-1.06,1.0,0.301,1.0,-1.0,1.0,-1.0,1.0,1.0,-1.0,-1.06,1.0,0.301,-1.0,
                       -1.06,1.0,0.313,-1.0,-0.96,1.0,0.313,-1.0,-0.86,1.0,0.326,-1.0,2.364,-1.0,
@@ -121,7 +121,7 @@ afiro = CHOLMOD.Sparse(27, 51,
                       1.0,-1.0,1.0,-1.0,1.0,-1.0,1.0,1.0,-0.43,1.0,1.0,0.109,-0.43,1.0,1.0,0.108,
                       -0.39,1.0,1.0,0.108,-0.37,1.0,1.0,0.107,-1.0,2.191,-1.0,2.219,-1.0,2.249,
                       -1.0,2.279,1.4,-1.0,1.0,-1.0,1.0,1.0,1.0], 0)
-afiro2 = CHOLMOD.aat(afiro, Int32[0:50;], int32(1))
+afiro2 = CHOLMOD.aat(afiro, Int32[0:50;], Int32(1))
 CHOLMOD.change_stype!(afiro2, -1)
 chmaf = cholfact(afiro2)
 y = afiro'*ones(size(afiro,1))
@@ -180,7 +180,7 @@ ACSC = sprandn(10, 10, 0.3) + I
 @test ishermitian(Sparse(Hermitian(complex(ACSC), :U)))
 
 # test Sparse constructor for c_Sparse{Tv,Ti} input( and Sparse*Sparse)
-B = CHOLMOD.Sparse(SparseMatrixCSC{Float64,Int32}(sprandn(48, 48, 0.1))) # A has Int32 indeces
+B = CHOLMOD.Sparse(SparseMatrixCSC{Float64,Int32}(sprandn(48, 48, 0.1))) # A has Int32 indices
 @test_approx_eq A*B sparse(A)*sparse(B)
 
 # test Sparse constructor for c_SparseVoid (and read_sparse)
@@ -215,7 +215,7 @@ end
 @test_throws ArgumentError CHOLMOD.Sparse(convert(Ptr{CHOLMOD.C_SparseVoid}, C_NULL))
 
 ## The struct pointer must be constructed by the library constructor and then modified afterwards to checks that the method throws
-### illegal dtype (for now but should be supprted at some point)
+### illegal dtype (for now but should be supported at some point)
 p = ccall((:cholmod_l_allocate_sparse, :libcholmod), Ptr{CHOLMOD.C_SparseVoid},
     (Csize_t, Csize_t, Csize_t, Cint, Cint, Cint, Cint, Ptr{Void}),
     1, 1, 1, true, true, 0, CHOLMOD.REAL, CHOLMOD.common(CHOLMOD.SuiteSparse_long))
@@ -265,7 +265,7 @@ end
 
 # Test Dense wrappers (only Float64 supported a present)
 
-## High level interfact
+## High level interface
 for elty in (Float64, Complex{Float64})
     if elty == Float64
         A = randn(5, 5)
@@ -328,6 +328,7 @@ for elty in (Float64, Complex{Float64})
     @test_throws BoundsError A1Sparse[6, 1]
     @test_throws BoundsError A1Sparse[1, 6]
     @test sparse(A1Sparse) == A1
+    for i=1:size(A1, 1) A1[i, i] = real(A1[i, i]) end #Construct Hermitian matrix properly
     @test CHOLMOD.sparse(CHOLMOD.Sparse(Hermitian(A1, :L))) == Hermitian(A1, :L)
     @test CHOLMOD.sparse(CHOLMOD.Sparse(Hermitian(A1, :U))) == Hermitian(A1, :U)
     @test_throws ArgumentError convert(SparseMatrixCSC{elty,Int}, A1pdSparse)
@@ -338,7 +339,7 @@ for elty in (Float64, Complex{Float64})
     end
     @test copy(A1Sparse) == A1Sparse
     @test size(A1Sparse, 3) == 1
-    if elty <: Real # multiplcation only defined for real matrices in CHOLMOD
+    if elty <: Real # multiplication only defined for real matrices in CHOLMOD
         @test_approx_eq A1Sparse*A2Sparse A1*A2
         @test_throws DimensionMismatch CHOLMOD.Sparse(A1[:,1:4])*A2Sparse
         @test_approx_eq A1Sparse'A2Sparse A1'A2
@@ -357,10 +358,10 @@ for elty in (Float64, Complex{Float64})
 
     # Factor
     @test_throws ArgumentError cholfact(A1)
-    @test_throws Base.LinAlg.PosDefException cholfact(A1 + A1' - I)
-    @test_throws Base.LinAlg.PosDefException cholfact(A1 + A1', -1.0)
-    @test_throws Base.LinAlg.ArgumentError ldltfact(A1 + A1' - 2real(A1[1,1])I)
-    @test_throws Base.LinAlg.ArgumentError ldltfact(A1 + A1', -2real(A1[1,1]))
+    @test_throws Base.LinAlg.PosDefException cholfact(A1 + A1' - 2eigmax(full(A1 + A1'))I)
+    @test_throws Base.LinAlg.PosDefException cholfact(A1 + A1', -2eigmax(full(A1 + A1')))
+    @test_throws ArgumentError ldltfact(A1 + A1' - 2real(A1[1,1])I)
+    @test_throws ArgumentError ldltfact(A1 + A1', -2real(A1[1,1]))
     @test_throws ArgumentError cholfact(A1)
     @test_throws ArgumentError cholfact(A1, 1.0)
     @test_throws ArgumentError ldltfact(A1)
@@ -385,6 +386,7 @@ for elty in (Float64, Complex{Float64})
     @test_approx_eq logdet(ldltfact(A1pd)) logdet(full(A1pd))
     @test isposdef(A1pd)
     @test !isposdef(A1)
+    @test !isposdef(A1 + A1' |> t -> t - 2eigmax(full(t))*I)
     if elty <: Real
         @test CHOLMOD.issym(Sparse(A1pd, 0))
         @test CHOLMOD.Sparse(cholfact(Symmetric(A1pd, :L))) == CHOLMOD.Sparse(cholfact(A1pd))

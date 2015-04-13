@@ -19,7 +19,7 @@ end
 @test_throws ArgumentError Base.parseipv4("192.")
 
 @test ip"::1" == IPv6(1)
-@test ip"2605:2700:0:3::4713:93e3" == IPv6(parseint(UInt128,"260527000000000300000000471393e3",16))
+@test ip"2605:2700:0:3::4713:93e3" == IPv6(parse(UInt128,"260527000000000300000000471393e3",16))
 
 @test ip"2001:db8:0:0:0:0:2:1" == ip"2001:db8::2:1" == ip"2001:db8::0:2:1"
 
@@ -156,8 +156,8 @@ end
 begin
     a = UDPSocket()
     b = UDPSocket()
-    bind(a, ip"::1", uint16(port))
-    bind(b, ip"::1", uint16(port+1))
+    bind(a, ip"::1", UInt16(port))
+    bind(b, ip"::1", UInt16(port+1))
 
     tsk = @async begin
         @test begin

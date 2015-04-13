@@ -46,7 +46,7 @@ type SysFile
 end
 
 function SysFile(exename)
-    buildpath = abspath(dirname(Sys.dlpath("libjulia")))
+    buildpath = abspath(dirname(Libdl.dlpath("libjulia")))
     buildfile = joinpath(buildpath, "lib"*exename)
     buildfile0 = joinpath(buildpath, "sys0")
 
@@ -88,7 +88,7 @@ function build_executable(exename, script_file, targetdir=nothing; force=false)
     sys = SysFile(exename)
 
     if !force
-        for f in [cfile, userimgjl, "$(sys.buildfile).$(Sys.dlext)", "$(sys.buildfile).ji", exe_release.buildfile, exe_debug.buildfile]
+        for f in [cfile, userimgjl, "$(sys.buildfile).$(Libdl.dlext)", "$(sys.buildfile).ji", exe_release.buildfile, exe_debug.buildfile]
             if isfile(f)
                 println("ERROR: File '$(f)' already exists. Delete it or use --force.")
                 return 1
@@ -135,12 +135,12 @@ function build_executable(exename, script_file, targetdir=nothing; force=false)
 
     if targetdir != nothing
         # Move created files to target directory
-        for file in [exe_release.buildfile, exe_debug.buildfile, sys.buildfile*".$(Sys.dlext)", sys.buildfile*".ji"]
+        for file in [exe_release.buildfile, exe_debug.buildfile, sys.buildfile*".$(Libdl.dlext)", sys.buildfile*".ji"]
             mv(file,joinpath(targetdir, basename(file)))
         end
 
         # Copy needed shared libraries to the target directory
-        tmp = ".*\.$(Sys.dlext).*"
+        tmp = ".*\.$(Libdl.dlext).*"
         shlibs = filter(Regex(tmp),readdir(sys.buildpath))
         for shlib in shlibs
             cp(joinpath(sys.buildpath, shlib), joinpath(targetdir, shlib))
@@ -197,7 +197,7 @@ function emit_cmain(cfile, exename, relocation)
     if relocation
         sysji = joinpath("lib"*exename)
     else
-        sysji = joinpath(dirname(Sys.dlpath("libjulia")), "lib"*exename)
+        sysji = joinpath(dirname(Libdl.dlpath("libjulia")), "lib"*exename)
     end
     sysji = escape_string(sysji)
     f = open(cfile, "w")

@@ -92,6 +92,7 @@ done
 for i in share/julia/base/pcre_h.jl; do
   $SEVENZIP e -y julia-installer.exe "\$_OUTDIR/$i" -obase >> get-deps.log
 done
+sed -i 's/int32/Int32/g' base/pcre_h.jl
 # suppress "bash.exe: warning: could not find /tmp, please create!"
 mkdir -p usr/Git/tmp
 # Remove libjulia.dll if it was copied from downloaded binary
@@ -140,7 +141,7 @@ if ! [ -e $f ]; then
 fi
 echo "Extracting $f"
 $SEVENZIP x -y $f >> get-deps.log
-echo 'LLVM_CONFIG = $(JULIAHOME)/usr/bin/llvm-config' >> Make.user
+echo 'override LLVM_CONFIG = $(JULIAHOME)/usr/bin/llvm-config' >> Make.user
 
 if [ -n "$APPVEYOR" ]; then
   for i in make.exe touch.exe msys-intl-8.dll msys-iconv-2.dll; do
@@ -179,9 +180,9 @@ echo 'override LIBLAPACKNAME = $(LIBBLASNAME)' >> Make.user
 # Remaining dependencies:
 # libuv since its static lib is no longer included in the binaries
 # openlibm since we need it as a static library to work properly
-# mojibake since its headers are not in the binary download
+# utf8proc since its headers are not in the binary download
 echo 'override STAGE1_DEPS = uv' >> Make.user
-echo 'override STAGE2_DEPS = mojibake' >> Make.user
+echo 'override STAGE2_DEPS = utf8proc' >> Make.user
 echo 'override STAGE3_DEPS = ' >> Make.user
 make -C deps get-uv
 
@@ -196,13 +197,14 @@ if [ -n "$USEMSVC" ]; then
   # Since we don't have a static library for openlibm
   echo 'override UNTRUSTED_SYSTEM_LIBM = 0' >> Make.user
 
-  # Compile libuv and mojibake without -TP first, then add -TP
-  make -C deps install-uv install-mojibake
+  # Compile libuv and utf8proc without -TP first, then add -TP
+  make -C deps install-uv install-utf8proc
   cp usr/lib/uv.lib usr/lib/libuv.a
   echo 'override CC += -TP' >> Make.user
 else
   echo 'override STAGE1_DEPS += openlibm' >> Make.user
 fi
 
-make
+cat Make.user
+make VERBOSE=1
 #make debug

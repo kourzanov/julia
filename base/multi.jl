@@ -119,8 +119,7 @@ type WorkerConfig
     end
 end
 
-
-
+@enum WorkerState W_RUNNING W_TERMINATING W_TERMINATED
 type Worker
     id::Int
     r_stream::AsyncStream
@@ -131,9 +130,10 @@ type Worker
     del_msgs::Array{Any,1}
     add_msgs::Array{Any,1}
     gcflag::Bool
+    state::WorkerState
 
     Worker(id, r_stream, w_stream, manager, config) =
-        new(id, r_stream, buffer_writes(w_stream), manager, config, [], [], false)
+        new(id, r_stream, buffer_writes(w_stream), manager, config, [], [], false, W_RUNNING)
 end
 
 Worker(id, r_stream, w_stream, manager) = Worker(id, r_stream, w_stream, manager, WorkerConfig())
@@ -167,7 +167,8 @@ end
 function send_msg_(w::Worker, kind, args, now::Bool)
     #println("Sending msg $kind")
     io = w.w_stream
-    lock(io) do io
+    lock(io.lock)
+    try
         serialize(io, kind)
         for arg in args
             serialize(io, arg)
@@ -178,17 +179,21 @@ function send_msg_(w::Worker, kind, args, now::Bool)
         else
             flush(io)
         end
+    finally
+        unlock(io.lock)
     end
 end
 
 function flush_gc_msgs()
-    for w in (PGRP::ProcessGroup).workers
-        if isa(w,Worker)
-            k = w::Worker
-            if k.gcflag
-                flush_gc_msgs(k)
+    try
+        for w in (PGRP::ProcessGroup).workers
+            if isa(w,Worker) && w.gcflag && (w.state == W_RUNNING)
+                flush_gc_msgs(w)
             end
         end
+    catch e
+        bt = catch_backtrace()
+        @schedule showerror(STDERR, e, bt)
     end
 end
 
@@ -269,38 +274,36 @@ function workers()
     end
 end
 
-rmprocset = Set()
 function rmprocs(args...; waitfor = 0.0)
     # Only pid 1 can add and remove processes
     if myid() != 1
         error("only process 1 can add and remove processes")
     end
 
-    global rmprocset
-    empty!(rmprocset)
-
+    rmprocset = []
     for i in vcat(args...)
         if i == 1
             warn("rmprocs: process 1 not removed")
         else
             if haskey(map_pid_wrkr, i)
-                push!(rmprocset, i)
                 w = map_pid_wrkr[i]
+                w.state = W_TERMINATING
                 kill(w.manager, i, w.config)
+                push!(rmprocset, w)
             end
         end
     end
 
     start = time()
     while (time() - start) < waitfor
-        if length(rmprocset) == 0
+        if all(w -> w.state == W_TERMINATED, rmprocset)
             break;
         else
             sleep(0.1)
         end
     end
 
-    ((waitfor > 0) && (length(rmprocset) > 0)) ? :timed_out : :ok
+    ((waitfor > 0) && any(w -> w.state != W_TERMINATED, rmprocset)) ? :timed_out : :ok
 end
 
 
@@ -722,7 +725,7 @@ fetch_ref(rid) = wait_full(lookup_ref(rid))
 fetch(r::RemoteRef) = call_on_owner(fetch_ref, r)
 fetch(x::ANY) = x
 
-# storing a value to a Ref
+# storing a value to a RemoteRef
 function put!(rv::RemoteValue, val::ANY)
     wait_empty(rv)
     rv.result = val
@@ -772,7 +775,7 @@ function deliver_result(sock::IO, msg, oid, value)
     end
 end
 
-# notify waiters that a certain job has finished or Ref has been emptied
+# notify waiters that a certain job has finished or RemoteRef has been emptied
 notify_full (rv::RemoteValue) = notify(rv.full, work_result(rv))
 notify_empty(rv::RemoteValue) = notify(rv.empty)
 
@@ -908,6 +911,10 @@ function create_message_handler_loop(r_stream::AsyncStream, w_stream::AsyncStrea
             end # end of while
         catch e
             iderr = worker_id_from_socket(r_stream)
+            werr = worker_from_id(iderr)
+            oldstate = werr.state
+            werr.state = W_TERMINATED
+
             # If error occured talking to pid 1, commit harakiri
             if iderr == 1
                 if isopen(w_stream)
@@ -926,10 +933,7 @@ function create_message_handler_loop(r_stream::AsyncStream, w_stream::AsyncStrea
             if isopen(w_stream) close(w_stream) end
 
             if (myid() == 1)
-                global rmprocset
-                if in(iderr, rmprocset)
-                    delete!(rmprocset, iderr)
-                else
+                if oldstate != W_TERMINATING
                     println(STDERR, "Worker $iderr terminated.")
                     rethrow(e)
                 end
@@ -961,7 +965,7 @@ function start_worker(out::IO)
 
     init_worker()
     if LPROC.bind_port == 0
-        (actual_port,sock) = listenany(uint16(9009))
+        (actual_port,sock) = listenany(UInt16(9009))
         LPROC.bind_port = actual_port
     else
         sock = listen(LPROC.bind_port)
@@ -1024,9 +1028,9 @@ end
 function parse_connection_info(str)
     m = match(r"^julia_worker:(\d+)#(.*)", str)
     if m != nothing
-        (m.captures[2], parseint(Int16, m.captures[1]))
+        (m.captures[2], parse(Int16, m.captures[1]))
     else
-        ("", int16(-1))
+        ("", Int16(-1))
     end
 end
 
@@ -1036,6 +1040,15 @@ function init_worker(manager::ClusterManager=DefaultClusterManager())
     global cluster_manager
     cluster_manager = manager
     disable_threaded_libs()
+
+    # Since our pid has yet to be set, ensure no RemoteRefs have been created or addprocs() called.
+    assert(nprocs() <= 1)
+    assert(isempty(PGRP.refs))
+    assert(isempty(client_refs))
+
+    # System is started in head node mode, cleanup entries related to the same
+    empty!(PGRP.workers)
+    empty!(map_pid_wrkr)
 end
 
 
@@ -1464,18 +1477,6 @@ macro parallel(args...)
     na = length(args)
     if na==1
         loop = args[1]
-        if isa(loop,Expr) && loop.head === :comprehension
-            ex = loop.args[1]
-            loop.args[1] = esc(ex)
-            nd = length(loop.args)-1
-            ranges = map(e->esc(e.args[2]), loop.args[2:end])
-            for i=1:nd
-                var = loop.args[1+i].args[1]
-                loop.args[1+i] = :( $(esc(var)) = ($(ranges[i]))[I[$i]] )
-            end
-            return :( DArray((I::(UnitRange{Int}...))->($loop),
-                             tuple($(map(r->:(length($r)),ranges)...))) )
-        end
     elseif na==2
         reducer = args[1]
         loop = args[2]
@@ -1574,7 +1575,7 @@ function disable_nagle(sock)
     @linux_only begin
         # tcp_quickack is a linux only option
         if ccall(:jl_tcp_quickack, Cint, (Ptr{Void}, Cint), sock.handle, 1) < 0
-            warn_once("Parallel networking unoptimized ( Error enabling TCP_QUICKACK : ", strerror(errno()), " )")
+            warn_once("Parallel networking unoptimized ( Error enabling TCP_QUICKACK : ", Libc.strerror(Libc.errno()), " )")
         end
     end
 end

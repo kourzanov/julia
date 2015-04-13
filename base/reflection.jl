@@ -4,9 +4,11 @@ module_parent(m::Module) = ccall(:jl_module_parent, Any, (Any,), m)::Module
 current_module() = ccall(:jl_get_current_module, Any, ())::Module
 
 function fullname(m::Module)
-    if m === Main
-        return ()
-    elseif module_parent(m) === m
+    m === Main && return ()
+    m === Base && return (:Base,)  # issue #10653
+    mn = module_name(m)
+    mp = module_parent(m)
+    if mp === m
         # not Main, but is its own parent, means a prior Main module
         n = ()
         this = Main
@@ -15,13 +17,12 @@ function fullname(m::Module)
                 n = tuple(n..., :LastMain)
                 this = this.LastMain
             else
-                error("no reference to module ", module_name(m))
+                error("no reference to module ", mn)
             end
         end
         return n
-    else
-        return tuple(fullname(module_parent(m))..., module_name(m))
     end
+    return tuple(fullname(mp)..., mn)
 end
 
 names(m::Module, all::Bool, imported::Bool) = ccall(:jl_module_names, Array{Symbol,1}, (Any,Int32,Int32), m, all, imported)
@@ -155,17 +156,30 @@ done(mt::MethodTable, i::()) = true
 uncompressed_ast(l::LambdaStaticData) =
     isa(l.ast,Expr) ? l.ast : ccall(:jl_uncompress_ast, Any, (Any,Any), l, l.ast)
 
-function _dump_function(f, t::ANY, native, wrapper)
-    str = ccall(:jl_dump_function, Any, (Any,Any,Bool,Bool), f, t, native, wrapper)::ByteString
-    if str == ""
+# Printing code representations in IR and assembly
+function _dump_function(f, t::ANY, native, wrapper, strip_ir_metadata)
+    llvmf = ccall(:jl_get_llvmf, Ptr{Void}, (Any, Any, Bool), f, t, wrapper)
+
+    if llvmf == C_NULL
         error("no method found for the specified argument types")
     end
-    str
+
+    if (native)
+        str = ccall(:jl_dump_function_asm, Any, (Ptr{Void},), llvmf)::ByteString
+    else
+        str = ccall(:jl_dump_function_ir, Any,
+                        (Ptr{Void}, Bool), llvmf, strip_ir_metadata)::ByteString
+    end
+
+    return str
 end
 
-code_llvm(io::IO, f::Function, types::(Type...)) = print(io, _dump_function(f, types, false, false))
+code_llvm(io::IO, f::Function, types::(Type...), strip_ir_metadata = true) =
+    print(io, _dump_function(f, types, false, false, strip_ir_metadata))
 code_llvm(f::Function, types::(Type...)) = code_llvm(STDOUT, f, types)
-code_native(io::IO, f::Function, types::(Type...)) = print(io, _dump_function(f, types, true, false))
+code_llvm_raw(f::Function, types::(Type...)) = code_llvm(STDOUT, f, types, false)
+
+code_native(io::IO, f::Function, types::(Type...)) = print(io, _dump_function(f, types, true, false, false))
 code_native(f::Function, types::(Type...)) = code_native(STDOUT, f, types)
 
 function which(f::ANY, t::(Type...))
@@ -215,3 +229,8 @@ function function_module(f, types)
     end
     m[1].func.code.module
 end
+
+#
+
+type_alignment(x::DataType) = ccall(:jl_get_alignment,Csize_t,(Any,),x)
+field_offset(x::DataType,idx) = ccall(:jl_get_field_offset,Csize_t,(Any,Int32),x,idx)

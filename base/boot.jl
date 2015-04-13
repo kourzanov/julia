@@ -73,7 +73,8 @@
 #    contents::T
 #end
 
-#bitstype {32|64} Ptr{T}
+#abstract Ref{T}
+#bitstype {32|64} Ptr{T} <: Ref{T}
 
 # types for the front end
 
@@ -122,20 +123,21 @@ export
     AbstractArray, DenseArray,
     # special objects
     Box, Function, IntrinsicFunction, LambdaStaticData, Method, MethodTable,
-    Module, Symbol, Task, Array, GenSym,
+    Module, Symbol, Task, Array, WeakRef,
     # numeric types
-    Bool, FloatingPoint, Float16, Float32, Float64, Number, Integer, Int, Int8, Int16,
-    Int32, Int64, Int128, Ptr, Real, Signed, UInt, UInt8, UInt16, UInt32,
-    UInt64, UInt128, Unsigned,
+    Number, Real, Integer, Bool, Ref, Ptr,
+    FloatingPoint, Float16, Float32, Float64,
+    Signed, Int, Int8, Int16, Int32, Int64, Int128,
+    Unsigned, UInt, UInt8, UInt16, UInt32, UInt64, UInt128,
     # string types
     Char, ASCIIString, ByteString, DirectIndexString, AbstractString, UTF8String,
     # errors
     BoundsError, DivideError, DomainError, Exception,
-    InexactError, InterruptException, MemoryError, OverflowError,
+    InexactError, InterruptException, OutOfMemoryError, OverflowError,
     StackOverflowError, UndefRefError, UndefVarError,
     # AST representation
     Expr, GotoNode, LabelNode, LineNumberNode, QuoteNode, SymbolNode, TopNode,
-    GetfieldNode, NewvarNode,
+    GlobalRef, NewvarNode, GenSym,
     # object model functions
     fieldtype, getfield, setfield!, yieldto, throw, tuple, is, ===, isdefined,
     # arraylen, arrayref, arrayset, arraysize, tuplelen, tupleref,
@@ -213,7 +215,7 @@ immutable DivideError        <: Exception end
 immutable DomainError        <: Exception end
 immutable OverflowError      <: Exception end
 immutable InexactError       <: Exception end
-immutable MemoryError        <: Exception end
+immutable OutOfMemoryError   <: Exception end
 immutable StackOverflowError <: Exception end
 immutable UndefRefError      <: Exception end
 immutable UndefVarError      <: Exception
@@ -230,10 +232,9 @@ type SymbolNode
     SymbolNode(name::Symbol, t::ANY) = new(name, t)
 end
 
-type GetfieldNode
-    value
+immutable GlobalRef
+    mod::Module
     name::Symbol
-    typ
 end
 
 immutable ASCIIString <: DirectIndexString
@@ -249,6 +250,12 @@ typealias ByteString Union(ASCIIString,UTF8String)
 include(fname::ByteString) = ccall(:jl_load_, Any, (Any,), fname)
 
 # constructors for built-in types
+
+type WeakRef
+    value
+    WeakRef() = WeakRef(nothing)
+    WeakRef(v::ANY) = ccall(:jl_gc_new_weakref, Any, (Any,), v)::WeakRef
+end
 
 TypeVar(n::Symbol) =
     ccall(:jl_new_typevar, Any, (Any, Any, Any), n, Union(), Any)::TypeVar

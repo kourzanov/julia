@@ -33,29 +33,31 @@ Basic functions
 
 .. function:: eachindex(A)
 
-   Creates an iterable object for visiting each multi-dimensional index of the AbstractArray ``A``.  Example for a 2-d array::
+   Creates an iterable object for visiting each index of an AbstractArray ``A`` in an efficient manner. For array types that have opted into fast linear indexing (like ``Array``), this is simply the range ``1:length(A)``. For other array types, this returns a specialized Cartesian range to efficiently index into the array with indices specified for every dimension. Example for a sparse 2-d array::
 
-    julia> A = rand(2,3)
-    2x3 Array{Float64,2}:
-     0.960084  0.629326  0.625155
-     0.432588  0.955903  0.991614
+    julia> A = sprand(2, 3, 0.5)
+    2x3 sparse matrix with 4 Float64 entries:
+        [1, 1]  =  0.598888
+        [1, 2]  =  0.0230247
+        [1, 3]  =  0.486499
+        [2, 3]  =  0.809041
 
     julia> for iter in eachindex(A)
-	       @show iter.I_1, iter.I_2
-	       @show A[iter]
-	   end
+               @show iter.I_1, iter.I_2
+               @show A[iter]
+           end
     (iter.I_1,iter.I_2) = (1,1)
-    A[iter] = 0.9600836263003063
+    A[iter] = 0.5988881393454597
     (iter.I_1,iter.I_2) = (2,1)
-    A[iter] = 0.4325878255452178
+    A[iter] = 0.0
     (iter.I_1,iter.I_2) = (1,2)
-    A[iter] = 0.6293256402775211
+    A[iter] = 0.02302469881746183
     (iter.I_1,iter.I_2) = (2,2)
-    A[iter] = 0.9559027084099654
+    A[iter] = 0.0
     (iter.I_1,iter.I_2) = (1,3)
-    A[iter] = 0.6251548453735303
+    A[iter] = 0.4864987874354343
     (iter.I_1,iter.I_2) = (2,3)
-    A[iter] = 0.9916142534546522
+    A[iter] = 0.8090413606455655
 
 .. function:: countnz(A)
 
@@ -151,7 +153,7 @@ Constructors
 
 .. function:: reinterpret(type, A)
 
-   Change the type-interpretation of a block of memory. For example, ``reinterpret(Float32, uint32(7))`` interprets the 4 bytes corresponding to ``uint32(7)`` as a ``Float32``. For arrays, this constructs an array with the same binary data as the given array, but with the specified element type.
+   Change the type-interpretation of a block of memory. For example, ``reinterpret(Float32, UInt32(7))`` interprets the 4 bytes corresponding to ``UInt32(7)`` as a ``Float32``. For arrays, this constructs an array with the same binary data as the given array, but with the specified element type.
 
 .. function:: eye(n)
 
@@ -167,12 +169,11 @@ Constructors
 
 .. function:: linspace(start, stop, n=100)
 
-   Construct a vector of ``n`` linearly-spaced elements from ``start`` to ``stop``.
-   See also: :func:`linrange` that constructs a range object.
+   Construct a range of ``n`` linearly spaced elements from ``start`` to ``stop``.
 
 .. function:: logspace(start, stop, n=50)
 
-   Construct a vector of ``n`` logarithmically-spaced numbers from ``10^start`` to ``10^stop``.
+   Construct a vector of ``n`` logarithmically spaced numbers from ``10^start`` to ``10^stop``.
 
 Mathematical operators and functions
 ------------------------------------
@@ -266,14 +267,6 @@ Indexing, Assignment, and Concatenation
 .. function:: flipdim(A, d)
 
    Reverse ``A`` in dimension ``d``.
-
-.. function:: flipud(A)
-
-   Equivalent to ``flipdim(A,1)``.
-
-.. function:: fliplr(A)
-
-   Equivalent to ``flipdim(A,2)``.
 
 .. function:: circshift(A,shifts)
 
@@ -531,9 +524,10 @@ Combinatorics
 
    In-place version of :func:`nthperm`.
 
-.. function:: randperm(n)
+.. function:: randperm([rng,] n)
 
-   Construct a random permutation of the given length.
+   Construct a random permutation of length ``n``. The optional ``rng`` argument
+   specifies a random number generator, see :ref:`Random Numbers <random-numbers>`.
 
 .. function:: invperm(v)
 
@@ -555,15 +549,19 @@ Combinatorics
 
    Like permute!, but the inverse of the given permutation is applied.
 
-.. function:: randcycle(n)
+.. function:: randcycle([rng,] n)
 
-   Construct a random cyclic permutation of the given length.
+   Construct a random cyclic permutation of length ``n``. The optional ``rng``
+   argument specifies a random number generator, see :ref:`Random Numbers
+   <random-numbers>`.
 
-.. function:: shuffle(v)
+.. function:: shuffle([rng,] v)
 
-   Return a randomly permuted copy of ``v``.
+   Return a randomly permuted copy of ``v``. The optional ``rng`` argument
+   specifies a random number generator, see :ref:`Random Numbers
+   <random-numbers>`.
 
-.. function:: shuffle!(v)
+.. function:: shuffle!([rng,] v)
 
    In-place version of :func:`shuffle`.
 
@@ -710,7 +708,7 @@ Sparse matrices support much of the same set of operations as dense matrices. Th
 
 .. function:: spzeros(m,n)
 
-   Create an empty sparse matrix of size ``m x n``.
+   Create a sparse matrix of size ``m x n``. This sparse matrix will not contain any nonzero values. No storage will be allocated for nonzero values during construction.
 
 .. function:: spones(S)
 
@@ -724,9 +722,9 @@ Sparse matrices support much of the same set of operations as dense matrices. Th
 
    Construct a sparse diagonal matrix. ``B`` is a tuple of vectors containing the diagonals and ``d`` is a tuple containing the positions of the diagonals. In the case the input contains only one diagonaly, ``B`` can be a vector (instead of a tuple) and ``d`` can be the diagonal position (instead of a tuple), defaulting to 0 (diagonal). Optionally, ``m`` and ``n`` specify the size of the resulting sparse matrix.
 
-.. function:: sprand(m,n,p[,rng])
+.. function:: sprand([rng,] m,n,p [,rfn])
 
-   Create a random ``m`` by ``n`` sparse matrix, in which the probability of any element being nonzero is independently given by ``p`` (and hence the mean density of nonzeros is also exactly ``p``). Nonzero values are sampled from the distribution specified by ``rng``. The uniform distribution is used in case ``rng`` is not specified.
+   Create a random ``m`` by ``n`` sparse matrix, in which the probability of any element being nonzero is independently given by ``p`` (and hence the mean density of nonzeros is also exactly ``p``). Nonzero values are sampled from the distribution specified by ``rfn``. The uniform distribution is used in case ``rfn`` is not specified. The optional ``rng`` argument specifies a random number generator, see :ref:`Random Numbers <random-numbers>`.
 
 .. function:: sprandn(m,n,p)
 

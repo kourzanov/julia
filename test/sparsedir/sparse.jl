@@ -178,12 +178,46 @@ b = randn(3)
 @test scale(0.5, dA) == scale!(0.5, copy(sA))
 
 # reductions
-@test sum(se33)[1] == 3.0
-@test sum(se33, 1) == [1.0 1.0 1.0]
-@test sum(se33, 2) == [1.0 1.0 1.0]'
-@test prod(se33)[1] == 0.0
-@test prod(se33, 1) == [0.0 0.0 0.0]
-@test prod(se33, 2) == [0.0 0.0 0.0]'
+pA = sparse(rand(3, 7))
+
+for arr in (se33, sA, pA)
+    for f in (sum, prod, minimum, maximum, var)
+        farr = full(arr)
+        @test_approx_eq f(arr) f(farr)
+        @test_approx_eq f(arr, 1) f(farr, 1)
+        @test_approx_eq f(arr, 2) f(farr, 2)
+        @test_approx_eq f(arr, (1, 2)) [f(farr)]
+        @test isequal(f(arr, 3), f(farr, 3))
+    end
+end
+
+for f in (sum, prod, minimum, maximum)
+    # Test with a map function that maps to non-zero
+    for arr in (se33, sA, pA)
+        @test_approx_eq f(x->x+1, arr) f(arr+1)
+    end
+
+    # case where f(0) would throw
+    @test_approx_eq f(x->sqrt(x-1), pA+1) f(sqrt(pA))
+    # these actually throw due to #10533
+    # @test_approx_eq f(x->sqrt(x-1), pA+1, 1) f(sqrt(pA), 1)
+    # @test_approx_eq f(x->sqrt(x-1), pA+1, 2) f(sqrt(pA), 2)
+    # @test_approx_eq f(x->sqrt(x-1), pA+1, 3) f(pA)
+end
+
+# empty cases
+@test sum(sparse(Int[])) === 0
+@test prod(sparse(Int[])) === 1
+@test_throws ArgumentError minimum(sparse(Int[]))
+@test_throws ArgumentError maximum(sparse(Int[]))
+@test var(sparse(Int[])) === NaN
+
+for f in (sum, prod, minimum, maximum, var)
+    @test isequal(f(spzeros(0, 1), 1), f(Array(Int, 0, 1), 1))
+    @test isequal(f(spzeros(0, 1), 2), f(Array(Int, 0, 1), 2))
+    @test isequal(f(spzeros(0, 1), (1, 2)), f(Array(Int, 0, 1), (1, 2)))
+    @test isequal(f(spzeros(0, 1), 3), f(Array(Int, 0, 1), 3))
+end
 
 # spdiagm
 @test full(spdiagm((ones(2), ones(2)), (0, -1), 3, 3)) ==
@@ -192,12 +226,12 @@ b = randn(3)
 # elimination tree
 ## upper triangle of the pattern test matrix from Figure 4.2 of
 ## "Direct Methods for Sparse Linear Systems" by Tim Davis, SIAM, 2006
-rowval = int32([1,2,2,3,4,5,1,4,6,1,7,2,5,8,6,9,3,4,6,8,10,3,5,7,8,10,11])
-colval = int32([1,2,3,3,4,5,6,6,6,7,7,8,8,8,9,9,10,10,10,10,10,11,11,11,11,11,11])
+rowval = Int32[1,2,2,3,4,5,1,4,6,1,7,2,5,8,6,9,3,4,6,8,10,3,5,7,8,10,11]
+colval = Int32[1,2,3,3,4,5,6,6,6,7,7,8,8,8,9,9,10,10,10,10,10,11,11,11,11,11,11]
 A = sparse(rowval, colval, ones(length(rowval)))
 P,post = Base.LinAlg.etree(A, true)
-@test P == int32([6,3,8,6,8,7,9,10,10,11,0])
-@test post == int32([2,3,5,8,1,4,6,7,9,10,11])
+@test P == Int32[6,3,8,6,8,7,9,10,10,11,0]
+@test post == Int32[2,3,5,8,1,4,6,7,9,10,11]
 
 # issue #4986, reinterpret
 sfe22 = speye(Float64, 2)
@@ -423,7 +457,7 @@ let A = speye(Int, 5), I=1:10, X=reshape([trues(10); falses(15)],5,5)
     @test A[I] == A[X] == reshape(1:10, 10, 1)
 end
 
-let S = sprand(50, 30, 0.5, x->int(rand(x)*100)), I = sprandbool(50, 30, 0.2)
+let S = sprand(50, 30, 0.5, x->round(Int,rand(x)*100)), I = sprandbool(50, 30, 0.2)
     FS = full(S)
     FI = full(I)
     @test sparse(FS[FI]) == S[I] == S[FI]
@@ -445,7 +479,7 @@ let S = sprand(50, 30, 0.5, x->int(rand(x)*100)), I = sprandbool(50, 30, 0.2)
     @test sum(S) == sumS2 + sum(1:sum(FI))
 end
 
-let S = sprand(50, 30, 0.5, x->int(rand(x)*100))
+let S = sprand(50, 30, 0.5, x->round(Int,rand(x)*100))
     N = length(S) >> 2
     I = randperm(N) .* 4
     J = randperm(N)
@@ -568,11 +602,11 @@ let M=2^14, N=2^4
     Irand = randperm(M);
     Jrand = randperm(N);
     SA = [sprand(M, N, d) for d in [1., 0.1, 0.01, 0.001, 0.0001, 0.]];
-    IA = [sort(Irand[1:int(n)]) for n in [M, M*0.1, M*0.01, M*0.001, M*0.0001, 0.]];
+    IA = [sort(Irand[1:round(Int,n)]) for n in [M, M*0.1, M*0.01, M*0.001, M*0.0001, 0.]];
     debug = false
 
     if debug
-        println("row sizes: $([int(nnz(S)/S.n) for S in SA])");
+        println("row sizes: $([round(Int,nnz(S)/S.n) for S in SA])");
         println("I sizes: $([length(I) for I in IA])");
         @printf("    S    |    I    | binary S | binary I |  linear  | best\n")
     end
@@ -595,7 +629,7 @@ let M=2^14, N=2^4
             end
 
             if debug
-                @printf(" %7d | %7d | %4.2e | %4.2e | %4.2e | %s\n", int(nnz(S)/S.n), length(I), times[1], times[2], times[3],
+                @printf(" %7d | %7d | %4.2e | %4.2e | %4.2e | %s\n", round(Int,nnz(S)/S.n), length(I), times[1], times[2], times[3],
                             (0 == best[2]) ? "binary S" : (1 == best[2]) ? "binary I" : "linear")
             end
             if res[1] != res[2]
@@ -631,7 +665,7 @@ let M = 2^14, N=2^4
     Jsorted = sort(J)
 
     SA = [sprand(M, N, d) for d in [1., 0.1, 0.01, 0.001, 0.0001, 0.]];
-    IA = [I[1:int(n)] for n in [M, M*0.1, M*0.01, M*0.001, M*0.0001, 0.]];
+    IA = [I[1:round(Int,n)] for n in [M, M*0.1, M*0.01, M*0.001, M*0.0001, 0.]];
     debug = false
     if debug
         @printf("         |         |         |        times        |        memory       |\n")
@@ -645,7 +679,7 @@ let M = 2^14, N=2^4
             gc()
             rs = @timed S[Isorted, Jsorted]
             if debug
-                @printf(" %7d | %7d | %7d | %4.2e | %4.2e | %4.2e | %4.2e |\n", int(nnz(S)/S.n), length(I), length(J), rs[2], ru[2], rs[3], ru[3])
+                @printf(" %7d | %7d | %7d | %4.2e | %4.2e | %4.2e | %4.2e |\n", round(Int,nnz(S)/S.n), length(I), length(J), rs[2], ru[2], rs[3], ru[3])
             end
         end
     end
@@ -682,3 +716,30 @@ end
 
 # issue #9917
 @test sparse([]') == reshape(sparse([]), 1, 0)
+
+for T in (Int, Float16, Float32, Float64, BigInt, BigFloat)
+    let R=rand(T[1:100;],2,2), I=rand(T[1:100;],2,2)
+        D = R + I*im
+        S = sparse(D)
+        @test R == real(S)
+        @test I == imag(S)
+        @test real(sparse(R)) == R
+        @test nnz(imag(sparse(R))) == 0
+        @test abs(S) == abs(D)
+        @test abs2(S) == abs2(D)
+    end
+end
+
+# issue #10407
+@test maximum(spzeros(5, 5)) == 0.0
+@test minimum(spzeros(5, 5)) == 0.0
+
+# issue #10411
+for (m,n) in ((2,-2),(-2,2),(-2,-2))
+    @test_throws ArgumentError spzeros(m,n)
+    @test_throws ArgumentError speye(m,n)
+    @test_throws ArgumentError sprand(m,n,0.2)
+end
+
+# promotion in spdiagm
+@test spdiagm(([1,2],[3.5],[4+5im]), (0,1,-1), 2,2) == [1 3.5; 4+5im 2]

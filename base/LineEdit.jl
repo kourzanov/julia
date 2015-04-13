@@ -662,7 +662,7 @@ write_prompt(terminal, s::ASCIIString) = write(terminal, s)
 ### Keymap Support
 
 normalize_key(key::Char) = string(key)
-normalize_key(key::Integer) = normalize_key(char(key))
+normalize_key(key::Integer) = normalize_key(Char(key))
 function normalize_key(key::AbstractString)
     '\0' in key && error("Matching \\0 not currently supported.")
     buf = IOBuffer()
@@ -856,8 +856,6 @@ function postprocess!(dict::Dict)
     # needs to be done first for every branch
     if haskey(dict, '\0')
         add_specialisations(dict, dict, 1)
-    else
-        dict['\0'] = (args...)->error("Unrecognized input")
     end
     for (k,v) in dict
         k == '\0' && continue
@@ -944,7 +942,7 @@ function keymap{D<:Dict}(keymaps::Array{D})
 end
 
 const escape_defaults = merge!(
-    AnyDict([char(i) => nothing for i=vcat(1:26, 28:31)]), # Ignore control characters by default
+    AnyDict([Char(i) => nothing for i=vcat(1:26, 28:31)]), # Ignore control characters by default
     AnyDict( # And ignore other escape sequences by default
         "\e*" => nothing,
         "\e[*" => nothing,
@@ -1573,7 +1571,17 @@ function prompt!(term, prompt, s = init_state(term, prompt))
         activate(prompt, s, term)
         while true
             map = keymap(s, prompt)
-            state = match_input(map, s)(s, keymap_data(s, prompt))
+            fcn = match_input(map, s)
+            # errors in keymaps shouldn't cause the REPL to fail, so wrap in a
+            # try/catch block
+            local state
+            try
+                state = fcn(s, keymap_data(s, prompt))
+            catch e
+                warn("Caught an exception in the keymap:")
+                warn(e)
+                state = :done
+            end
             if state == :abort
                 stop_reading(term)
                 return buffer(s), false, false

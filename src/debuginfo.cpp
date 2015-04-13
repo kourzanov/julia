@@ -352,7 +352,7 @@ public:
 #endif
             ObjectInfo tmp = {objfile, (size_t)Size
 #ifdef LLVM36
-                ,SectionAddr
+                ,(size_t)SectionAddr
 #endif
 #ifdef _OS_DARWIN_
                 ,strndup(sName.data(), sName.size())
@@ -809,7 +809,11 @@ int jl_get_llvmf_info(uint64_t fptr, uint64_t *symsize, uint64_t *slide,
     if (fit != objmap.end()) {
         *symsize = fit->second.size;
         *object = fit->second.object;
+#ifdef LLVM36
         *slide = fit->second.slide;
+#else
+        *slide = 0;
+#endif
         return 1;
     }
     return 0;

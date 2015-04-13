@@ -106,7 +106,6 @@ jl_options_t jl_options = { 0,    // version
                             0,    // malloc_log
                             0,    // opt_level
                             JL_OPTIONS_CHECK_BOUNDS_DEFAULT, // check_bounds
-                            0,    // int_literals
                             JL_OPTIONS_DUMPBITCODE_OFF, // dump_bitcode
                             1,    // depwarn
                             1,    // can_inline
@@ -127,6 +126,29 @@ static void jl_find_stack_bottom(void)
     size_t stack_size;
 #if defined(__linux__) || defined(__APPLE__) || defined(__FreeBSD__)
     struct rlimit rl;
+
+    // When using memory sanitizer, increase stack size because msan bloats stack usage
+#if defined(__has_feature)
+#if __has_feature(memory_sanitizer)
+    const rlim_t kStackSize = 32 * 1024 * 1024;   // 32MB stack
+    int result;
+
+    result = getrlimit(RLIMIT_STACK, &rl);
+    if (result == 0)
+    {
+        if (rl.rlim_cur < kStackSize)
+        {
+            rl.rlim_cur = kStackSize;
+            result = setrlimit(RLIMIT_STACK, &rl);
+            if (result != 0)
+            {
+                fprintf(stderr, "setrlimit returned result = %d\n", result);
+            }
+        }
+    }
+#endif
+#endif
+
     getrlimit(RLIMIT_STACK, &rl);
     stack_size = rl.rlim_cur;
 #else
@@ -987,7 +1009,8 @@ void _julia_init(JL_IMAGE_SEARCH rel)
 #endif
     jl_init_frontend();
     jl_init_types();
-    jl_init_tasks(jl_stack_lo, jl_stack_hi-jl_stack_lo);
+    jl_init_tasks();
+    jl_init_root_task(jl_stack_lo, jl_stack_hi-jl_stack_lo);
 
     init_stdio();
     // libuv stdio cleanup depends on jl_init_tasks() because JL_TRY is used in jl_atexit_hook()
@@ -1252,6 +1275,7 @@ void jl_get_builtin_hooks(void)
     jl_float64_type = (jl_datatype_t*)core("Float64");
     jl_floatingpoint_type = (jl_datatype_t*)core("FloatingPoint");
     jl_number_type = (jl_datatype_t*)core("Number");
+    jl_signed_type = (jl_datatype_t*)core("Signed");
 
     jl_stackovf_exception  = jl_new_struct_uninit((jl_datatype_t*)core("StackOverflowError"));
     jl_diverror_exception  = jl_new_struct_uninit((jl_datatype_t*)core("DivideError"));
@@ -1262,12 +1286,13 @@ void jl_get_builtin_hooks(void)
     jl_undefvarerror_type  = (jl_datatype_t*)core("UndefVarError");
     jl_interrupt_exception = jl_new_struct_uninit((jl_datatype_t*)core("InterruptException"));
     jl_boundserror_type    = (jl_datatype_t*)core("BoundsError");
-    jl_memory_exception    = jl_new_struct_uninit((jl_datatype_t*)core("MemoryError"));
+    jl_memory_exception    = jl_new_struct_uninit((jl_datatype_t*)core("OutOfMemoryError"));
 
     jl_ascii_string_type = (jl_datatype_t*)core("ASCIIString");
     jl_utf8_string_type = (jl_datatype_t*)core("UTF8String");
     jl_symbolnode_type = (jl_datatype_t*)core("SymbolNode");
-    jl_getfieldnode_type = (jl_datatype_t*)core("GetfieldNode");
+    jl_globalref_type = (jl_datatype_t*)core("GlobalRef");
+    jl_weakref_type = (jl_datatype_t*)core("WeakRef");
 
     jl_array_uint8_type = jl_apply_type((jl_value_t*)jl_array_type,
                                         jl_tuple2(jl_uint8_type,
@@ -1283,7 +1308,7 @@ DLLEXPORT void jl_get_system_hooks(void)
     jl_typeerror_type = (jl_datatype_t*)basemod("TypeError");
     jl_methoderror_type = (jl_datatype_t*)basemod("MethodError");
     jl_loaderror_type = (jl_datatype_t*)basemod("LoadError");
-    jl_weakref_type = (jl_datatype_t*)basemod("WeakRef");
+    jl_complex_type = (jl_datatype_t*)basemod("Complex");
 }
 
 DLLEXPORT void jl_exit_on_sigint(int on) {exit_on_sigint = on;}

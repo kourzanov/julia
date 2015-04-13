@@ -1,7 +1,6 @@
 # timing
 
-# system date in seconds
-time() = ccall(:clock_now, Float64, ())
+# time() in libc.jl
 
 # high-resolution relative time, in nanoseconds
 time_ns() = ccall(:jl_hrtime, UInt64, ())
@@ -268,3 +267,4 @@ function julia_cmd(julia=joinpath(JULIA_HOME, julia_exename()))
 end
 
 julia_exename() = ccall(:jl_is_debugbuild,Cint,())==0 ? "julia" : "julia-debug"
+

@@ -17,7 +17,7 @@ jl_module_t *jl_current_module=NULL;
 jl_module_t *jl_new_module(jl_sym_t *name)
 {
     jl_module_t *m = (jl_module_t*)allocobj(sizeof(jl_module_t));
-    m->type = (jl_value_t*)jl_module_type;
+    jl_set_typeof(m, jl_module_type);
     JL_GC_PUSH1(&m);
     assert(jl_is_symbol(name));
     m->name = name;
@@ -100,8 +100,14 @@ jl_binding_t *jl_get_binding_for_method_def(jl_module_t *m, jl_sym_t *var)
             jl_binding_t *b2 = jl_get_binding(b->owner, var);
             if (b2 == NULL)
                 jl_errorf("invalid method definition: imported function %s.%s does not exist", b->owner->name->name, var->name);
-            if (!b->imported && (b2->value==NULL || jl_is_function(b2->value)))
-                jl_errorf("error in method definition: function %s.%s must be explicitly imported to be extended", b->owner->name->name, var->name);
+            if (!b->imported && (b2->value==NULL || jl_is_function(b2->value))) {
+                if (b2->value && !jl_is_gf(b2->value)) {
+                    jl_errorf("error in method definition: %s.%s cannot be extended", b->owner->name->name, var->name);
+                }
+                else {
+                    jl_errorf("error in method definition: function %s.%s must be explicitly imported to be extended", b->owner->name->name, var->name);
+                }
+            }
             return b2;
         }
         b->owner = m;

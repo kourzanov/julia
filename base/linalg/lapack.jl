@@ -166,8 +166,8 @@ for (gebrd, gelqf, geqlf, geqrf, geqp3, geqrt, geqrt3, gerqf, getrf, elty, relty
             chkstride1(A)
             m, n  = size(A)
             k     = min(m, n)
-            d     = similar(A, $elty, k)
-            s     = similar(A, $elty, k)
+            d     = similar(A, $relty, k)
+            e     = similar(A, $relty, k)
             tauq  = similar(A, $elty, k)
             taup  = similar(A, $elty, k)
             work  = Array($elty, 1)
@@ -175,17 +175,19 @@ for (gebrd, gelqf, geqlf, geqrf, geqp3, geqrt, geqrt3, gerqf, getrf, elty, relty
             info  = Array(BlasInt, 1)
             for i in 1:2
                 ccall(($(blasfunc(gebrd)), liblapack), Void,
-                      (Ptr{BlasInt}, Ptr{BlasInt}, Ptr{$elty}, Ptr{BlasInt},
-                       Ptr{$elty}, Ptr{$elty}, Ptr{$elty}, Ptr{$elty},
-                       Ptr{$elty}, Ptr{BlasInt}, Ptr{BlasInt}),
-                      &m, &n, A, &max(1,stride(A,2)), d, s, tauq, taup, work, &lwork, info)
+                    (Ptr{BlasInt}, Ptr{BlasInt}, Ptr{$elty}, Ptr{BlasInt},
+                     Ptr{$relty}, Ptr{$relty}, Ptr{$elty}, Ptr{$elty},
+                     Ptr{$elty}, Ptr{BlasInt}, Ptr{BlasInt}),
+                     &m, &n, A, &max(1,stride(A,2)),
+                     d, e, tauq, taup,
+                     work, &lwork, info)
                 @lapackerror
                 if lwork < 0
                     lwork = blas_int(real(work[1]))
                     work = Array($elty, lwork)
                 end
             end
-            tauq, taup
+            A, d, e, tauq, taup
         end
         # SUBROUTINE DGELQF( M, N, A, LDA, TAU, WORK, LWORK, INFO )
         # *     .. Scalar Arguments ..
@@ -3140,23 +3142,23 @@ for (bdsqr, relty, elty) in
             end
 
             # Allocate
-            work = Array($elty, 4n)
+            work = Array($relty, 4n)
             info = Array(BlasInt,1)
 
             ccall(($(blasfunc(bdsqr)), liblapack), Void,
                 (Ptr{UInt8}, Ptr{BlasInt}, Ptr{BlasInt}, Ptr{BlasInt},
-                 Ptr{BlasInt}, Ptr{$elty}, Ptr{$elty}, Ptr{$elty},
+                 Ptr{BlasInt}, Ptr{$relty}, Ptr{$relty}, Ptr{$elty},
                  Ptr{BlasInt}, Ptr{$elty}, Ptr{BlasInt}, Ptr{$elty},
-                 Ptr{BlasInt}, Ptr{$elty}, Ptr{BlasInt}),
+                 Ptr{BlasInt}, Ptr{$relty}, Ptr{BlasInt}),
                 &uplo, &n, &ncvt, &nru,
                 &ncc, d, e_, Vt,
-                &ldvt, U, &ldu, C, &ldc,
-                work, info)
+                &ldvt, U, &ldu, C,
+                &ldc, work, info)
 
             @lapackerror
             d, Vt, U, C #singular values in descending order, P**T * VT, U * Q, Q**T * C
         end
-   end
+    end
 end
 
 #Defined only for real types
@@ -3185,8 +3187,8 @@ for (bdsdc, elty) in
                 #TODO turn this into an actual LAPACK call
                 #smlsiz=ilaenv(9, $elty==:Float64 ? 'dbdsqr' : 'sbdsqr', string(uplo, compq), n,n,n,n)
                 smlsiz=100 #For now, completely overkill
-                ldq = n*(11+2*smlsiz+8*int(log((n/(smlsiz+1)))/log(2)))
-                ldiq = n*(3+3*int(log(n/(smlsiz+1))/log(2)))
+                ldq = n*(11+2*smlsiz+8*round(Int,log((n/(smlsiz+1)))/log(2)))
+                ldiq = n*(3+3*round(Int,log(n/(smlsiz+1))/log(2)))
                 lwork = 6n
             elseif compq == 'I'
                 ldvt=ldu=max(1, n)
@@ -3210,7 +3212,7 @@ for (bdsdc, elty) in
             q, iq, work, iwork, info)
 
             @lapackerror
-            compq=='N' ? d : (compq=='P' ? (d, q, iq) : (u, d, vt'))
+            d, e, u, vt, q, iq
         end
     end
 end
@@ -3794,7 +3796,7 @@ for (fn, elty) in ((:dpftrf_, :Float64),
                    (:cpftrf_, :Complex64))
     @eval begin
         function pftrf!(transr::Char, uplo::Char, A::StridedVector{$elty})
-            n = int(div(sqrt(8length(A)), 2))
+            n = round(Int,div(sqrt(8length(A)), 2))
             info = Array(BlasInt, 1)
             ccall(($(blasfunc(fn)), liblapack), Void,
                 (Ptr{UInt8}, Ptr{UInt8}, Ptr{BlasInt}, Ptr{$elty},
@@ -3815,7 +3817,7 @@ for (fn, elty) in ((:dpftri_, :Float64),
                    (:cpftri_, :Complex64))
     @eval begin
         function pftri!(transr::Char, uplo::Char, A::StridedVector{$elty})
-            n = int(div(sqrt(8length(A)), 2))
+            n = round(Int,div(sqrt(8length(A)), 2))
             info = Array(BlasInt, 1)
             ccall(($(blasfunc(fn)), liblapack), Void,
                 (Ptr{UInt8}, Ptr{UInt8}, Ptr{BlasInt}, Ptr{$elty},
@@ -3837,7 +3839,7 @@ for (fn, elty) in ((:dpftrs_, :Float64),
     @eval begin
         function pftrs!(transr::Char, uplo::Char, A::StridedVector{$elty}, B::StridedVecOrMat{$elty})
             chkstride1(B)
-            n = int(div(sqrt(8length(A)), 2))
+            n = round(Int,div(sqrt(8length(A)), 2))
             if n != size(B, 1) throw(DimensionMismatch("arguments must have the same number of rows")) end
             nhrs = size(B, 2)
             ldb = max(1, stride(B, 2))
@@ -3863,7 +3865,7 @@ for (fn, elty) in ((:dtfsm_, :Float64),
         function pftrs!(transr::Char, side::Char, uplo::Char, trans::Char, diag::Char, alpha::Real, A::StridedVector{$elty}, B::StridedMatrix{$elty})
             chkstride1(B)
             m, n = size(B)
-            if int(div(sqrt(8length(A)), 2)) != m throw(DimensionMismatch()) end
+            if round(Int,div(sqrt(8length(A)), 2)) != m throw(DimensionMismatch()) end
             ldb = max(1, stride(B, 2))
             ccall(($(blasfunc(fn)), liblapack), Void,
                 (Ptr{UInt8}, Ptr{UInt8}, Ptr{UInt8}, Ptr{UInt8},
@@ -3884,7 +3886,7 @@ for (fn, elty) in ((:dtftri_, :Float64),
                    (:ctftri_, :Complex64))
     @eval begin
         function tftri!(transr::Char, uplo::Char, diag::Char, A::StridedVector{$elty})
-            n = int(div(sqrt(8length(A)), 2))
+            n = round(Int,div(sqrt(8length(A)), 2))
             info = Array(BlasInt, 1)
             ccall(($(blasfunc(fn)), liblapack), Void,
                 (Ptr{UInt8}, Ptr{UInt8}, Ptr{UInt8}, Ptr{BlasInt},
@@ -3905,7 +3907,7 @@ for (fn, elty) in ((:dtfttr_, :Float64),
                    (:ctfttr_, :Complex64))
     @eval begin
         function tfttr!(transr::Char, uplo::Char, Arf::StridedVector{$elty})
-            n = int(div(sqrt(8length(Arf)), 2))
+            n = round(Int,div(sqrt(8length(Arf)), 2))
             info = Array(BlasInt, 1)
             A = similar(Arf, $elty, n, n)
             ccall(($(blasfunc(fn)), liblapack), Void,

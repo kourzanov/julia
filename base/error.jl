@@ -19,21 +19,16 @@
 error(s::AbstractString) = throw(ErrorException(s))
 error(s...) = throw(ErrorException(string(s...)))
 
-macro unexpected()
-    :(error("unexpected branch reached"))
-end
-
 rethrow() = ccall(:jl_rethrow, Void, ())::Bottom
 rethrow(e) = ccall(:jl_rethrow_other, Void, (Any,), e)::Bottom
 backtrace() = ccall(:jl_backtrace_from_here, Array{Ptr{Void},1}, ())
 catch_backtrace() = ccall(:jl_get_backtrace, Array{Ptr{Void},1}, ())
 
+## keyword arg lowering generates calls to this ##
+kwerr(kw) = error("unrecognized keyword argument \"", kw, "\"")
+
 ## system error handling ##
 
-errno() = ccall(:jl_errno, Cint, ())
-errno(e::Integer) = ccall(:jl_set_errno, Void, (Cint,), e)
-strerror(e::Integer) = bytestring(ccall(:strerror, Ptr{UInt8}, (Int32,), e))
-strerror() = strerror(errno())
 systemerror(p, b::Bool) = b ? throw(SystemError(string(p))) : nothing
 
 ## assertion functions and macros ##

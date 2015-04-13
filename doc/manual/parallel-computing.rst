@@ -303,7 +303,7 @@ we can use a *parallel for loop*, which can be written in Julia like
 this::
 
     nheads = @parallel (+) for i=1:200000000
-      int(rand(Bool))
+      Int(rand(Bool))
     end
 
 This construct implements the pattern of assigning iterations to
@@ -330,7 +330,7 @@ However, this code will not initialize all of ``a``, since each
 process will have a separate copy of it. Parallel for loops like these
 must be avoided. Fortunately, distributed arrays can be used to get
 around this limitation (see the
-`DistributedArrays.jl <https://github.com/JuliaParallel/DistributedArrays.jl>`
+`DistributedArrays.jl <https://github.com/JuliaParallel/DistributedArrays.jl>`_
 package).
 
 Using "outside" variables in parallel loops is perfectly reasonable if
@@ -611,10 +611,17 @@ The :func:`launch` method takes the following arguments:
 
 The :func:`launch` method is called asynchronously in a separate task. The termination of this task
 signals that all requested workers have been launched. Hence the :func:`launch` function MUST exit as soon
-as all the requested workers have been launched. The Julia worker MUST be launched with a ``--worker``
-argument. Optionally ``--bind-to bind_addr[:port]`` may also be specified to enable other workers
-to connect to it at the specified ``bind_addr`` and ``port``. Useful for multi-homed hosts.
+as all the requested workers have been launched.
 
+Newly launched workers are connected to each other, and the master process, in a all-to-all manner.
+Specifying command argument, ``--worker`` results in the launched processes initializing themselves
+as workers and connections being setup via TCP/IP sockets. Optionally ``--bind-to bind_addr[:port]``
+may also be specified to enable other workers to connect to it at the specified ``bind_addr`` and ``port``.
+This is useful for multi-homed hosts.
+
+For non-TCP/IP transports, for example, an implementation may choose to use MPI as the transport,
+``--worker`` must NOT be specified. Instead newly launched workers should call ``init_worker()``
+before using any of the parallel constructs
 
 For every worker launched, the :func:`launch` method must add a :class:`WorkerConfig`
 object (with appropriate fields initialized) to ``launched`` ::
@@ -712,11 +719,11 @@ Note: The julia processes are still all *logically* connected to each other - an
 awareness of 0MQ being used as the transport layer.
 
 When using custom transports:
-    - julia workers must be started with arguments ``--worker=custom``. Just ``--worker`` or ``--worker=default`` will result in the newly launched
-      workers defaulting to the socket transport implementation
-    - For every logical connection with a worker, ``process_messages(rd::AsyncStream, wr::AsyncStream)`` must be called.
+    - julia workers must NOT be started with ``--worker``. Starting with ``--worker`` will result in the newly launched
+      workers defaulting to the TCP/IP socket transport implementation
+    - For every incoming logical connection with a worker, ``Base.process_messages(rd::AsyncStream, wr::AsyncStream)`` must be called.
       This launches a new task that handles reading and writing of messages from/to the worker represented by the ``AsyncStream`` objects
-    - ``init_worker(manager::FooManager)`` must be called as part of worker process initializaton
+    - ``init_worker(manager::FooManager)`` MUST be called as part of worker process initializaton
     - Field ``connect_at::Any`` in :class:`WorkerConfig` can be set by the cluster manager when ``launch`` is called. The value of
       this field is passed in in all ``connect`` callbacks. Typically, it carries information on *how to connect* to a worker. For example,
       the TCP/IP socket transport uses this field to specify the ``(host, port)`` tuple at which to connect to a worker

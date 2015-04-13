@@ -12,7 +12,7 @@ u16 = utf16(u8)
 # UTF32
 u32 = utf32(u8)
 @test sizeof(u32) == 16
-@test length(u32.data) == 5 && u32.data[end] == char(0)
+@test length(u32.data) == 5 && u32.data[end] == Char(0)
 @test length(u32) == 4
 @test utf8(u32) == u8
 @test collect(u8) == collect(u32)
@@ -125,3 +125,6 @@ let grphtest = (("b\u0300lahβlahb\u0302láh", ["b\u0300","l","a","h",
         end
     end
 end
+
+# up-to-date character widths (#3721, #6939)
+@test charwidth('\U1f355') == strwidth("\U1f355") == strwidth(utf16("\U1f355")) == strwidth("\U1f355\u0302") == strwidth(utf16("\U1f355\u0302")) == 2

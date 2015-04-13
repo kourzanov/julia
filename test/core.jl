@@ -177,6 +177,17 @@ end
 @test Base.typeseq(typejoin(Union(Int,AbstractString),Int), Union(Int,AbstractString))
 @test Base.typeseq(typejoin(Union(Int,AbstractString),Int8), Any)
 
+# typejoin associativity
+abstract Foo____{K}
+type Wow____{K,V} <: Foo____{K} end
+type Bar____{K,V} <: Foo____{K} end
+let
+    a = Wow____{Int64, Int64}
+    b = Wow____{Int64, Float64}
+    c = Bar____{Int64, Int64}
+    @test typejoin(typejoin(b,c), a) == typejoin(typejoin(b,a), c) == Foo____{Int64}
+end
+
 @test promote_type(Bool,Bottom) === Bool
 
 # ntuples
@@ -773,9 +784,9 @@ begin
     @test aa == a
     aa = pointer_to_array(pointer(a), (length(a),))
     @test aa == a
-    aa = pointer_to_array(pointer(a), uint(length(a)))
+    aa = pointer_to_array(pointer(a), UInt(length(a)))
     @test aa == a
-    aa = pointer_to_array(pointer(a), uint16(length(a)))
+    aa = pointer_to_array(pointer(a), UInt16(length(a)))
     @test aa == a
     @test_throws ErrorException pointer_to_array(pointer(a), -3)
 end
@@ -787,7 +798,7 @@ end
 begin
     local X, p
     X = FooBar[ FooBar(3,1), FooBar(4,4) ]
-    p = convert(Ptr{FooBar}, X)
+    p = pointer(X)
     @test unsafe_load(p, 2) == FooBar(4,4)
     unsafe_store!(p, FooBar(7,3), 1)
     @test X[1] == FooBar(7,3)
@@ -937,7 +948,7 @@ end
 # issue #2169
 let
     i2169{T}(a::Array{T}) = typemin(T)
-    @test invoke(i2169,(Array,),Int8[1]) === int8(-128)
+    @test invoke(i2169,(Array,),Int8[1]) === Int8(-128)
 end
 
 # issue #2365
@@ -1100,9 +1111,9 @@ function foo4075(f::Foo4075, s::Symbol)
     x
 end
 
-@test isa(foo4075(Foo4075(int64(1),2.0),:y), Float64)
+@test isa(foo4075(Foo4075(Int64(1),2.0),:y), Float64)
 # very likely to segfault the second time if this is broken
-@test isa(foo4075(Foo4075(int64(1),2.0),:y), Float64)
+@test isa(foo4075(Foo4075(Int64(1),2.0),:y), Float64)
 
 # issue #3167
 function foo(x)
@@ -1239,8 +1250,8 @@ function f4528(A, B)
         reinterpret(UInt64, B)
     end
 end
-@test f4528(false, int32(12)) === nothing
-@test_throws ErrorException f4528(true, int32(12))
+@test f4528(false, Int32(12)) === nothing
+@test_throws ErrorException f4528(true, Int32(12))
 
 # issue #4518
 f4518(x, y::Union(Int32,Int64)) = 0
@@ -1250,7 +1261,7 @@ f4518(x::ASCIIString, y::Union(Int32,Int64)) = 1
 # issue #4581
 bitstype 64 Date4581{T}
 let
-    x = Intrinsics.box(Date4581{Int}, Intrinsics.unbox(Int64,int64(1234)))
+    x = Intrinsics.box(Date4581{Int}, Intrinsics.unbox(Int64,Int64(1234)))
     xs = Date4581[x]
     ys = copy(xs)
     @test ys !== xs
@@ -1262,13 +1273,20 @@ function f6591(d)
     Intrinsics.box(Int64, d)
     (f->f(d))(identity)
 end
-let d = Intrinsics.box(Date4581{Int}, int64(1))
+let d = Intrinsics.box(Date4581{Int}, Int64(1))
     @test isa(f6591(d), Date4581)
 end
 
 # issue #4645
 i4645(x) = (println(zz); zz = x; zz)
 @test_throws UndefVarError i4645(4)
+
+# more undef var errors
+function test_undef_var_9898(a)
+    a1 = a1
+    a
+end
+@test_throws UndefVarError test_undef_var_9898(1)
 
 # issue #4505
 let
@@ -1283,7 +1301,7 @@ type Z4681
     x::Ptr{Void}
     Z4681() = new(C_NULL)
 end
-Base.convert(::Type{Ptr{Z4681}},b::Z4681) = b.x
+Base.unsafe_convert(::Type{Ptr{Z4681}},b::Z4681) = b.x
 @test_throws TypeError ccall(:printf,Int,(Ptr{UInt8},Ptr{Z4681}),"",Z4681())
 
 # issue #4479
@@ -1377,7 +1395,7 @@ f5150(T) = Array(Rational{T},1)
 # issue #5165
 bitstype 64 T5165{S}
 make_t(x::Int64) = Base.box(T5165{Void}, Base.unbox(Int64, x))
-xs5165 = T5165[make_t(int64(1))]
+xs5165 = T5165[make_t(Int64(1))]
 b5165 = IOBuffer()
 for x in xs5165
     println(b5165, x)   # segfaulted
@@ -1448,11 +1466,11 @@ end
 # issue #5142
 bitstype 64 Int5142
 function h5142(a::Bool)
-    x=a ? (int64(0),reinterpret(Int5142,int64(0))) : (int64(1),reinterpret(Int5142,int64(1)))
+    x=a ? (Int64(0),reinterpret(Int5142,Int64(0))) : (Int64(1),reinterpret(Int5142,Int64(1)))
     x[2]::Int5142
 end
 function h5142(a::Int)
-    x=(int64(0),reinterpret(Int5142,int64(0)))
+    x=(Int64(0),reinterpret(Int5142,Int64(0)))
     x[a]::Int5142
 end
 h5142(true)
@@ -1461,7 +1479,7 @@ h5142(2)
 
 bitstype 8 Int5142b
 function h5142b(a::Int)
-    x=((int8(1),int8(2)),(reinterpret(Int5142b,int8(3)),reinterpret(Int5142b,int8(4))))
+    x=((Int8(1),Int8(2)),(reinterpret(Int5142b,Int8(3)),reinterpret(Int5142b,Int8(4))))
     x[a]::(Int8,Int8)
 end
 h5142b(1)
@@ -1490,7 +1508,7 @@ end
 function f5457(obj_ptr::Ptr{Float64}, f)
     new_obj = convert(Float64, f(1.0))
     unsafe_store!(obj_ptr, new_obj)
-    return int32(1)
+    return Int32(1)
 end
 let
     a = [1.0]
@@ -1748,7 +1766,7 @@ obj = ObjMember(DateRange6387{Int64}())
 
 function v6387{T}(r::Range{T})
     a = Array(T,1)
-    a[1] = Intrinsics.box(Date6387{Int64}, Intrinsics.unbox(Int64,int64(1)))
+    a[1] = Intrinsics.box(Date6387{Int64}, Intrinsics.unbox(Int64,Int64(1)))
     a
 end
 
@@ -2216,3 +2234,546 @@ end
 @test f10373.env.defs.next.func.code.name == :f10373
 @test g10373.env.defs.func.code.name == :g10373
 @test g10373.env.defs.next.func.code.name == :g10373
+
+# issue #7221
+f7221{T<:Number}(::T) = 1
+f7221(::BitArray) = 2
+f7221(::AbstractVecOrMat) = 3
+@test f7221(trues(1)) == 2
+
+# issue #9232
+arithtype9232{T<:Real}(::Type{T},::Type{T}) = arithtype9232(T)
+result_type9232{T1<:Number,T2<:Number}(::Type{T1}, ::Type{T2}) = arithtype9232(T1, T2)
+# this gave a "type too large", but not reliably
+@test length(code_typed(result_type9232, (Type{TypeVar(:_, Union(Float32,Float64))}, Type{TypeVar(:T2, Number)}))) == 1
+
+# test functionality of non-power-of-2 bitstype constants
+bitstype 24 Int24
+Int24(x::Int) = Intrinsics.box(Int24,Intrinsics.trunc_int(Int24,Intrinsics.unbox(Int,x)))
+Int(x::Int24) = Intrinsics.box(Int,Intrinsics.zext_int(Int,Intrinsics.unbox(Int24,x)))
+let x,y,f
+    x = Int24(Int(0x12345678)) # create something (via truncation)
+    @test Int(0x345678) === Int(x)
+    function f() Int24(Int(0x02468ace)) end
+    y = f() # invoke llvm constant folding
+    @test Int(0x468ace) === Int(y)
+    @test x !== y
+    @test string(y) == "Int24(0x468ace)"
+end
+
+# issue #10570
+immutable Array_512_Uint8
+    d1::Uint8
+    d2::Uint8
+    d3::Uint8
+    d4::Uint8
+    d5::Uint8
+    d6::Uint8
+    d7::Uint8
+    d8::Uint8
+    d9::Uint8
+    d10::Uint8
+    d11::Uint8
+    d12::Uint8
+    d13::Uint8
+    d14::Uint8
+    d15::Uint8
+    d16::Uint8
+    d17::Uint8
+    d18::Uint8
+    d19::Uint8
+    d20::Uint8
+    d21::Uint8
+    d22::Uint8
+    d23::Uint8
+    d24::Uint8
+    d25::Uint8
+    d26::Uint8
+    d27::Uint8
+    d28::Uint8
+    d29::Uint8
+    d30::Uint8
+    d31::Uint8
+    d32::Uint8
+    d33::Uint8
+    d34::Uint8
+    d35::Uint8
+    d36::Uint8
+    d37::Uint8
+    d38::Uint8
+    d39::Uint8
+    d40::Uint8
+    d41::Uint8
+    d42::Uint8
+    d43::Uint8
+    d44::Uint8
+    d45::Uint8
+    d46::Uint8
+    d47::Uint8
+    d48::Uint8
+    d49::Uint8
+    d50::Uint8
+    d51::Uint8
+    d52::Uint8
+    d53::Uint8
+    d54::Uint8
+    d55::Uint8
+    d56::Uint8
+    d57::Uint8
+    d58::Uint8
+    d59::Uint8
+    d60::Uint8
+    d61::Uint8
+    d62::Uint8
+    d63::Uint8
+    d64::Uint8
+    d65::Uint8
+    d66::Uint8
+    d67::Uint8
+    d68::Uint8
+    d69::Uint8
+    d70::Uint8
+    d71::Uint8
+    d72::Uint8
+    d73::Uint8
+    d74::Uint8
+    d75::Uint8
+    d76::Uint8
+    d77::Uint8
+    d78::Uint8
+    d79::Uint8
+    d80::Uint8
+    d81::Uint8
+    d82::Uint8
+    d83::Uint8
+    d84::Uint8
+    d85::Uint8
+    d86::Uint8
+    d87::Uint8
+    d88::Uint8
+    d89::Uint8
+    d90::Uint8
+    d91::Uint8
+    d92::Uint8
+    d93::Uint8
+    d94::Uint8
+    d95::Uint8
+    d96::Uint8
+    d97::Uint8
+    d98::Uint8
+    d99::Uint8
+    d100::Uint8
+    d101::Uint8
+    d102::Uint8
+    d103::Uint8
+    d104::Uint8
+    d105::Uint8
+    d106::Uint8
+    d107::Uint8
+    d108::Uint8
+    d109::Uint8
+    d110::Uint8
+    d111::Uint8
+    d112::Uint8
+    d113::Uint8
+    d114::Uint8
+    d115::Uint8
+    d116::Uint8
+    d117::Uint8
+    d118::Uint8
+    d119::Uint8
+    d120::Uint8
+    d121::Uint8
+    d122::Uint8
+    d123::Uint8
+    d124::Uint8
+    d125::Uint8
+    d126::Uint8
+    d127::Uint8
+    d128::Uint8
+    d129::Uint8
+    d130::Uint8
+    d131::Uint8
+    d132::Uint8
+    d133::Uint8
+    d134::Uint8
+    d135::Uint8
+    d136::Uint8
+    d137::Uint8
+    d138::Uint8
+    d139::Uint8
+    d140::Uint8
+    d141::Uint8
+    d142::Uint8
+    d143::Uint8
+    d144::Uint8
+    d145::Uint8
+    d146::Uint8
+    d147::Uint8
+    d148::Uint8
+    d149::Uint8
+    d150::Uint8
+    d151::Uint8
+    d152::Uint8
+    d153::Uint8
+    d154::Uint8
+    d155::Uint8
+    d156::Uint8
+    d157::Uint8
+    d158::Uint8
+    d159::Uint8
+    d160::Uint8
+    d161::Uint8
+    d162::Uint8
+    d163::Uint8
+    d164::Uint8
+    d165::Uint8
+    d166::Uint8
+    d167::Uint8
+    d168::Uint8
+    d169::Uint8
+    d170::Uint8
+    d171::Uint8
+    d172::Uint8
+    d173::Uint8
+    d174::Uint8
+    d175::Uint8
+    d176::Uint8
+    d177::Uint8
+    d178::Uint8
+    d179::Uint8
+    d180::Uint8
+    d181::Uint8
+    d182::Uint8
+    d183::Uint8
+    d184::Uint8
+    d185::Uint8
+    d186::Uint8
+    d187::Uint8
+    d188::Uint8
+    d189::Uint8
+    d190::Uint8
+    d191::Uint8
+    d192::Uint8
+    d193::Uint8
+    d194::Uint8
+    d195::Uint8
+    d196::Uint8
+    d197::Uint8
+    d198::Uint8
+    d199::Uint8
+    d200::Uint8
+    d201::Uint8
+    d202::Uint8
+    d203::Uint8
+    d204::Uint8
+    d205::Uint8
+    d206::Uint8
+    d207::Uint8
+    d208::Uint8
+    d209::Uint8
+    d210::Uint8
+    d211::Uint8
+    d212::Uint8
+    d213::Uint8
+    d214::Uint8
+    d215::Uint8
+    d216::Uint8
+    d217::Uint8
+    d218::Uint8
+    d219::Uint8
+    d220::Uint8
+    d221::Uint8
+    d222::Uint8
+    d223::Uint8
+    d224::Uint8
+    d225::Uint8
+    d226::Uint8
+    d227::Uint8
+    d228::Uint8
+    d229::Uint8
+    d230::Uint8
+    d231::Uint8
+    d232::Uint8
+    d233::Uint8
+    d234::Uint8
+    d235::Uint8
+    d236::Uint8
+    d237::Uint8
+    d238::Uint8
+    d239::Uint8
+    d240::Uint8
+    d241::Uint8
+    d242::Uint8
+    d243::Uint8
+    d244::Uint8
+    d245::Uint8
+    d246::Uint8
+    d247::Uint8
+    d248::Uint8
+    d249::Uint8
+    d250::Uint8
+    d251::Uint8
+    d252::Uint8
+    d253::Uint8
+    d254::Uint8
+    d255::Uint8
+    d256::Uint8
+    d257::Uint8
+    d258::Uint8
+    d259::Uint8
+    d260::Uint8
+    d261::Uint8
+    d262::Uint8
+    d263::Uint8
+    d264::Uint8
+    d265::Uint8
+    d266::Uint8
+    d267::Uint8
+    d268::Uint8
+    d269::Uint8
+    d270::Uint8
+    d271::Uint8
+    d272::Uint8
+    d273::Uint8
+    d274::Uint8
+    d275::Uint8
+    d276::Uint8
+    d277::Uint8
+    d278::Uint8
+    d279::Uint8
+    d280::Uint8
+    d281::Uint8
+    d282::Uint8
+    d283::Uint8
+    d284::Uint8
+    d285::Uint8
+    d286::Uint8
+    d287::Uint8
+    d288::Uint8
+    d289::Uint8
+    d290::Uint8
+    d291::Uint8
+    d292::Uint8
+    d293::Uint8
+    d294::Uint8
+    d295::Uint8
+    d296::Uint8
+    d297::Uint8
+    d298::Uint8
+    d299::Uint8
+    d300::Uint8
+    d301::Uint8
+    d302::Uint8
+    d303::Uint8
+    d304::Uint8
+    d305::Uint8
+    d306::Uint8
+    d307::Uint8
+    d308::Uint8
+    d309::Uint8
+    d310::Uint8
+    d311::Uint8
+    d312::Uint8
+    d313::Uint8
+    d314::Uint8
+    d315::Uint8
+    d316::Uint8
+    d317::Uint8
+    d318::Uint8
+    d319::Uint8
+    d320::Uint8
+    d321::Uint8
+    d322::Uint8
+    d323::Uint8
+    d324::Uint8
+    d325::Uint8
+    d326::Uint8
+    d327::Uint8
+    d328::Uint8
+    d329::Uint8
+    d330::Uint8
+    d331::Uint8
+    d332::Uint8
+    d333::Uint8
+    d334::Uint8
+    d335::Uint8
+    d336::Uint8
+    d337::Uint8
+    d338::Uint8
+    d339::Uint8
+    d340::Uint8
+    d341::Uint8
+    d342::Uint8
+    d343::Uint8
+    d344::Uint8
+    d345::Uint8
+    d346::Uint8
+    d347::Uint8
+    d348::Uint8
+    d349::Uint8
+    d350::Uint8
+    d351::Uint8
+    d352::Uint8
+    d353::Uint8
+    d354::Uint8
+    d355::Uint8
+    d356::Uint8
+    d357::Uint8
+    d358::Uint8
+    d359::Uint8
+    d360::Uint8
+    d361::Uint8
+    d362::Uint8
+    d363::Uint8
+    d364::Uint8
+    d365::Uint8
+    d366::Uint8
+    d367::Uint8
+    d368::Uint8
+    d369::Uint8
+    d370::Uint8
+    d371::Uint8
+    d372::Uint8
+    d373::Uint8
+    d374::Uint8
+    d375::Uint8
+    d376::Uint8
+    d377::Uint8
+    d378::Uint8
+    d379::Uint8
+    d380::Uint8
+    d381::Uint8
+    d382::Uint8
+    d383::Uint8
+    d384::Uint8
+    d385::Uint8
+    d386::Uint8
+    d387::Uint8
+    d388::Uint8
+    d389::Uint8
+    d390::Uint8
+    d391::Uint8
+    d392::Uint8
+    d393::Uint8
+    d394::Uint8
+    d395::Uint8
+    d396::Uint8
+    d397::Uint8
+    d398::Uint8
+    d399::Uint8
+    d400::Uint8
+    d401::Uint8
+    d402::Uint8
+    d403::Uint8
+    d404::Uint8
+    d405::Uint8
+    d406::Uint8
+    d407::Uint8
+    d408::Uint8
+    d409::Uint8
+    d410::Uint8
+    d411::Uint8
+    d412::Uint8
+    d413::Uint8
+    d414::Uint8
+    d415::Uint8
+    d416::Uint8
+    d417::Uint8
+    d418::Uint8
+    d419::Uint8
+    d420::Uint8
+    d421::Uint8
+    d422::Uint8
+    d423::Uint8
+    d424::Uint8
+    d425::Uint8
+    d426::Uint8
+    d427::Uint8
+    d428::Uint8
+    d429::Uint8
+    d430::Uint8
+    d431::Uint8
+    d432::Uint8
+    d433::Uint8
+    d434::Uint8
+    d435::Uint8
+    d436::Uint8
+    d437::Uint8
+    d438::Uint8
+    d439::Uint8
+    d440::Uint8
+    d441::Uint8
+    d442::Uint8
+    d443::Uint8
+    d444::Uint8
+    d445::Uint8
+    d446::Uint8
+    d447::Uint8
+    d448::Uint8
+    d449::Uint8
+    d450::Uint8
+    d451::Uint8
+    d452::Uint8
+    d453::Uint8
+    d454::Uint8
+    d455::Uint8
+    d456::Uint8
+    d457::Uint8
+    d458::Uint8
+    d459::Uint8
+    d460::Uint8
+    d461::Uint8
+    d462::Uint8
+    d463::Uint8
+    d464::Uint8
+    d465::Uint8
+    d466::Uint8
+    d467::Uint8
+    d468::Uint8
+    d469::Uint8
+    d470::Uint8
+    d471::Uint8
+    d472::Uint8
+    d473::Uint8
+    d474::Uint8
+    d475::Uint8
+    d476::Uint8
+    d477::Uint8
+    d478::Uint8
+    d479::Uint8
+    d480::Uint8
+    d481::Uint8
+    d482::Uint8
+    d483::Uint8
+    d484::Uint8
+    d485::Uint8
+    d486::Uint8
+    d487::Uint8
+    d488::Uint8
+    d489::Uint8
+    d490::Uint8
+    d491::Uint8
+    d492::Uint8
+    d493::Uint8
+    d494::Uint8
+    d495::Uint8
+    d496::Uint8
+    d497::Uint8
+    d498::Uint8
+    d499::Uint8
+    d500::Uint8
+    d501::Uint8
+    d502::Uint8
+    d503::Uint8
+    d504::Uint8
+    d505::Uint8
+    d506::Uint8
+    d507::Uint8
+    d508::Uint8
+    d509::Uint8
+    d510::Uint8
+    d511::Uint8
+    d512::Uint8
+end
+gc()

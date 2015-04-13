@@ -81,6 +81,9 @@
 #else
 #include <llvm/Analysis/DebugInfo.h>
 #endif
+#ifndef LLVM37
+#define format_hex(v, d) format("%#0" #d "x", v)
+#endif
 
 #include "julia.h"
 
@@ -245,13 +248,18 @@ int OpInfoLookup(void *DisInfo, uint64_t PC,
 } // namespace
 
 extern "C"
-void jl_dump_function_asm(uintptr_t Fptr, size_t Fsize, size_t slide,
+void jl_dump_asm_internal(uintptr_t Fptr, size_t Fsize, size_t slide,
 #ifndef USE_MCJIT
                           std::vector<JITEvent_EmittedFunctionDetails::LineStart> lineinfo,
 #else
                           const object::ObjectFile *objectfile,
 #endif
-                          formatted_raw_ostream &stream)
+#ifdef LLVM37
+                          raw_ostream &stream
+#else
+                          formatted_raw_ostream &stream
+#endif
+                          )
 {
     // Initialize targets and assembly printers/parsers.
     // Avoids hard-coded targets - will generally be only host CPU anyway.
@@ -335,12 +343,21 @@ void jl_dump_function_asm(uintptr_t Fptr, size_t Fsize, size_t slide,
     OwningPtr<MCInstrAnalysis>
         MCIA(TheTarget->createMCInstrAnalysis(MCII.get()));
 #endif
+#ifdef LLVM37
+    MCInstPrinter* IP =
+        TheTarget->createMCInstPrinter(TheTriple, OutputAsmVariant, *MAI, *MCII, *MRI);
+#else
     MCInstPrinter* IP =
         TheTarget->createMCInstPrinter(OutputAsmVariant, *MAI, *MCII, *MRI, *STI);
+#endif
     MCCodeEmitter *CE = 0;
     MCAsmBackend *MAB = 0;
     if (ShowEncoding) {
+#ifdef LLVM37
+        CE = TheTarget->createMCCodeEmitter(*MCII, *MRI, Ctx);
+#else
         CE = TheTarget->createMCCodeEmitter(*MCII, *MRI, *STI, Ctx);
+#endif
 #ifdef LLVM34
         MAB = TheTarget->createMCAsmBackend(*MRI, TripleName, MCPU);
 #else
@@ -348,7 +365,12 @@ void jl_dump_function_asm(uintptr_t Fptr, size_t Fsize, size_t slide,
 #endif
     }
 
+#ifdef LLVM37
+    auto ustream = llvm::make_unique<formatted_raw_ostream>(stream);
+    Streamer.reset(TheTarget->createAsmStreamer(Ctx, std::move(ustream), /*asmverbose*/true,
+#else
     Streamer.reset(TheTarget->createAsmStreamer(Ctx, stream, /*asmverbose*/true,
+#endif
 #ifndef LLVM35
                                            /*useLoc*/ true,
                                            /*useCFI*/ true,
@@ -477,29 +499,53 @@ void jl_dump_function_asm(uintptr_t Fptr, size_t Fsize, size_t slide,
 
             MCInst Inst;
             MCDisassembler::DecodeStatus S;
-            S = DisAsm->getInstruction(Inst, insSize, memoryObject.slice(Index), 0,
+#if defined(_CPU_PPC64_) && BYTE_ORDER == LITTLE_ENDIAN
+            // llvm doesn't know that POWER8 can have little-endian instruction order
+            unsigned char byte_swap_buf[4];
+            assert(memoryObject.size() >= 4);
+            byte_swap_buf[3] = memoryObject[Index+0];
+            byte_swap_buf[2] = memoryObject[Index+1];
+            byte_swap_buf[1] = memoryObject[Index+2];
+            byte_swap_buf[0] = memoryObject[Index+3];
+            FuncMCView view = FuncMCView(byte_swap_buf, 4);
+#else
+            FuncMCView view = memoryObject.slice(Index);
+#endif
+            S = DisAsm->getInstruction(Inst, insSize, view, 0,
                                       /*REMOVE*/ nulls(), nulls());
             switch (S) {
             case MCDisassembler::Fail:
                 if (pass != 0)
+#if defined(_CPU_PPC_) || defined(_CPU_PPC64_)
+                    stream << "\t.long " << format_hex(*(uint32_t*)(Fptr+Index), 10) << "\n";
+#else
                     SrcMgr.PrintMessage(SMLoc::getFromPointer((const char*)(Fptr + Index)),
                                         SourceMgr::DK_Warning,
                                         "invalid instruction encoding");
-                if (insSize == 0)
-                    insSize = 1; // skip illegible bytes
+#endif
+                if (insSize == 0) // skip illegible bytes
+#if defined(_CPU_PPC_) || defined(_CPU_PPC64_)
+                    insSize = 4; // instructions are always 4 bytes
+#else
+                    insSize = 1; // attempt to slide 1 byte forward
+#endif
                 break;
 
             case MCDisassembler::SoftFail:
                 if (pass != 0)
+#if defined(_CPU_PPC_) || defined(_CPU_PPC64_)
+                    stream << "potentially undefined instruction encoding:\n";
+#else
                     SrcMgr.PrintMessage(SMLoc::getFromPointer((const char*)(Fptr + Index)),
                                         SourceMgr::DK_Warning,
                                         "potentially undefined instruction encoding");
+#endif
                 // Fall through
 
             case MCDisassembler::Success:
                 if (pass == 0) {
                     // Pass 0: Record all branch targets
-                    if (MCIA->isBranch(Inst)) {
+                    if (MCIA && MCIA->isBranch(Inst)) {
                         uint64_t addr;
 #ifdef LLVM34
                         if (MCIA->evaluateBranch(Inst, Fptr+Index, insSize, addr))

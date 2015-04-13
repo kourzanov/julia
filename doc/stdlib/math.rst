@@ -189,10 +189,6 @@ Mathematical Operators
 
    Construct a range by length, given a starting value and optional step (defaults to 1).
 
-.. function:: linrange(start, end, length)
-
-   Construct a range by length, given a starting and ending value.
-
 .. _==:
 .. function:: ==(x, y)
 
@@ -1689,6 +1685,14 @@ some built-in integration support in Julia.
    by real values, and a ``norm`` (i.e., any normed vector space).
    Alternatively, a different norm can be specified by passing a `norm`-like
    function as the `norm` keyword argument (which defaults to `vecnorm`).
+
+   [Only one-dimensional integrals are provided by this function.  For
+   multi-dimensional integration (cubature), there are many different
+   algorithms (often much better than simple nested 1d integrals)
+   and the optimal choice tends to be very problem-dependent.  See
+   the Julia external-package listing for available algorithms for
+   multidimensional integration or other specialized tasks (such as
+   integrals of highly oscillatory or singular functions).]
 
    The algorithm is an adaptive Gauss-Kronrod integration technique:
    the integral in each interval is estimated using a Kronrod rule

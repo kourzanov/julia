@@ -76,7 +76,7 @@ jl_value_t *jl_eval_global_var(jl_module_t *m, jl_sym_t *e)
 
 void jl_check_static_parameter_conflicts(jl_lambda_info_t *li, jl_tuple_t *t, jl_sym_t *fname);
 
-int jl_has_intrinsics(jl_expr_t *e);
+int jl_has_intrinsics(jl_expr_t *e, jl_module_t *m);
 
 extern int jl_boot_file_loaded;
 extern int inside_typedef;
@@ -127,8 +127,8 @@ static jl_value_t *eval(jl_value_t *e, jl_value_t **locals, size_t nl, size_t ng
     }
     if (jl_is_gensym(e)) {
         ssize_t genid = ((jl_gensym_t*)e)->id;
-        if (genid > ngensym || genid < 0)
-            return NULL;
+        if (genid >= ngensym || genid < 0)
+            jl_error("access to invalid GenSym location");
         else
             return locals[nl*2 + genid];
     }
@@ -143,9 +143,8 @@ static jl_value_t *eval(jl_value_t *e, jl_value_t **locals, size_t nl, size_t ng
         return v;
     }
     if (!jl_is_expr(e)) {
-        if (jl_is_getfieldnode(e)) {
-            jl_value_t *v = eval(jl_getfieldnode_val(e), locals, nl, ngensym);
-            jl_value_t *gfargs[2] = {v, (jl_value_t*)jl_getfieldnode_name(e)};
+        if (jl_is_globalref(e)) {
+            jl_value_t *gfargs[2] = {(jl_value_t*)jl_globalref_mod(e), (jl_value_t*)jl_globalref_name(e)};
             return jl_f_get_field(NULL, gfargs, 2);
         }
         if (jl_is_lambda_info(e)) {
@@ -181,7 +180,7 @@ static jl_value_t *eval(jl_value_t *e, jl_value_t **locals, size_t nl, size_t ng
             // directly calling an inner function ("let")
             jl_lambda_info_t *li = (jl_lambda_info_t*)args[0];
             if (jl_is_expr(li->ast) && !jl_lam_vars_captured((jl_expr_t*)li->ast) &&
-                !jl_has_intrinsics((jl_expr_t*)li->ast)) {
+                !jl_has_intrinsics((jl_expr_t*)li->ast, jl_current_module)) {
                 size_t na = nargs-1;
                 if (na == 0)
                     return jl_interpret_toplevel_thunk(li);
@@ -221,8 +220,8 @@ static jl_value_t *eval(jl_value_t *e, jl_value_t **locals, size_t nl, size_t ng
         jl_value_t *rhs = eval(args[1], locals, nl, ngensym);
         if (jl_is_gensym(sym)) {
             ssize_t genid = ((jl_gensym_t*)sym)->id;
-            if (genid > ngensym || genid < 0)
-                jl_errorf("illegal attempt to assign to non-existent GenSym location");
+            if (genid >= ngensym || genid < 0)
+                jl_error("assignment to invalid GenSym location");
             locals[nl*2 + genid] = rhs;
             gc_wb(jl_current_module, rhs); // not sure about jl_current_module
             return rhs;

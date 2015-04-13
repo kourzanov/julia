@@ -734,7 +734,7 @@ fill!(S, 3)
 rt = Base.return_types(fill!, (Array{Int32, 3}, UInt8))
 @test length(rt) == 1 && rt[1] == Array{Int32, 3}
 A = Array(Union(UInt8,Int8), 3)
-fill!(A, uint8(3))
+fill!(A, UInt8(3))
 @test A == [0x03, 0x03, 0x03]
 # Issue #9964
 A = Array(Vector{Float64}, 2)
@@ -772,7 +772,7 @@ X = [ i+2j for i=1:5, j=1:5 ]
 @test isequal(ones(2,3) * ones(2,3)', [3. 3.; 3. 3.])
 @test isequal([ [1,2] for i=1:2, : ], [1 2; 1 2])
 # where element type is a Union. try to confuse type inference.
-foo32_64(x) = (x<2) ? int32(x) : int64(x)
+foo32_64(x) = (x<2) ? Int32(x) : Int64(x)
 boo32_64() = [ foo32_64(i) for i=1:2 ]
 let a36 = boo32_64()
     @test a36[1]==1 && a36[2]==2
@@ -893,11 +893,6 @@ function pr8622()
 end
 @test pr8622() == [0,3,1,0]
 
-# commit b718cbc72e90, getindex(::Number, ::Real)
-b718cbc = 5
-@test b718cbc[1.0] == 5
-@test_throws InexactError b718cbc[1.1]
-
 #6828 - size of specific dimensions
 a = Array(Float64, 10)
 @test size(a) == (10,)
@@ -998,7 +993,7 @@ I2 = CartesianIndex((-1,5,2))
 
 @test length(I1) == 3
 
-a = zeros(2,3)
+a = spzeros(2,3)
 @test CartesianRange(size(a)) == eachindex(a)
 a[CartesianIndex{2}(2,3)] = 5
 @test a[2,3] == 5
@@ -1020,22 +1015,24 @@ indexes = collect(R)
 @test length(R) == 12
 
 r = 2:3
-state = start(eachindex(r))
-@test !done(r, state)
-_, state = next(r, state)
-@test !done(r, state)
-val, state = next(r, state)
-@test done(r, state)
-@test val == 3
-r = 2:3:8
-state = start(eachindex(r))
-@test !done(r, state)
-_, state = next(r, state)
-_, state = next(r, state)
-@test !done(r, state)
-val, state = next(r, state)
-@test val == 8
-@test done(r, state)
+itr = eachindex(r)
+state = start(itr)
+@test !done(itr, state)
+_, state = next(itr, state)
+@test !done(itr, state)
+val, state = next(itr, state)
+@test done(itr, state)
+@test r[val] == 3
+r = sparse(collect(2:3:8))
+itr = eachindex(r)
+state = start(itr)
+@test !done(itr, state)
+_, state = next(itr, state)
+_, state = next(itr, state)
+@test !done(itr, state)
+val, state = next(itr, state)
+@test r[val] == 8
+@test done(itr, state)
 
 
 #rotates

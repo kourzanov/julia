@@ -42,13 +42,12 @@ some noteworthy differences that may trip up Julia users accustomed to MATLAB:
   second dimension ("horizontally"), use spaces as in ``[x y z]``. To
   construct block matrices (concatenating in the first two dimensions),
   the syntax ``[a b; c d]`` is used to avoid confusion. In Julia v0.4, the
-  concatenation syntax ``[x, [y, z]]`` is deprecated in favor of ``[x; [y, z]``.
+  concatenation syntax ``[x, [y, z]]`` is deprecated in favor of ``[x; [y, z]]``.
 - In Julia, ``a:b`` and ``a:b:c`` construct :obj:`Range` objects. To construct
-  a full vector like in MATLAB, use :func:`linspace`, or use brackets like in
-  ``[a:b]``.
-- Julia functions return values using the ``return`` keyword instead of by
-  listing names of variables to return in the function definition (see
-  :ref:`man-return-keyword` for details).
+  a full vector like in MATLAB, use :func:`collect(a:b) <collect>`.
+- Functions in Julia return values from their last expression or the ``return``
+  keyword instead of listing the names of variables to return in the function
+  definition (see :ref:`man-return-keyword` for details).
 - A Julia script may contain any number of functions, and all definitions will
   be externally visible when the file is loaded. Function definitions can be
   loaded from files outside the current working directory.
@@ -89,7 +88,7 @@ some noteworthy differences that may trip up Julia users accustomed to MATLAB:
   last expression issued in an interactive session. In Julia, unlike MATLAB,
   ``ans`` is not set when Julia code is run in non-interactive mode.
 - Julia's ``type``\ s do not support dynamically adding fields at runtime,
-  unlike MATLAB's ``class``\ es. Instead, use a :obj`Dict`.
+  unlike MATLAB's ``class``\ es. Instead, use a :obj:`Dict`.
 
 Noteworthy differences from R
 -----------------------------
@@ -111,14 +110,14 @@ noteworthy differences:
 - In Julia, not all data structures support logical indexing. Furthermore,
   logical indexing in Julia is supported only with vectors of length equal to
   the object being indexed. For example:
-  - In R, ``c(1, 2, 3, 4)[c(TRUE, FALSE)]`` produces ``c(1,3)``.
-  - In R, ``c(1, 2, 3, 4)[c(TRUE, FALSE, TRUE, FALSE)]`` produces ``c(1,3)``.
+  - In R, ``c(1, 2, 3, 4)[c(TRUE, FALSE)]`` is equivalent to ``c(1,3)``.
+  - In R, ``c(1, 2, 3, 4)[c(TRUE, FALSE, TRUE, FALSE)]`` is equivalent to ``c(1,3)``.
   - In Julia, ``[1, 2, 3, 4][[true, false]]`` throws a :exc:`BoundsError`.
   - In Julia, ``[1, 2, 3, 4][[true, false, true, false]]`` produces ``[1, 3]``.
 - Like many languages, Julia does not always allow operations on vectors of
   different lengths, unlike R where the vectors only need to share a common
   index range.  For example, ``c(1,2,3,4) + c(1,2)`` is valid R but the
-  equivalent ``c[1:4] + c[1:2]`` will throw an error in Julia.
+  equivalent ``[1:4] + [1:2]`` will throw an error in Julia.
 - Julia's :func:`apply` takes the function first, then its arguments, unlike
   ``lapply(<structure>, function, arg2, ...)`` in R.
 - Julia uses ``end`` to denote the end of conditional blocks, like ``if``,
@@ -144,7 +143,7 @@ noteworthy differences:
   ``for (i in c(1, 2, 3))`` and ``if i == 1`` instead of ``if (i == 1)``.
 - Julia does not treat the numbers ``0`` and ``1`` as Booleans.
   You cannot write ``if (1)`` in Julia, because ``if`` statements accept only
-  booleans. Instead, you can write ``if true``, ``if bool(1)``, or ``if 1==1``.
+  booleans. Instead, you can write ``if true``, ``if Bool(1)``, or ``if 1==1``.
 - Julia does not provide ``nrow`` and ``ncol``. Instead, use ``size(M, 1)``
   for ``nrow(M)`` and ``size(M, 2)`` for ``ncol(M)``.
 - Julia is careful to distinguish scalars, vectors and matrices.  In R,

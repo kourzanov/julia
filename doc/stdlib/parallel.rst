@@ -23,6 +23,10 @@ Tasks
 
    Tell whether a task has exited.
 
+.. function:: istaskstarted(task) -> Bool
+
+   Tell whether a task has started executing.
+
 .. function:: consume(task, values...)
 
    Receive the next value passed to ``produce`` by the specified task.
@@ -94,6 +98,22 @@ Tasks
    Block the current task for a specified number of seconds. The minimum sleep
    time is 1 millisecond or input of ``0.001``.
 
+.. function:: ReentrantLock()
+
+   Creates a reentrant lock. The same task can acquire the lock as many times
+   as required. Each lock must be matched with an unlock.
+
+.. function:: lock(l::ReentrantLock)
+
+   Associates ``l`` with the current task. If ``l`` is already locked by a different
+   task, waits for it to become available. The same task can acquire the lock multiple
+   times. Each "lock" must be matched by an "unlock"
+
+.. function:: unlock(l::ReentrantLock)
+
+   Releases ownership of the lock by the current task. If the lock had been acquired before,
+   it just decrements an internal counter and returns immediately.
+
 
 General Parallel Computing Support
 ----------------------------------
@@ -132,9 +152,9 @@ General Parallel Computing Support
 
    ``max_parallel`` : specifies the maximum number of workers connected to in parallel at a host. Defaults to 10.
 
-   ``dir`` :  specifies the location of the julia binaries on the worker nodes. Defaults to JULIA_HOME.
+   ``dir`` :  specifies the working directory on the workers. Defaults to the host's current directory (as found by `pwd()`)
 
-   ``exename`` :  name of the julia executable. Defaults to "./julia" or "./julia-debug" as the case may be.
+   ``exename`` :  name of the julia executable. Defaults to "$JULIA_HOME/julia" or "$JULIA_HOME/julia-debug" as the case may be.
 
    ``exeflags`` :  additional flags passed to the worker processes.
 
@@ -202,7 +222,7 @@ General Parallel Computing Support
 
    * ``Process``: Wait for a process or process chain to exit. The ``exitcode`` field of a process can be used to determine success or failure.
 
-   * ``Task``: Wait for a ``Task`` to finish, returning its result value.
+   * ``Task``: Wait for a ``Task`` to finish, returning its result value. If the task fails with an exception, the exception is propagated (re-thrown in the task that called ``wait``).
 
    * ``RawFD``: Wait for changes on a file descriptor (see `poll_fd` for keyword arguments and return code)
 
@@ -339,3 +359,55 @@ Shared Arrays (Experimental, UNIX-only feature)
 
    Returns the index of the current worker into the ``pids`` vector, i.e., the list of workers mapping
    the SharedArray
+
+Cluster Manager Interface
+-------------------------
+    This interface provides a mechanism to launch and manage Julia workers on different cluster environments.
+    LocalManager, for launching additional workers on the same host and SSHManager, for launching on remote
+    hosts via ssh are present in Base. TCP/IP sockets are used to connect and transport messages
+    between processes. It is possible for Cluster Managers to provide a different transport.
+
+.. function:: launch(manager::FooManager, params::Dict, launched::Vector{WorkerConfig}, launch_ntfy::Condition)
+
+    Implemented by cluster managers. For every Julia worker launched by this function, it should append a ``WorkerConfig`` entry
+    to ``launched`` and notify ``launch_ntfy``. The function MUST exit once all workers, requested by ``manager`` have been launched.
+    ``params`` is a dictionary of all keyword arguments ``addprocs`` was called with.
+
+.. function:: manage(manager::FooManager, pid::Int, config::WorkerConfig. op::Symbol)
+
+    Implemented by cluster managers. It is called on the master process, during a worker's lifetime,
+    with appropriate ``op`` values:
+
+      - with ``:register``/``:deregister`` when a worker is added / removed
+        from the Julia worker pool.
+      - with ``:interrupt`` when ``interrupt(workers)`` is called. The
+        :class:`ClusterManager` should signal the appropriate worker with an
+        interrupt signal.
+      - with ``:finalize`` for cleanup purposes.
+
+.. function:: kill(manager::FooManager, pid::Int, config::WorkerConfig)
+
+    Implemented by cluster managers. It is called on the master process, by ``rmprocs``. It should cause the remote worker specified
+    by ``pid`` to exit. ``Base.kill(manager::ClusterManager.....)`` executes a remote ``exit()`` on ``pid``
+
+.. function:: init_worker(manager::FooManager)
+
+    Called by cluster managers implementing custom transports. It initializes a newly launched process as a worker.
+    Command line argument ``--worker`` has the effect of initializing a process as a worker using TCP/IP sockets
+    for transport.
+
+.. function:: connect(manager::FooManager, pid::Int, config::WorkerConfig) -> (instrm::AsyncStream, outstrm::AsyncStream)
+
+    Implemented by cluster managers using custom transports. It should establish a logical connection to worker with id ``pid``,
+    specified by ``config`` and return a pair of ``AsyncStream`` objects. Messages from ``pid`` to current process will be read
+    off ``instrm``, while messages to be sent to ``pid`` will be written to ``outstrm``. The custom transport implementation
+    must ensure that messages are delivered and received completely and in order. ``Base.connect(manager::ClusterManager.....)``
+    sets up TCP/IP socket connections in-between workers.
+
+
+.. function:: Base.process_messages(instrm::AsyncStream, outstrm::AsyncStream)
+
+    Called by cluster managers using custom transports. It should be called when the custom transport implementation receives the
+    first message from a remote worker. The custom transport must manage a logical connection to the remote worker and provide two
+    AsyncStream objects, one for incoming messages and the other for messages addressed to the remote worker.
+

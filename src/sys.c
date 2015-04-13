@@ -41,6 +41,12 @@
 #include <intrin.h>
 #endif
 
+#ifdef __has_feature
+#if __has_feature(memory_sanitizer)
+#include <sanitizer/msan_interface.h>
+#endif
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -399,15 +405,11 @@ JL_STREAM *jl_stderr_stream(void) { return JL_STDERR; }
 
 // CPUID
 
+#ifdef HAVE_CPUID
 DLLEXPORT void jl_cpuid(int32_t CPUInfo[4], int32_t InfoType)
 {
 #if defined _MSC_VER
     __cpuid(CPUInfo, InfoType);
-#elif defined(__arm__)
-    CPUInfo[0] = 0x41; // ARMv7
-    CPUInfo[1] = 0; // godspeed
-    CPUInfo[2] = 0; // to anyone
-    CPUInfo[3] = 0; // using <v7
 #else
     __asm__ __volatile__ (
         #if defined(__i386__) && defined(__PIC__)
@@ -426,6 +428,7 @@ DLLEXPORT void jl_cpuid(int32_t CPUInfo[4], int32_t InfoType)
     );
 #endif
 }
+#endif
 
 // -- set/clear the FZ/DAZ flags on x86 & x86-64 --
 #ifdef __SSE__
@@ -500,15 +503,15 @@ DLLEXPORT void jl_field_offsets(jl_datatype_t *dt, ssize_t *offsets)
 // -- misc sysconf info --
 
 #ifdef _OS_WINDOWS_
-static long chachedPagesize = 0;
+static long cachedPagesize = 0;
 long jl_getpagesize(void)
 {
-    if (!chachedPagesize) {
+    if (!cachedPagesize) {
         SYSTEM_INFO systemInfo;
         GetSystemInfo (&systemInfo);
-        chachedPagesize = systemInfo.dwPageSize;
+        cachedPagesize = systemInfo.dwPageSize;
     }
-    return chachedPagesize;
+    return cachedPagesize;
 }
 #else
 long jl_getpagesize(void)
@@ -543,6 +546,19 @@ DLLEXPORT long jl_SC_CLK_TCK(void)
     return 0;
 #endif
 }
+
+DLLEXPORT size_t jl_get_field_offset(jl_datatype_t *ty, int field)
+{
+    if(field > jl_tuple_len(ty->names))
+        jl_error("This type does not have that many fields");
+    return ty->fields[field].offset;
+}
+
+DLLEXPORT size_t jl_get_alignment(jl_datatype_t *ty)
+{
+    return ty->alignment;
+}
+
 
 // Dynamic Library interrogation
 
@@ -650,6 +666,15 @@ DLLEXPORT const char *jl_pathname_for_handle(uv_lib_t *uv_lib)
 
     struct link_map *map;
     dlinfo(handle, RTLD_DI_LINKMAP, &map);
+#ifdef __has_feature
+#if __has_feature(memory_sanitizer)
+    __msan_unpoison(&map,sizeof(struct link_map*));
+    if (map) {
+      __msan_unpoison(map, sizeof(struct link_map));
+      __msan_unpoison_string(map->l_name);
+    }
+#endif
+#endif
     if (map)
         return map->l_name;
 

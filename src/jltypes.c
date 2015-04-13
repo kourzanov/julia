@@ -51,6 +51,8 @@ jl_datatype_t *jl_float32_type;
 jl_datatype_t *jl_float64_type;
 jl_datatype_t *jl_floatingpoint_type;
 jl_datatype_t *jl_number_type;
+jl_datatype_t *jl_complex_type;
+jl_datatype_t *jl_signed_type;
 
 jl_tuple_t *jl_null;
 jl_value_t *jl_nothing;
@@ -326,20 +328,16 @@ STATIC_INLINE int is_btv(jl_value_t *v)
     return jl_is_typevar(v) && ((jl_tvar_t*)v)->bound;
 }
 
-static void extend_(jl_value_t *var, jl_value_t *val, cenv_t *soln, int allow,
-                    int ordered)
+static void extend_(jl_value_t *var, jl_value_t *val, cenv_t *soln, int allowself)
 {
-    if (!allow && var == val)
+    if (!allowself && var == val)
         return;
-    if (!ordered && val < var && is_btv(val) && is_btv(var)) {
-        jl_value_t *temp = val;
-        val = var;
-        var = temp;
-    }
     for(int i=0; i < soln->n; i+=2) {
         if (soln->data[i]==var &&
             (soln->data[i+1]==val || (!jl_is_typevar(val) &&
                                       type_eqv_(soln->data[i+1],val))))
+            return;
+        if (soln->data[i]==val && soln->data[i+1]==var)
             return;
     }
     if (soln->n >= MAX_CENV_SIZE)
@@ -350,12 +348,7 @@ static void extend_(jl_value_t *var, jl_value_t *val, cenv_t *soln, int allow,
 
 static void extend(jl_value_t *var, jl_value_t *val, cenv_t *soln)
 {
-    extend_(var, val, soln, 0, 0);
-}
-
-static void extend_ordered(jl_value_t *var, jl_value_t *val, cenv_t *soln)
-{
-    extend_(var, val, soln, 0, 1);
+    extend_(var, val, soln, 0);
 }
 
 static jl_value_t *jl_type_intersect(jl_value_t *a, jl_value_t *b,
@@ -737,7 +730,10 @@ static jl_value_t *intersect_typevar(jl_tvar_t *a, jl_value_t *b,
             extend((jl_value_t*)a, both, penv);
             extend((jl_value_t*)b, both, penv);
         }
-        extend((jl_value_t*)a, b, eqc);
+        if (is_btv(b))
+            extend(b, (jl_value_t*)a, eqc);
+        else
+            extend((jl_value_t*)a, b, eqc);
     }
     else {
         int i;
@@ -1496,7 +1492,7 @@ jl_value_t *jl_type_intersection_matching(jl_value_t *a, jl_value_t *b,
             */
             jl_tvar_t *ntv = jl_new_typevar(tv->name, tv->lb, tv->ub);
             ntv->bound = tv->bound;
-            extend_((jl_value_t*)tv, (jl_value_t*)ntv, &eqc, 1, 1);
+            extend_((jl_value_t*)tv, (jl_value_t*)ntv, &eqc, 1);
         }
     }
 
@@ -2517,9 +2513,7 @@ static int jl_type_morespecific_(jl_value_t *a, jl_value_t *b, int invariant)
                 return 1;
             }
         }
-        if (!jl_is_typevar(b))
-            return 0;
-        return 1;
+        return 0;
     }
 
     if (jl_is_type_type(a) && !invariant) {
@@ -2743,7 +2737,7 @@ static jl_value_t *type_match_(jl_value_t *child, jl_value_t *parent,
                 return jl_false;
             }
         }
-        extend_ordered(parent, child, env);
+        extend(parent, child, env);
         return jl_true;
     }
 
@@ -2980,13 +2974,13 @@ void jl_init_types(void)
 {
     // create base objects
     jl_datatype_type = jl_new_uninitialized_datatype(10);
-    jl_datatype_type->type = (jl_value_t*)jl_datatype_type;
+    jl_set_typeof(jl_datatype_type, jl_datatype_type);
     jl_typename_type = jl_new_uninitialized_datatype(4);
     jl_sym_type = jl_new_uninitialized_datatype(0);
     jl_symbol_type = jl_sym_type;
 
     jl_tuple_type = jl_alloc_tuple(1);
-    jl_tuple_type->type = (jl_value_t*)jl_tuple_type;
+    jl_set_typeof(jl_tuple_type, jl_tuple_type);
 #ifdef OVERLAP_TUPLE_LEN
     jl_tuple_set_len_unsafe(jl_tuple_type, 1);
 #endif
@@ -3282,21 +3276,26 @@ void jl_init_types(void)
                                         jl_any_type, jl_null, 32);
 
     tv = jl_tuple1(tvar("T"));
+    jl_ref_type =
+        jl_new_abstracttype((jl_value_t*)jl_symbol("Ref"), jl_any_type, tv);
+
+    tv = jl_tuple1(tvar("T"));
     jl_pointer_type =
-        jl_new_bitstype((jl_value_t*)jl_symbol("Ptr"), jl_any_type, tv,
+        jl_new_bitstype((jl_value_t*)jl_symbol("Ptr"),
+                        (jl_datatype_t*)jl_apply_type((jl_value_t*)jl_ref_type, tv), tv,
                         sizeof(void*)*8);
 
     // Type{T}
     jl_typetype_tvar = jl_new_typevar(jl_symbol("T"),
                                       (jl_value_t*)jl_bottom_type,(jl_value_t*)jl_any_type);
     jl_typetype_type = (jl_datatype_t*)jl_apply_type((jl_value_t*)jl_type_type,
-                                                     jl_tuple(1,jl_typetype_tvar));
+                                                     jl_tuple1(jl_typetype_tvar));
 
     jl_ANY_flag = (jl_value_t*)tvar("ANY");
 
     // complete builtin type metadata
     jl_value_t *pointer_void = jl_apply_type((jl_value_t*)jl_pointer_type,
-                                             jl_tuple(1,jl_void_type));
+                                             jl_tuple1(jl_void_type));
     jl_voidpointer_type = (jl_datatype_t*)pointer_void;
     jl_tupleset(jl_datatype_type->types, 6, jl_int32_type);
     jl_tupleset(jl_datatype_type->types, 7, (jl_value_t*)jl_bool_type);

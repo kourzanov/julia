@@ -46,6 +46,7 @@ include("number.jl")
 include("int.jl")
 include("operators.jl")
 include("pointer.jl")
+include("refpointer.jl")
 
 # rounding utilities
 include("rounding.jl")
@@ -80,10 +81,6 @@ include("inference.jl")
 # For OS specific stuff in I/O
 include("osutils.jl")
 
-const DL_LOAD_PATH = ByteString[]
-@osx_only push!(DL_LOAD_PATH, "@executable_path/../lib/julia")
-@osx_only push!(DL_LOAD_PATH, "@executable_path/../lib")
-
 # strings & printing
 include("char.jl")
 include("ascii.jl")
@@ -104,15 +101,19 @@ include("iostream.jl")
 
 # system & environment
 include("libc.jl")
+using .Libc: getpid, gethostname, time, msync
+include("libdl.jl")
+using .Libdl: DL_LOAD_PATH
 include("env.jl")
-include("errno.jl")
-using .Errno
 include("path.jl")
 include("intfuncs.jl")
 
+# nullable types
+include("nullable.jl")
 
 # I/O
 include("task.jl")
+include("lock.jl")
 include("show.jl")
 include("stream.jl")
 include("socket.jl")
@@ -165,7 +166,6 @@ include("collections.jl")
 # Combinatorics
 include("sort.jl")
 importall .Sort
-include("combinatorics.jl")
 
 # version
 include("version.jl")
@@ -179,6 +179,8 @@ big(n::Integer) = convert(BigInt,n)
 big(x::FloatingPoint) = convert(BigFloat,x)
 big(q::Rational) = big(num(q))//big(den(q))
 
+include("combinatorics.jl")
+
 # more hashing definitions
 include("hashing2.jl")
 
@@ -191,8 +193,12 @@ importall .Random
 include("printf.jl")
 importall .Printf
 
-# nullable types
-include("nullable.jl")
+# metaprogramming
+include("meta.jl")
+
+# enums
+include("Enums.jl")
+importall .Enums
 
 # concurrency and parallelism
 include("serialize.jl")
@@ -209,14 +215,13 @@ include("poll.jl")
 include("mmap.jl")
 include("sharedarray.jl")
 
-# utilities - timing, help, edit, metaprogramming
+# utilities - timing, help, edit
 include("datafmt.jl")
 importall .DataFmt
 include("deepcopy.jl")
 include("interactiveutil.jl")
 include("replutil.jl")
 include("test.jl")
-include("meta.jl")
 include("i18n.jl")
 include("help.jl")
 using .I18n
@@ -248,12 +253,12 @@ const × = cross
 include("broadcast.jl")
 importall .Broadcast
 
+# statistics
+include("statistics.jl")
+
 # sparse matrices and sparse linear algebra
 include("sparse.jl")
 importall .SparseMatrix
-
-# statistics
-include("statistics.jl")
 
 # signal processing
 include("fftw.jl")
@@ -287,10 +292,6 @@ importall .Profile
 include("Dates.jl")
 import .Dates: Date, DateTime, now
 
-# enums
-include("Enums.jl")
-importall .Enums
-
 # deprecated functions
 include("deprecated.jl")
 
@@ -304,6 +305,7 @@ function __init__()
     fdwatcher_init()
     early_init()
     init_load_path()
+    init_parallel()
 end
 
 include("precompile.jl")

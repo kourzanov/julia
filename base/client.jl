@@ -139,14 +139,14 @@ end
 _repl_start = Condition()
 
 syntax_deprecation_warnings(warn::Bool) =
-    bool(ccall(:jl_parse_depwarn, Cint, (Cint,), warn))
+    Bool(ccall(:jl_parse_depwarn, Cint, (Cint,), warn))
 
 function parse_input_line(s::AbstractString)
     # s = bytestring(s)
     # (expr, pos) = parse(s, 1)
     # (ex, pos) = ccall(:jl_parse_string, Any,
     #                   (Ptr{UInt8},Int32,Int32),
-    #                   s, int32(pos)-1, 1)
+    #                   s, pos-1, 1)
     # if !is(ex,())
     #     throw(ParseError("extra input after end of expression"))
     # end
@@ -184,12 +184,13 @@ end
 try_include(path::AbstractString) = isfile(path) && include(path)
 
 # initialize the local proc network address / port
-function init_bind_addr(opts::JLOptions)
+function init_bind_addr()
+    opts = JLOptions()
     if opts.bindto != C_NULL
         bind_to = split(bytestring(opts.bindto), ":")
         bind_addr = string(parseip(bind_to[1]))
         if length(bind_to) > 1
-            bind_port = parseint(bind_to[2])
+            bind_port = parse(Int,bind_to[2])
         else
             bind_port = 0
         end
@@ -205,7 +206,7 @@ function init_bind_addr(opts::JLOptions)
     end
     global LPROC
     LPROC.bind_addr = bind_addr
-    LPROC.bind_port = uint16(bind_port)
+    LPROC.bind_port = UInt16(bind_port)
 end
 
 # NOTE: This set of required arguments need to be kept in sync with the required arguments defined in ui/repl.c
@@ -223,7 +224,6 @@ let reqarg = Set(UTF8String["--home",          "-H",
                             "--startup-file",
                             "--compile",
                             "--check-bounds",
-                            "--int-literals",
                             "--dump-bitcode",
                             "--depwarn",
                             "--inline",
@@ -231,63 +231,51 @@ let reqarg = Set(UTF8String["--home",          "-H",
                             "--bind-to"])
     global process_options
     function process_options(opts::JLOptions, args::Vector{UTF8String})
-        if !isempty(args) && (arg = first(args); arg[1] == '-' && in(arg, reqarg))
-            println(STDERR, "julia: option `$arg` is missing an argument")
-            exit(1)
+        if !isempty(args)
+            arg = first(args)
+            if !isempty(arg) && arg[1] == '-' && in(arg, reqarg)
+                println(STDERR, "julia: option `$arg` is missing an argument")
+                exit(1)
+            end
+            idxs = find(x -> x == "--", args)
+            if length(idxs) > 1
+                println(STDERR, "julia: redundant option terminator `--`")
+                exit(1)
+            end
+            deleteat!(ARGS, idxs)
         end
-        repl = true
-        startup = true
-        history_file = true
-        quiet = false
-        color_set = false
+        repl                  = true
+        startup               = (opts.startupfile != 2)
+        history_file          = Bool(opts.historyfile)
+        quiet                 = Bool(opts.quiet)
+        color_set             = (opts.color != 0)
+        global have_color     = (opts.color == 1)
+        global is_interactive = Bool(opts.isinteractive)
         while true
             # show julia VERSION and quit
-            if bool(opts.version)
+            if Bool(opts.version)
                 println(STDOUT, "julia version ", VERSION)
                 exit(0)
             end
-            # startup worker
-            if bool(opts.worker)
-                assert(opts.worker == 1 || opts.worker == 2)
-                # if default, start worker process otherwise if custom pass through
-                if opts.worker == 1
-                    start_worker() # does not return
-                end
-            end
-            # load file immediately on all processors
-            if opts.load != C_NULL
-                require(bytestring(opts.load))
-            end
-            # show banner
-            quiet = bool(opts.quiet)
+
             # load ~/.juliarc file
-            if opts.startupfile == 1
-                load_juliarc()
-                startup = false
-            elseif opts.startupfile == 2
-                startup = false
+            startup && load_juliarc()
+
+            # startup worker
+            if Bool(opts.worker)
+                start_worker() # does not return
             end
-            # load ~/.julia_history file
-            history_file = bool(opts.historyfile)
             # add processors
-            if opts.nprocs > 1
+            if opts.nprocs > 0
                 addprocs(opts.nprocs)
             end
             # load processes from machine file
             if opts.machinefile != C_NULL
                 addprocs(load_machine_file(bytestring(opts.machinefile)))
             end
-            global is_interactive = bool(opts.isinteractive)
-            # REPL color
-            if opts.color == 0
-                color_set = false
-                global have_color = false
-            elseif opts.color == 1
-                color_set = true
-                global have_color = true
-            elseif opts.color == 2
-                color_set = true
-                global have_color = false
+            # load file immediately on all processors
+            if opts.load != C_NULL
+                require(bytestring(opts.load))
             end
             # eval expression
             if opts.eval != C_NULL
@@ -308,11 +296,7 @@ let reqarg = Set(UTF8String["--home",          "-H",
             end
             # load file
             if !isempty(args)
-                if args[1][1] != '-'
-                    if startup
-                        load_juliarc()
-                        startup = false
-                    end
+                if !isempty(args[1]) && args[1][1] != '-'
                     # program
                     repl = false
                     # remove filename from ARGS
@@ -345,17 +329,6 @@ function init_load_path()
     push!(LOAD_PATH,abspath(JULIA_HOME,"..","share","julia","site",vers))
 end
 
-# start local process as head "master" process with process id  1
-# register this process as a local worker
-function init_head_sched()
-    # start in "head node" mode
-    global PGRP
-    global LPROC
-    LPROC.id = 1
-    assert(length(PGRP.workers) == 0)
-    register_worker(LPROC)
-end
-
 function load_juliarc()
     # If the user built us with a specific Base.SYSCONFDIR, check that location first for a juliarc.jl file
     #   If it is not found, then continue on to the relative path based on JULIA_HOME
@@ -372,7 +345,7 @@ function load_machine_file(path::AbstractString)
     for line in split(readall(path),'\n'; keep=false)
         s = map!(strip, split(line,'*'; keep=false))
         if length(s) > 1
-            cnt = isnumber(s[1]) ? int(s[1]) : symbol(s[1])
+            cnt = isnumber(s[1]) ? parse(Int,s[1]) : symbol(s[1])
             push!(machines,(s[2], cnt))
         else
             push!(machines,line)
@@ -393,11 +366,18 @@ function early_init()
     end
 end
 
-# starts the gc message task (for distrubuted gc) and
-# registers worker process termination method
 function init_parallel()
     start_gc_msgs_task()
     atexit(terminate_all_workers)
+
+    init_bind_addr()
+
+    # start in "head node" mode, if worker, will override later.
+    global PGRP
+    global LPROC
+    LPROC.id = 1
+    assert(length(PGRP.workers) == 0)
+    register_worker(LPROC)
 end
 
 import .Terminals
@@ -406,14 +386,11 @@ import .REPL
 function _start()
     opts = JLOptions()
     try
-        init_parallel()
-        init_bind_addr(opts)
-        # if this process is not a worker, schedule head process
-        bool(opts.worker) || init_head_sched()
         (quiet,repl,startup,color_set,history_file) = process_options(opts,copy(ARGS))
 
         local term
         global active_repl
+        global active_repl_backend
         if repl
             if !isa(STDIN,TTY)
                 global is_interactive |= !isa(STDIN,Union(File,IOStream))
@@ -437,8 +414,6 @@ function _start()
             end
         end
 
-        startup && load_juliarc()
-
         if repl
             if !isa(STDIN,TTY)
                 # note: currently IOStream is used for file STDIN
@@ -452,7 +427,7 @@ function _start()
                     end
                 end
             else
-                REPL.run_repl(active_repl)
+                active_repl_backend = REPL.run_repl(active_repl)
             end
         end
     catch err

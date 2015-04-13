@@ -15,12 +15,12 @@ function choosetests(choices = [])
     testnames = [
         "linalg", "core", "keywordargs", "numbers", "strings",
         "dates", "dict", "hashing", "remote", "iobuffer", "staged",
-        "arrayops", "subarray", "reduce", "reducedim", "random",
+        "arrayops", "tuple", "subarray", "reduce", "reducedim", "random",
         "intfuncs", "simdloop", "blas", "fft", "dsp", "sparse",
         "bitarray", "copy", "math", "fastmath", "functional",
-        "operators", "path",
+        "operators", "path", "ccall",
         "bigint", "sorting", "statistics", "spawn", "backtrace",
-        "priorityqueue", "arpack", "file", "version", "resolve",
+        "priorityqueue", "file", "version", "resolve",
         "pollfd", "mpfr", "broadcast", "complex", "socket",
         "floatapprox", "readdlm", "reflection", "regex", "float16",
         "combinatorics", "sysinfo", "rounding", "ranges", "mod2pi",
@@ -28,7 +28,7 @@ function choosetests(choices = [])
         "replutil", "sets", "test", "goto", "llvmcall", "grisu",
         "nullable", "meta", "profile", "libgit2", "docs", "markdown",
         "base64", "parser", "serialize", "functors", "char", "misc",
-        "enums", "cmdlineargs"
+        "enums", "cmdlineargs", "i18n"
     ]
 
     if isdir(joinpath(JULIA_HOME, Base.DOCDIR, "examples"))
@@ -46,8 +46,9 @@ function choosetests(choices = [])
         filter!(x -> x != "linalg", tests)
         prepend!(tests, ["linalg1", "linalg2", "linalg3", "linalg4",
             "linalg/lapack", "linalg/triangular", "linalg/tridiag",
+            "linalg/bidiag", "linalg/diagonal",
             "linalg/pinv", "linalg/givens", "linalg/cholesky", "linalg/lu",
-            "linalg/arnoldi"])
+            "linalg/arnoldi", "linalg/symmetric"])
         end
 
     net_required_for = ["socket", "parallel"]

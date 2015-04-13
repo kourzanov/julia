@@ -16,14 +16,14 @@ function interpinner(stream::IO, greedy = false)
 end
 
 @trigger '$' ->
-function interp(stream::IO)
+function interp(stream::IO, md::MD)
     withstream(stream) do
         ex = interpinner(stream)
         return ex
     end
 end
 
-function blockinterp(stream::IO, md::MD, config::Config)
+function blockinterp(stream::IO, md::MD)
     withstream(stream) do
         ex = interpinner(stream)
         if ex ≡ nothing

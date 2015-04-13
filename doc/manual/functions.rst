@@ -148,10 +148,10 @@ Operators Are Functions
 -----------------------
 
 In Julia, most operators are just functions with support for special
-syntax. The exceptions are operators with special evaluation semantics
+syntax. (The exceptions are operators with special evaluation semantics
 like ``&&`` and ``||``. These operators cannot be functions since
 :ref:`short-circuit evaluation <man-short-circuit-evaluation>` requires that
-their operands are not evaluated before evaluation of the operator.
+their operands are not evaluated before evaluation of the operator.)
 Accordingly, you can also apply them using parenthesized argument lists,
 just as you would any other function:
 
@@ -423,11 +423,11 @@ Optional Arguments
 
 In many cases, function arguments have sensible default values and therefore
 might not need to be passed explicitly in every call. For example, the
-library function :func:`parseint(num,base) <parseint>` interprets a string as a number
+library function :func:`parse(type,num,base) <parse>` interprets a string as a number
 in some base. The ``base`` argument defaults to ``10``. This behavior can be
 expressed concisely as::
 
-    function parseint(num, base=10)
+    function parse(type, num, base=10)
         ###
     end
 
@@ -437,13 +437,13 @@ specified:
 
 .. doctest::
 
-    julia> parseint("12",10)
+    julia> parse(Int,"12",10)
     12
 
-    julia> parseint("12",3)
+    julia> parse(Int,"12",3)
     5
 
-    julia> parseint("12")
+    julia> parse(Int,"12")
     12
 
 Optional arguments are actually just a convenient syntax for writing

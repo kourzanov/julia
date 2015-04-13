@@ -18,6 +18,29 @@ call{T}(::Type{Matrix{T}}, m::Integer, n::Integer) = Array{T}(m, n)
 
 ## Basic functions ##
 
+# convert Arrays to pointer arrays for ccall
+function call{P<:Ptr,T<:Ptr}(::Type{Ref{P}}, a::Array{T}) # Ref{P<:Ptr}(a::Array{T<:Ptr})
+    return RefArray(a) # effectively a no-op
+end
+function call{P<:Ptr,T}(::Type{Ref{P}}, a::Array{T}) # Ref{P<:Ptr}(a::Array)
+    if (!isbits(T) && T <: eltype(P))
+        # this Array already has the right memory layout for the requested Ref
+        return RefArray(a,1,false) # root something, so that this function is type-stable
+    else
+        ptrs = Array(P, length(a)+1)
+        roots = Array(Any, length(a))
+        for i = 1:length(a)
+            root = cconvert(P, a[i])
+            ptrs[i] = unsafe_convert(P, root)::P
+            roots[i] = root
+        end
+        ptrs[length(a)+1] = C_NULL
+        return RefArray(ptrs,1,roots)
+    end
+end
+cconvert{P<:Ptr,T<:Ptr}(::Union(Type{Ptr{P}},Type{Ref{P}}), a::Array{T}) = a
+cconvert{P<:Ptr}(::Union(Type{Ptr{P}},Type{Ref{P}}), a::Array) = Ref{P}(a)
+
 size(a::Array) = arraysize(a)
 size(a::Array, d) = arraysize(a, d)
 size(a::Matrix) = (arraysize(a,1), arraysize(a,2))
@@ -67,7 +90,7 @@ function copy(a::Array)
 end
 
 function reinterpret{T,S}(::Type{T}, a::Array{S,1})
-    nel = int(div(length(a)*sizeof(S),sizeof(T)))
+    nel = Int(div(length(a)*sizeof(S),sizeof(T)))
     # TODO: maybe check that remainder is zero?
     return reinterpret(T, a, (nel,))
 end
@@ -223,28 +246,6 @@ function one{T}(x::AbstractMatrix{T})
     eye(T, m)
 end
 
-linspace(start::Integer, stop::Integer, n::Integer) =
-    linspace(float(start), float(stop), n)
-function linspace(start::Real, stop::Real, n::Integer)
-    (start, stop) = promote(start, stop)
-    T = typeof(start)
-    a = Array(T, int(n))
-    if n == 1
-        a[1] = start
-        return a
-    end
-    n -= 1
-    S = promote_type(T, Float64)
-    for i=0:n
-        a[i+1] = start*(convert(S, (n-i))/n) + stop*(convert(S, i)/n)
-    end
-    a
-end
-linspace(start::Real, stop::Real) = linspace(start, stop, 100)
-
-logspace(start::Real, stop::Real, n::Integer) = 10.^linspace(start, stop, n)
-logspace(start::Real, stop::Real) = logspace(start, stop, 50)
-
 ## Conversions ##
 
 convert{T,n}(::Type{Array{T}}, x::Array{T,n}) = x
@@ -273,6 +274,11 @@ function collect(T::Type, itr)
 end
 
 collect(itr) = collect(eltype(itr), itr)
+
+## Iteration ##
+start(A::Array) = 1
+next(a::Array,i) = (a[i],i+1)
+done(a::Array,i) = (i > length(a))
 
 ## Indexing: getindex ##
 
@@ -937,7 +943,7 @@ function flipdim{T}(A::Array{T}, d::Integer)
 
     nnd = 0
     for i = 1:nd
-        nnd += int(size(A,i)==1 || i==d)
+        nnd += Int(size(A,i)==1 || i==d)
     end
     if nnd==nd
         # flip along the only non-singleton dimension

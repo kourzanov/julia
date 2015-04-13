@@ -13,22 +13,22 @@ STATIC_INLINE jl_value_t *newobj(jl_value_t *type, size_t nfields)
     jl_value_t *jv = NULL;
     switch (nfields) {
     case 1:
-        jv = (jl_value_t*)alloc_2w(); break;
+        jv = (jl_value_t*)alloc_1w(); break;
     case 2:
-        jv = (jl_value_t*)alloc_3w(); break;
+        jv = (jl_value_t*)alloc_2w(); break;
     case 3:
-        jv = (jl_value_t*)alloc_4w(); break;
+        jv = (jl_value_t*)alloc_3w(); break;
     default:
-        jv = (jl_value_t*)allocobj((1+nfields) * sizeof(void*));
+        jv = (jl_value_t*)allocobj(nfields * sizeof(void*));
     }
-    jv->type = type;
+    jl_set_typeof(jv, type);
     return jv;
 }
 
 STATIC_INLINE jl_value_t *newstruct(jl_datatype_t *type)
 {
-    jl_value_t *jv = (jl_value_t*)allocobj(sizeof(void*) + type->size);
-    jv->type = (jl_value_t*)type;
+    jl_value_t *jv = (jl_value_t*)allocobj(type->size);
+    jl_set_typeof(jv, type);
     return jv;
 }
 
@@ -98,11 +98,12 @@ void jl_init_frontend(void);
 void jl_init_primitives(void);
 void jl_init_codegen(void);
 void jl_init_intrinsic_functions(void);
-void jl_init_tasks(void *stack, size_t ssize);
+void jl_init_tasks(void);
+void jl_init_root_task(void *stack, size_t ssize);
 void jl_init_serializer(void);
 void _julia_init(JL_IMAGE_SEARCH rel);
 #ifdef COPY_STACKS
-extern void *jl_stackbase;
+extern JL_THREAD void *jl_stackbase;
 #endif
 
 void jl_dump_bitcode(char *fname);
@@ -161,6 +162,10 @@ extern uv_lib_t *jl_winsock_handle;
 #endif
 
 DLLEXPORT void jl_atexit_hook();
+
+#if defined(_CPU_X86_) || defined(_CPU_X86_64_)
+#define HAVE_CPUID
+#endif
 
 #ifdef __cplusplus
 }

@@ -322,7 +322,7 @@
             ((eq? pred char-bin?) (fix-uint-neg neg (sized-uint-literal n s 1)))
             (is-float32-literal   (float n))
             (n (if (and (integer? n) (> n 9223372036854775807))
-                   `(macrocall @int128_str ,n)
+                   `(macrocall @int128_str ,s)
                    n))
             ((within-int128? s) `(macrocall @int128_str ,s))
             (else `(macrocall @bigint_str ,s))))))
@@ -713,7 +713,11 @@
      (parse-RtoL s parse-comma is-prec-assignment?) lno)))
 
 ; parse-eq* is used where commas are special, for example in an argument list
-(define (parse-eq* s)   (parse-RtoL s parse-cond  is-prec-assignment?))
+(define (parse-eq* s)
+  (let ((lno (input-port-line (ts:port s))))
+    (short-form-function-loc
+     (parse-RtoL s parse-cond is-prec-assignment?) lno)))
+
 ; parse-comma is needed for commas outside parens, for example a = b,c
 (define (parse-comma s) (parse-Nary s parse-cond  '(#\,) 'tuple '() #f))
 (define (parse-or s)    (parse-LtoR s parse-and   is-prec-lazy-or?))
@@ -803,15 +807,18 @@
 ; given an expression and the next token, is there a juxtaposition
 ; operator between them?
 (define (juxtapose? expr t)
-  (and (not (operator? t))
-       (not (operator? expr))
+  (and (or (number? expr)
+           (large-number? expr)
+	   (not (number? t))    ;; disallow "x.3" and "sqrt(2)2"
+	   ;; to allow x'y as a special case
+	   #;(and (pair? expr) (memq (car expr) '(|'| |.'|))
+		(not (memv t '(#\( #\[ #\{))))
+	   )
+       (not (operator? t))
        (not (memq t reserved-words))
        (not (closing-token? t))
        (not (newline? t))
-       (not (and (pair? expr) (eq? (car expr) '...)))
-       (or (number? expr)
-           (large-number? expr)
-           (not (memv t '(#\( #\[ #\{))))))
+       (not (and (pair? expr) (syntactic-unary-op? (car expr))))))
 
 (define (parse-juxtapose ex s)
   (let ((next (peek-token s)))
@@ -828,7 +835,8 @@
   (let ((t (require-token s)))
     (if (closing-token? t)
         (error (string "unexpected " t)))
-    (cond ((memq t unary-ops)
+    ;; TODO: ? should probably not be listed here except for the syntax hack in osutils.jl
+    (cond ((and (operator? t) (not (memq t '(: |'| ?))) (not (syntactic-unary-op? t)))
            (let* ((op  (take-token s))
                   (nch (peek-char (ts:port s))))
              (if (and (or (eq? op '-) (eq? op '+))
@@ -844,11 +852,14 @@
                               (list 'call op (parse-factor s)))
                        num))
                  (let ((next (peek-token s)))
-                   (cond ((or (closing-token? next) (newline? next))
+                   (cond ((or (closing-token? next) (newline? next) (eq? next '=))
                           op)  ; return operator by itself, as in (+)
                          ((eqv? next #\{)  ;; this case is +{T}(x::T) = ...
                           (ts:put-back! s op)
                           (parse-factor s))
+			 ((and (not (memq op unary-ops))
+			       (not (eqv? next #\( )))
+			  (error (string "\"" op "\" is not a unary operator")))
                          (else
                           (let ((arg (parse-unary s)))
                             (if (and (pair? arg)
@@ -986,7 +997,10 @@
                            `(macrocall (|.| ,ex (quote ,(cadr name)))
                                        ,@(cddr name))
                            `(|.| ,ex (quote ,name))))))))
-            ((|.'| |'|) (take-token s)
+            ((|.'| |'|)
+	     (if (ts:space? s)
+		 (error (string "space not allowed before \"" t "\"")))
+	     (take-token s)
              (loop (list t ex)))
             ((#\{ )   (take-token s)
              (loop (list* 'curly ex
@@ -1126,9 +1140,8 @@
      (list 'abstract (parse-subtype-spec s)))
     ((type immutable)
      (let ((immu? (eq? word 'immutable)))
-       (if (and immu? (eq? (peek-token s) 'type))
-           ;; allow "immutable type"
-           (take-token s))
+       (if (memq (peek-token s) reserved-words)
+	   (error (string "invalid type name \"" (take-token s) "\"")))
        (let ((sig (parse-subtype-spec s)))
          (begin0 (list 'type (if (eq? word 'type) #t #f)
                        sig (parse-block s))
@@ -1732,7 +1745,9 @@
                       (or (not (symbol? nxt))
                           (ts:space? s)))
                  ':
-                 (list 'quote (parse-atom- s)))))
+		 (if (ts:space? s)
+		     (error "space not allowed after \":\" used for quoting")
+		     (list 'quote (parse-atom- s))))))
 
           ;; misplaced =
           ((eq? t '=) (error "unexpected \"=\""))

@@ -336,11 +336,12 @@ scale!(b::AbstractVector, A::AbstractMatrix) = scale!(A,b,A)
 #findmin(a::AbstractArray)
 
 function peakflops(n::Integer=2000; parallel::Bool=false)
-    a = rand(100,100)
-    t = @elapsed a*a
-    a = rand(n,n)
-    t = @elapsed a*a
-    parallel ? sum(pmap(peakflops, [ n for i in 1:nworkers()])) : (2*float64(n)^3/t)
+    a = ones(Float64,100,100)
+    t = @elapsed a2 = a*a
+    a = ones(Float64,n,n)
+    t = @elapsed a2 = a*a
+    @assert a2[1,1] == n
+    parallel ? sum(pmap(peakflops, [ n for i in 1:nworkers()])) : (2*Float64(n)^3/t)
 end
 
 # BLAS-like in-place y=alpha*x+y function (see also the version in blas.jl

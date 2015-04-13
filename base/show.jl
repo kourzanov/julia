@@ -9,18 +9,17 @@ function show(io::IO, x::ANY)
     nf = nfields(t)
     if nf != 0 || t.size==0
         recorded = false
-        oid = object_id(x)
         shown_set = get(task_local_storage(), :SHOWNSET, nothing)
         if shown_set == nothing
-            shown_set = Set()
+            shown_set = ObjectIdDict()
             task_local_storage(:SHOWNSET, shown_set)
         end
 
         try
-            if oid in shown_set
+            if x in keys(shown_set)
                 print(io, "#= circular reference =#")
             else
-                push!(shown_set, oid)
+                shown_set[x] = true
                 recorded = true
 
                 nf = nfields(t)
@@ -40,12 +39,12 @@ function show(io::IO, x::ANY)
             rethrow(e)
 
         finally
-            if recorded delete!(shown_set, oid) end
+            if recorded; delete!(shown_set, x); end
         end
     else
         nb = t.size
         print(io, "0x")
-        p = pointer_from_objref(x) + sizeof(Ptr{Void})
+        p = data_pointer_from_objref(x)
         for i=nb-1:-1:0
             print(io, hex(unsafe_load(convert(Ptr{UInt8}, p+i)), 2))
         end
@@ -114,7 +113,7 @@ show(io::IO, n::Signed) = (write(io, dec(n)); nothing)
 show(io::IO, n::Unsigned) = print(io, "0x", hex(n,sizeof(n)<<1))
 print(io::IO, n::Unsigned) = print(io, dec(n))
 
-show{T}(io::IO, p::Ptr{T}) = print(io, typeof(p), " @0x$(hex(unsigned(p), WORD_SIZE>>2))")
+show{T}(io::IO, p::Ptr{T}) = print(io, typeof(p), " @0x$(hex(UInt(p), WORD_SIZE>>2))")
 
 function show(io::IO, p::Pair)
     show(io, p.first)
@@ -271,8 +270,7 @@ end
 isidentifier(s::Symbol) = isidentifier(string(s))
 
 isoperator(s::Symbol) = ccall(:jl_is_operator, Cint, (Ptr{UInt8},), s) != 0
-operator_precedence(s::Symbol) = int(ccall(:jl_operator_precedence,
-                                           Cint, (Ptr{UInt8},), s))
+operator_precedence(s::Symbol) = Int(ccall(:jl_operator_precedence, Cint, (Ptr{UInt8},), s))
 operator_precedence(x::Any) = 0 # fallback for generic expression nodes
 const prec_power = operator_precedence(:(^))
 
@@ -493,7 +491,7 @@ function show_unquoted(io::IO, ex::Expr, indent::Int, prec::Int)
             end
 
         # unary operator (i.e. "!z")
-        elseif func in uni_ops && length(func_args) == 1
+        elseif isa(func,Symbol) && func in uni_ops && length(func_args) == 1
             show_unquoted(io, func, indent)
             if isa(func_args[1], Expr) || length(func_args) > 1
                 show_enclosed_list(io, '(', func_args, ",", ')', indent, func_prec)
@@ -1173,6 +1171,7 @@ function showarray(io::IO, X::AbstractArray;
         end
         if !limit
             rows = cols = typemax(Int)
+            sz = (rows, cols)
         end
         if repr
             if ndims(X)<=2
