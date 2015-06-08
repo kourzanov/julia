@@ -1,3 +1,5 @@
+# This file is a part of Julia. License is MIT: http://julialang.org/license
+
 const _fact_table64 =
     Int64[1,2,6,24,120,720,5040,40320,362880,3628800,39916800,479001600,6227020800,
           87178291200,1307674368000,20922789888000,355687428096000,6402373705728000,
@@ -351,7 +353,7 @@ function nextfixedpartition(n, m, bs)
     return as
 end
 
-let _nipartitions = Dict{(Int,Int),Int}()
+let _nipartitions = Dict{Tuple{Int,Int},Int}()
     global npartitions
     function npartitions(n::Int,m::Int)
         if n < m || m == 0

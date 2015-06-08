@@ -1,3 +1,5 @@
+# This file is a part of Julia. License is MIT: http://julialang.org/license
+
 ## IOStream
 
 const sizeof_ios_t = Int(ccall(:jl_sizeof_ios_t, Int32, ()))
@@ -27,15 +29,15 @@ show(io::IO, s::IOStream) = print(io, "IOStream(", s.name, ")")
 fd(s::IOStream) = Int(ccall(:jl_ios_fd, Clong, (Ptr{Void},), s.ios))
 stat(s::IOStream) = stat(fd(s))
 close(s::IOStream) = ccall(:ios_close, Void, (Ptr{Void},), s.ios)
-isopen(s::IOStream) = Bool(ccall(:ios_isopen, Cint, (Ptr{Void},), s.ios))
+isopen(s::IOStream) = ccall(:ios_isopen, Cint, (Ptr{Void},), s.ios)!=0
 function flush(s::IOStream)
     sigatomic_begin()
     systemerror("flush", ccall(:ios_flush, Cint, (Ptr{Void},), s.ios) != 0)
     sigatomic_end()
     s
 end
-iswritable(s::IOStream) = Bool(ccall(:ios_get_writable, Cint, (Ptr{Void},), s.ios))
-isreadable(s::IOStream) = Bool(ccall(:ios_get_readable, Cint, (Ptr{Void},), s.ios))
+iswritable(s::IOStream) = ccall(:ios_get_writable, Cint, (Ptr{Void},), s.ios)!=0
+isreadable(s::IOStream) = ccall(:ios_get_readable, Cint, (Ptr{Void},), s.ios)!=0
 
 function truncate(s::IOStream, n::Integer)
     systemerror("truncate", ccall(:ios_trunc, Int32, (Ptr{Void}, UInt), s.ios, n) != 0)
@@ -86,7 +88,7 @@ function open(fname::AbstractString, rd::Bool, wr::Bool, cr::Bool, tr::Bool, ff:
     s = IOStream(string("<file ",fname,">"))
     systemerror("opening file $fname",
                 ccall(:ios_file, Ptr{Void},
-                      (Ptr{UInt8}, Ptr{UInt8}, Int32, Int32, Int32, Int32),
+                      (Ptr{UInt8}, Cstring, Int32, Int32, Int32, Int32),
                       s.ios, fname, rd, wr, cr, tr) == C_NULL)
     if ff
         systemerror("seeking to end of file $fname", ccall(:ios_seek_end, FileOffset, (Ptr{Void},), s.ios) != 0)
@@ -126,7 +128,7 @@ function write{T}(s::IOStream, a::Array{T})
         Int(ccall(:ios_write, UInt, (Ptr{Void}, Ptr{Void}, UInt),
                   s.ios, a, length(a)*sizeof(T)))
     else
-        invoke(write, (IO, Array), s, a)
+        invoke(write, Tuple{IO, Array}, s, a)
     end
 end
 
@@ -139,7 +141,7 @@ end
 
 function write{T,N,A<:Array}(s::IOStream, a::SubArray{T,N,A})
     if !isbits(T) || stride(a,1)!=1
-        return invoke(write, (Any, AbstractArray), s, a)
+        return invoke(write, Tuple{Any, AbstractArray}, s, a)
     end
     colsz = size(a,1)*sizeof(T)
     if N<=1
@@ -170,7 +172,7 @@ function read!{T}(s::IOStream, a::Array{T})
             throw(EOFError())
         end
     else
-        invoke(read!, (IO, Array), s, a)
+        invoke(read!, Tuple{IO, Array}, s, a)
     end
     a
 end

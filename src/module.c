@@ -1,3 +1,5 @@
+// This file is a part of Julia. License is MIT: http://julialang.org/license
+
 /*
   modules and top-level bindings
 */
@@ -12,6 +14,7 @@ extern "C" {
 jl_module_t *jl_main_module=NULL;
 jl_module_t *jl_core_module=NULL;
 jl_module_t *jl_base_module=NULL;
+jl_module_t *jl_top_module=NULL;
 jl_module_t *jl_current_module=NULL;
 
 jl_module_t *jl_new_module(jl_sym_t *name)
@@ -24,6 +27,8 @@ jl_module_t *jl_new_module(jl_sym_t *name)
     m->parent = NULL;
     m->constant_table = NULL;
     m->call_func = NULL;
+    m->istopmod = 0;
+    m->uuid = uv_now(uv_default_loop());
     htable_new(&m->bindings, 0);
     arraylist_new(&m->usings, 0);
     if (jl_core_module) {
@@ -36,13 +41,27 @@ jl_module_t *jl_new_module(jl_sym_t *name)
     return m;
 }
 
-DLLEXPORT jl_value_t *jl_f_new_module(jl_sym_t *name)
+DLLEXPORT jl_value_t *jl_f_new_module(jl_sym_t *name, uint8_t std_imports)
 {
     jl_module_t *m = jl_new_module(name);
+    JL_GC_PUSH1(&m);
     m->parent = jl_main_module;
     gc_wb(m, m->parent);
-    jl_add_standard_imports(m);
+    if (std_imports) jl_add_standard_imports(m);
+    JL_GC_POP();
     return (jl_value_t*)m;
+}
+
+DLLEXPORT void jl_set_istopmod(uint8_t isprimary)
+{
+    jl_current_module->istopmod = 1;
+    if (isprimary)
+        jl_top_module = jl_current_module;
+}
+
+DLLEXPORT uint8_t jl_istopmod(jl_module_t *mod)
+{
+    return mod->istopmod;
 }
 
 static jl_binding_t *new_binding(jl_sym_t *name)
@@ -85,6 +104,15 @@ jl_binding_t *jl_get_binding_wr(jl_module_t *m, jl_sym_t *var)
     *bp = b;
     gc_wb_buf(m, b);
     return *bp;
+}
+
+// return module of binding
+DLLEXPORT jl_module_t *jl_get_module_of_binding(jl_module_t *m, jl_sym_t *var)
+{
+    jl_binding_t *b = jl_get_binding(m, var);
+    if (b == NULL)
+        jl_undefined_var_error(var);
+    return b->owner;
 }
 
 // get binding for adding a method
@@ -143,20 +171,34 @@ static jl_binding_t *jl_get_binding_(jl_module_t *m, jl_sym_t *var, modstack_t *
     }
     jl_binding_t *b = (jl_binding_t*)ptrhash_get(&m->bindings, var);
     if (b == HT_NOTFOUND || b->owner == NULL) {
+        jl_module_t *owner = NULL;
         for(int i=(int)m->usings.len-1; i >= 0; --i) {
             jl_module_t *imp = (jl_module_t*)m->usings.items[i];
-            b = (jl_binding_t*)ptrhash_get(&imp->bindings, var);
-            if (b != HT_NOTFOUND && b->exportp) {
-                b = jl_get_binding_(imp, var, &top);
-                if (b == NULL || b->owner == NULL)
+            jl_binding_t *tempb = (jl_binding_t*)ptrhash_get(&imp->bindings, var);
+            if (tempb != HT_NOTFOUND && tempb->exportp) {
+                tempb = jl_get_binding_(imp, var, &top);
+                if (tempb == NULL || tempb->owner == NULL)
                     // couldn't resolve; try next using (see issue #6105)
                     continue;
-                // do a full import to prevent the result of this lookup
-                // from changing, for example if this var is assigned to
-                // later.
-                module_import_(m, b->owner, var, 0);
-                return b;
+                if (owner != NULL && tempb->owner != b->owner &&
+                    !(tempb->constp && tempb->value && b->constp && b->value == tempb->value)) {
+                    jl_printf(JL_STDERR,
+                              "Warning: both %s and %s export \"%s\"; uses of it in module %s must be qualified\n",
+                              owner->name->name, imp->name->name, var->name, m->name->name);
+                    // mark this binding resolved, to avoid repeating the warning
+                    (void)jl_get_binding_wr(m, var);
+                    return NULL;
+                }
+                owner = imp;
+                b = tempb;
             }
+        }
+        if (owner != NULL) {
+            // do a full import to prevent the result of this lookup
+            // from changing, for example if this var is assigned to
+            // later.
+            module_import_(m, b->owner, var, 0);
+            return b;
         }
         return NULL;
     }
@@ -176,6 +218,14 @@ static int eq_bindings(jl_binding_t *a, jl_binding_t *b)
     if (a->name == b->name && a->owner == b->owner) return 1;
     if (a->constp && a->value && b->constp && b->value == a->value) return 1;
     return 0;
+}
+
+// does module m explicitly import s?
+int jl_is_imported(jl_module_t *m, jl_sym_t *s)
+{
+    jl_binding_t **bp = (jl_binding_t**)ptrhash_bp(&m->bindings, s);
+    jl_binding_t *bto = *bp;
+    return (bto != HT_NOTFOUND && bto->imported);
 }
 
 // NOTE: we use explici since explicit is a C++ keyword
@@ -432,6 +482,7 @@ DLLEXPORT jl_value_t *jl_module_names(jl_module_t *m, int all, int imported)
 
 DLLEXPORT jl_sym_t *jl_module_name(jl_module_t *m) { return m->name; }
 DLLEXPORT jl_module_t *jl_module_parent(jl_module_t *m) { return m->parent; }
+DLLEXPORT uint64_t jl_module_uuid(jl_module_t *m) { return m->uuid; }
 
 jl_function_t *jl_module_get_initializer(jl_module_t *m)
 {

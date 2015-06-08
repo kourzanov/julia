@@ -39,30 +39,58 @@ Any[
 
 ("Base","eachindex","eachindex(A)
 
-   Creates an iterable object for visiting each multi-dimensional
-   index of the AbstractArray \"A\".  Example for a 2-d array:
+   Creates an iterable object for visiting each index of an
+   AbstractArray \"A\" in an efficient manner. For array types that
+   have opted into fast linear indexing (like \"Array\"), this is
+   simply the range \"1:length(A)\". For other array types, this
+   returns a specialized Cartesian range to efficiently index into the
+   array with indices specified for every dimension. Example for a
+   sparse 2-d array:
 
-      julia> A = rand(2,3)
-      2x3 Array{Float64,2}:
-       0.960084  0.629326  0.625155
-       0.432588  0.955903  0.991614
+      julia> A = sprand(2, 3, 0.5)
+      2x3 sparse matrix with 4 Float64 entries:
+          [1, 1]  =  0.598888
+          [1, 2]  =  0.0230247
+          [1, 3]  =  0.486499
+          [2, 3]  =  0.809041
 
       julia> for iter in eachindex(A)
                  @show iter.I_1, iter.I_2
                  @show A[iter]
              end
       (iter.I_1,iter.I_2) = (1,1)
-      A[iter] = 0.9600836263003063
+      A[iter] = 0.5988881393454597
       (iter.I_1,iter.I_2) = (2,1)
-      A[iter] = 0.4325878255452178
+      A[iter] = 0.0
       (iter.I_1,iter.I_2) = (1,2)
-      A[iter] = 0.6293256402775211
+      A[iter] = 0.02302469881746183
       (iter.I_1,iter.I_2) = (2,2)
-      A[iter] = 0.9559027084099654
+      A[iter] = 0.0
       (iter.I_1,iter.I_2) = (1,3)
-      A[iter] = 0.6251548453735303
+      A[iter] = 0.4864987874354343
       (iter.I_1,iter.I_2) = (2,3)
-      A[iter] = 0.9916142534546522
+      A[iter] = 0.8090413606455655
+
+"),
+
+("Base","Base","Base.linearindexing(A)
+
+   \"linearindexing\" defines how an AbstractArray most efficiently
+   accesses its elements.  If \"Base.linearindexing(A)\" returns
+   \"Base.LinearFast()\", this means that linear indexing with only
+   one index is an efficient operation.  If it instead returns
+   \"Base.LinearSlow()\" (by default), this means that the array
+   intrinsically accesses its elements with indices specified for
+   every dimension.  Since converting a linear index to multiple
+   indexing subscripts is typically very expensive, this provides a
+   traits-based mechanism to enable efficient generic code for all
+   array types.
+
+   An abstract array subtype \"MyArray\" that wishes to opt into fast
+   linear indexing behaviors should define \"linearindexing\" in the
+   type-domain:
+
+      Base.linearindexing{T<:MyArray}(::Type{T}) = Base.LinearFast()
 
 "),
 
@@ -254,15 +282,14 @@ Any[
 
 ("Base","linspace","linspace(start, stop, n=100)
 
-   Construct a vector of \"n\" linearly-spaced elements from \"start\"
-   to \"stop\". See also: \"linrange()\" that constructs a range
-   object.
+   Construct a range of \"n\" linearly spaced elements from \"start\"
+   to \"stop\".
 
 "),
 
 ("Base","logspace","logspace(start, stop, n=50)
 
-   Construct a vector of \"n\" logarithmically-spaced numbers from
+   Construct a vector of \"n\" logarithmically spaced numbers from
    \"10^start\" to \"10^stop\".
 
 "),
@@ -404,7 +431,7 @@ Any[
 
 "),
 
-("Base","hvcat","hvcat(rows::(Int...), values...)
+("Base","hvcat","hvcat(rows::Tuple{Vararg{Int}}, values...)
 
    Horizontal and vertical concatenation in one call. This function is
    called for block matrix syntax. The first argument specifies the
@@ -1193,6 +1220,16 @@ Any[
 
 "),
 
+("Base","atreplinit","atreplinit(f)
+
+   Register a one-argument function to be called before the REPL
+   interface is initialized in interactive sessions; this is useful to
+   customize the interface. The argument of \"f\" is the REPL object.
+   This function should be called from within the \".juliarc.jl\"
+   initialization file.
+
+"),
+
 ("Base","isinteractive","isinteractive() -> Bool
 
    Determine whether Julia is running an interactive session.
@@ -1331,11 +1368,20 @@ Any[
 
 "),
 
+("Base","which","which(symbol)
+
+   Return the module in which the binding for the variable referenced
+   by \"symbol\" was created.
+
+"),
+
 ("Base","@which","@which()
 
-   Evaluates the arguments to the specified function call, and returns
-   the \"Method\" object for the method that would be called for those
-   arguments.
+   Applied to a function call, it evaluates the arguments to the
+   specified function call, and returns the \"Method\" object for the
+   method that would be called for those arguments.  Applied to a
+   variable, it returns the module in which the variable was bound. It
+   calls out to the \"which\" function.
 
 "),
 
@@ -1381,6 +1427,13 @@ Any[
    statement such as \"using LastMain.Package\".
 
    This function should only be used interactively.
+
+"),
+
+("Base","ans","ans
+
+   A variable referring to the last computed value, automatically set
+   at the interactive prompt.
 
 "),
 
@@ -1574,7 +1627,7 @@ Any[
 
       julia> convert(Int, 3.5)
       ERROR: InexactError()
-       in convert at int.jl:185
+       in convert at int.jl:196
 
    If \"T\" is a \"FloatingPoint\" or \"Rational\" type, then it will
    return the closest value to \"x\" representable by \"T\".
@@ -1756,7 +1809,7 @@ Any[
       julia> structinfo(T) = [zip(fieldoffsets(T),fieldnames(T),T.types)...];
 
       julia> structinfo(StatStruct)
-      12-element Array{(Int64,Symbol,DataType),1}:
+      12-element Array{Tuple{Int64,Symbol,DataType},1}:
        (0,:device,UInt64)
        (8,:inode,UInt64)
        (16,:mode,UInt64)
@@ -1843,14 +1896,15 @@ Any[
 
 ("","@enum EnumName EnumValue1[=x] EnumValue2[=y]","@enum EnumName EnumValue1[=x] EnumValue2[=y]
 
-   Create an *Enum* type with name *EnumName* and enum member values
-   of *EnumValue1* and *EnumValue2* with optional assigned values of
-   *x* and *y*, respectively. *EnumName* can be used just like other
-   types and enum member values as regular values, such as
+   Create an \"Enum\" type with name \"EnumName\" and enum member
+   values of \"EnumValue1\" and \"EnumValue2\" with optional assigned
+   values of \"x\" and \"y\", respectively. \"EnumName\" can be used
+   just like other types and enum member values as regular values,
+   such as
 
       julia> @enum FRUIT apple=1 orange=2 kiwi=3
 
-      julia> f(x::FRUIT) = \"I'm a FRUIT with value: \$(int(x))\"
+      julia> f(x::FRUIT) = \"I'm a FRUIT with value: \$(Int(x))\"
       f (generic function with 1 method)
 
       julia> f(apple)
@@ -1858,32 +1912,12 @@ Any[
 
 "),
 
-("Base","apply","apply(f, x...)
-
-   Accepts a function and several arguments, each of which must be
-   iterable. The elements generated by all the arguments are appended
-   into a single list, which is then passed to \"f\" as its argument
-   list.
-
-      julia> function f(x, y) # Define a function f
-                 x + y
-             end;
-
-      julia> apply(f, [1 2]) # Apply f with 1 and 2 as arguments
-      3
-
-   \"apply\" is called to implement the \"...\" argument splicing
-   syntax, and is usually not called directly: \"apply(f,x) ===
-   f(x...)\"
-
-"),
-
-("Base","method_exists","method_exists(f, tuple) -> Bool
+("Base","method_exists","method_exists(f, Tuple type) -> Bool
 
    Determine whether the given generic function has a method matching
-   the given tuple of argument types.
+   the given \"Tuple\" of argument types.
 
-      julia> method_exists(length, (Array,))
+      julia> method_exists(length, Tuple{Array})
       true
 
 "),
@@ -1922,7 +1956,7 @@ Any[
    Applies a function to the preceding argument. This allows for easy
    function chaining.
 
-      julia> [1:5] |> x->x.^2 |> sum |> inv
+      julia> [1:5;] |> x->x.^2 |> sum |> inv
       0.01818181818181818
 
 "),
@@ -2148,11 +2182,27 @@ Any[
 ("Base","setenv","setenv(command, env; dir=working_dir)
 
    Set environment variables to use when running the given command.
-   \"env\" is either a dictionary mapping strings to strings, or an
-   array of strings of the form \"\"var=val\"\".
+   \"env\" is either a dictionary mapping strings to strings, an array
+   of strings of the form \"\"var=val\"\", or zero or more
+   \"\"var\"=>val\" pair arguments.  In order to modify (rather than
+   replace) the existing environment, create \"env\" by \"copy(ENV)\"
+   and then setting \"env[\"var\"]=val\" as desired, or use
+   \"withenv\".
 
    The \"dir\" keyword argument can be used to specify a working
    directory for the command.
+
+"),
+
+("Base","withenv","withenv(f::Function, kv::Pair...)
+
+   Execute \"f()\" in an environment that is temporarily modified (not
+   replaced as in \"setenv\") by zero or more \"\"var\"=>val\"
+   arguments \"kv\".  \"withenv\" is generally used via the
+   \"withenv(kv...) do ... end\" syntax.  A value of \"nothing\" can
+   be used to temporarily unset an environment variable (if it is
+   set).  When \"withenv\" returns, the original environment has been
+   restored.
 
 "),
 
@@ -2249,8 +2299,25 @@ Any[
 ("Base","@time","@time()
 
    A macro to execute an expression, printing the time it took to
-   execute and the total number of bytes its execution caused to be
-   allocated, before returning the value of the expression.
+   execute, the number of allocations, and the total number of bytes
+   its execution caused to be allocated, before returning the value of
+   the expression.
+
+"),
+
+("Base","@timev","@timev()
+
+   This is a verbose version of the \"@time\" macro, it first prints
+   the same information as \"@time\", then any non-zero memory
+   allocation counters, and then returns the value of the expression.
+
+"),
+
+("Base","@timed","@timed()
+
+   A macro to execute an expression, and return the value of the
+   expression, elapsed time, total bytes allocated, garbage collection
+   time, and an object with various memory allocation counters.
 
 "),
 
@@ -2266,7 +2333,12 @@ Any[
 
    A macro to evaluate an expression, discarding the resulting value,
    instead returning the total number of bytes allocated during
-   evaluation of the expression.
+   evaluation of the expression. Note: the expression is evaluated
+   inside a local function, instead of the current context, in order
+   to eliminate the effects of compilation, however, there still may
+   be some allocations due to JIT compilation.  This also makes the
+   results inconsistent with the \"@time\" macros, which do not try to
+   adjust for the effects of compilation.
 
 "),
 
@@ -2319,7 +2391,7 @@ Any[
 
 ("Base","error","error(message::AbstractString)
 
-   Raise an error with the given message
+   Raise an \"ErrorException\" with the given message
 
 "),
 
@@ -2350,7 +2422,7 @@ Any[
 
 "),
 
-("Base","assert","assert(cond[, text])
+("Base","assert","assert(cond)
 
    Throw an \"AssertionError\" if \"cond\" is false. Also available as
    the macro \"@assert expr\".
@@ -2364,46 +2436,77 @@ Any[
 
 "),
 
-("Base","AssertionError","AssertionError
+("Base","ArgumentError","ArgumentError(msg)
+
+   The parameters to a function call do not match a valid signature.
+
+"),
+
+("Base","AssertionError","AssertionError([msg])
 
    The asserted condition did not evalutate to \"true\".
 
 "),
 
-("Base","ArgumentError","ArgumentError
+("Base","BoundsError","BoundsError([a][, i])
 
-   The parameters given to a function call are not valid.
-
-"),
-
-("Base","BoundsError","BoundsError
-
-   An indexing operation into an array tried to access an out-of-
-   bounds element.
+   An indexing operation into an array, \"a\", tried to access an out-
+   of-bounds element, \"i\".
 
 "),
 
-("Base","EOFError","EOFError
+("Base","DimensionMismatch","DimensionMismatch([msg])
+
+   The objects called do not have matching dimensionality.
+
+"),
+
+("Base","DivideError","DivideError()
+
+   Integer division was attempted with a denominator value of 0.
+
+"),
+
+("Base","DomainError","DomainError()
+
+   The arguments to a function or constructor are outside the valid
+   domain.
+
+"),
+
+("Base","EOFError","EOFError()
 
    No more data was available to read from a file or stream.
 
 "),
 
-("Base","ErrorException","ErrorException
+("Base","ErrorException","ErrorException(msg)
 
    Generic error type. The error message, in the *.msg* field, may
    provide more specific details.
 
 "),
 
-("Base","KeyError","KeyError
+("Base","InexactError","InexactError()
+
+   Type conversion cannot be done exactly.
+
+"),
+
+("Base","InterruptException","InterruptException()
+
+   The process was stopped by a terminal interrupt (CTRL+C).
+
+"),
+
+("Base","KeyError","KeyError(key)
 
    An indexing operation into an \"Associative\" (\"Dict\") or \"Set\"
    like object tried to access or delete a non-existent element.
 
 "),
 
-("Base","LoadError","LoadError
+("Base","LoadError","LoadError(file::AbstractString, line::Int, error)
 
    An error occurred while *including*, *requiring*, or *using* a
    file. The error specifics should be available in the *.error*
@@ -2411,38 +2514,77 @@ Any[
 
 "),
 
-("Base","MethodError","MethodError
+("Base","MethodError","MethodError(f, args)
 
    A method with the required type signature does not exist in the
    given generic function.
 
 "),
 
-("Base","ParseError","ParseError
+("Base","NullException","NullException()
+
+   An attempted access to a \"Nullable\" with no defined value.
+
+"),
+
+("Base","OutOfMemoryError","OutOfMemoryError()
+
+   An operation allocated too much memory for either the system or the
+   garbage collector to handle properly.
+
+"),
+
+("Base","OverflowError","OverflowError()
+
+   The result of an expression is too large for the specified type and
+   will cause a wraparound.
+
+"),
+
+("Base","ParseError","ParseError(msg)
 
    The expression passed to the *parse* function could not be
    interpreted as a valid Julia expression.
 
 "),
 
-("Base","ProcessExitedException","ProcessExitedException
+("Base","ProcessExitedException","ProcessExitedException()
 
    After a client Julia process has exited, further attempts to
    reference the dead child will throw this exception.
 
 "),
 
-("Base","SystemError","SystemError
+("Base","StackOverflowError","StackOverflowError()
+
+   The function call grew beyond the size of the call stack. This
+   usually happens when a call recurses infinitely.
+
+"),
+
+("Base","SystemError","SystemError(prefix::AbstractString[, errnum::Int32])
 
    A system call failed with an error code (in the \"errno\" global
    variable).
 
 "),
 
-("Base","TypeError","TypeError
+("Base","TypeError","TypeError(func::Symbol, context::AbstractString, expected::Type, got)
 
    A type assertion failure, or calling an intrinsic function with an
    incorrect argument type.
+
+"),
+
+("Base","UndefRefError","UndefRefError()
+
+   The item or field is not defined for the given object.
+
+"),
+
+("Base","UndefVarError","UndefVarError(var::Symbol)
+
+   A symbol in the current scope is not defined.
 
 "),
 
@@ -2501,6 +2643,12 @@ Any[
 
    Get an array of the names exported by a module, with optionally
    more module globals according to the additional parameters.
+
+"),
+
+("Base","nfields","nfields(x::DataType) -> Int
+
+   Get the number of fields of a data type.
 
 "),
 
@@ -2639,6 +2787,9 @@ Any[
    Prints the LLVM bitcodes generated for running the method matching
    the given generic function and type signature to \"STDOUT\".
 
+   All metadata and dbg.* calls are removed from the printed bitcode.
+   Use code_llvm_raw for the full IR.
+
 "),
 
 ("Base","@code_llvm","@code_llvm()
@@ -2663,7 +2814,7 @@ Any[
 
 "),
 
-("Base","precompile","precompile(f, args::(Any..., ))
+("Base","precompile","precompile(f, args::Tuple{Vararg{Any}})
 
    Compile the given function \"f\" for the argument tuple (of types)
    \"args\", but do not execute it.
@@ -3586,7 +3737,7 @@ Any[
    intermediate collection needs to be created. See documentation for
    \"reduce()\" and \"map()\".
 
-      julia> mapreduce(x->x^2, +, [1:3]) # == 1 + 4 + 9
+      julia> mapreduce(x->x^2, +, [1:3;]) # == 1 + 4 + 9
       14
 
    The associativity of the reduction is implementation-dependent.
@@ -4101,7 +4252,7 @@ Any[
 
       julia> deleteat!([6, 5, 4, 3, 2, 1], (2, 2))
       ERROR: ArgumentError: indices must be unique and sorted
-       in deleteat! at array.jl:594
+       in deleteat! at array.jl:631
 
 "),
 
@@ -5002,6 +5153,12 @@ Millisecond(v)
 
 "),
 
+("Base","readlink","readlink(path) -> AbstractString
+
+   Returns the value of a symbolic link \"path\".
+
+"),
+
 ("Base","chmod","chmod(path, mode)
 
    Change the permissions mode of \"path\" to \"mode\". Only integer
@@ -5103,10 +5260,15 @@ Millisecond(v)
 
 "),
 
-("Base","cp","cp(src::AbstractString, dst::AbstractString; recursive=false)
+("Base","cp","cp(src::AbstractString, dst::AbstractString; remove_destination::Bool=false, follow_symlinks::Bool=false)
 
-   Copy a file from *src* to *dest*. Passing \"recursive=true\" will
-   enable recursive copying of directories.
+   Copy the file, link, or directory from *src* to *dest*.
+   \"remove_destination=true\" will first remove an existing *dst*.
+
+   If *follow_symlinks=false*, and src is a symbolic link, dst will be
+   created as a symbolic link. If *follow_symlinks=true* and src is a
+   symbolic link, dst will be a copy of the file or directory *src*
+   refers to.
 
 "),
 
@@ -5121,9 +5283,10 @@ Millisecond(v)
 
 "),
 
-("Base","mv","mv(src::AbstractString, dst::AbstractString)
+("Base","mv","mv(src::AbstractString, dst::AbstractString; remove_destination::Bool=false)
 
-   Move a file from *src* to *dst*.
+   Move the file, link, or directory from *src* to *dest*.
+   \"remove_destination=true\" will first remove an existing *dst*.
 
 "),
 
@@ -5154,16 +5317,18 @@ Millisecond(v)
 
 "),
 
-("Base","mktemp","mktemp()
+("Base","mktemp","mktemp([parent=tempdir()])
 
    Returns \"(path, io)\", where \"path\" is the path of a new
-   temporary file and \"io\" is an open file object for this path.
+   temporary file in \"parent\" and \"io\" is an open file object for
+   this path.
 
 "),
 
-("Base","mktempdir","mktempdir()
+("Base","mktempdir","mktempdir([parent=tempdir()])
 
-   Create a temporary directory and return its path.
+   Create a temporary directory in the \"parent\" directory and return
+   its path.
 
 "),
 
@@ -5211,6 +5376,12 @@ Millisecond(v)
 
    Returns \"true\" if \"path\" is a symbolic link, \"false\"
    otherwise.
+
+"),
+
+("Base","ismount","ismount(path) -> Bool
+
+   Returns \"true\" if \"path\" is a mount point, \"false\" otherwise.
 
 "),
 
@@ -5326,6 +5497,15 @@ Millisecond(v)
 
    Canonicalize a path by expanding symbolic links and removing \".\"
    and \"..\" entries.
+
+"),
+
+("Base","relpath","relpath(path::AbstractString, startpath::AbstractString = \".\") -> AbstractString
+
+   Return a relative filepath to path either from the current
+   directory or from an optional start directory. This is a path
+   computation: the filesystem is not accessed to confirm the
+   existence or nature of path or startpath.
 
 "),
 
@@ -5659,9 +5839,9 @@ Millisecond(v)
 
 ("Base","print_shortest","print_shortest(io, x)
 
-   Print the shortest possible representation of number \"x\" as a
-   floating point number, ensuring that it would parse to the exact
-   same number.
+   Print the shortest possible representation, with the minimum number
+   of consecutive non-zero digits, of number \"x\", ensuring that it
+   would parse to the exact same number.
 
 "),
 
@@ -6049,8 +6229,8 @@ base64encode(args...)
 
 ("Base","base64decode","base64decode(string)
 
-   Decodes the base64-encoded \"string\" and returns the obtained
-   bytes.
+   Decodes the base64-encoded \"string\" and returns a
+   \"Vector{UInt8}\" of the decoded bytes.
 
 "),
 
@@ -6751,6 +6931,15 @@ popdisplay(d::Display)
 
 "),
 
+("Base","vecdot","vecdot(x, y)
+
+   For any iterable containers \"x\" and \"y\" (including arrays of
+   any dimension) of numbers (or any element type for which \"dot\" is
+   defined), compute the Euclidean dot product (the sum of
+   \"dot(x[i],y[i])\") as if they were vectors.
+
+"),
+
 ("Base","cross","cross(x, y)
 ×(x, y)
 
@@ -6765,6 +6954,13 @@ popdisplay(d::Display)
    type of the input matrix. The return value can then be reused for
    efficient solving of multiple systems. For example:
    \"A=factorize(A); x=A\\\\b; y=A\\\\C\".
+
+"),
+
+("Base","full","full(F)
+
+   Reconstruct the matrix \"A\" from the factorization
+   \"F=factorize(A)\".
 
 "),
 
@@ -6846,8 +7042,10 @@ popdisplay(d::Display)
 ("Base","chol","chol(A[, LU]) -> F
 
    Compute the Cholesky factorization of a symmetric positive definite
-   matrix \"A\" and return the matrix \"F\". If \"LU\" is \":L\"
-   (Lower), \"A = L*L'\". If \"LU\" is \":U\" (Upper), \"A = R'*R\".
+   matrix \"A\" and return the matrix \"F\". If \"LU\" is \"Val{:U}\"
+   (Upper), \"F\" is of type \"UpperTriangular\" and \"A = F'*F\". If
+   \"LU\" is \"Val{:L}\" (Lower), \"F\" is of type \"LowerTriangular\"
+   and \"A = F*F'\". \"LU\" defaults to \"Val{:U}\".
 
 "),
 
@@ -6869,7 +7067,7 @@ popdisplay(d::Display)
 
 "),
 
-("Base","cholfact","cholfact(A) -> CHOLMOD.Factor
+("Base","cholfact","cholfact(A; shift=0, perm=Int[]) -> CHOLMOD.Factor
 
    Compute the Cholesky factorization of a sparse positive definite
    matrix \"A\". A fill-reducing permutation is used.  The main
@@ -6877,6 +7075,12 @@ popdisplay(d::Display)
    \"\\\", but also the methods \"diag\", \"det\", \"logdet\" are
    defined. The function calls the C library CHOLMOD and many other
    functions from the library are wrapped but not exported.
+
+   Setting optional \"shift\" keyword argument computes the
+   factorization of \"A+shift*I\" instead of \"A\".  If the \"perm\"
+   argument is nonempty, it should be a permutation of *1:size(A,1)*
+   giving the ordering to use (instead of CHOLMOD's default AMD
+   ordering).
 
 "),
 
@@ -6898,7 +7102,7 @@ popdisplay(d::Display)
 
 "),
 
-("Base","ldltfact","ldltfact(A) -> CHOLMOD.Factor
+("Base","ldltfact","ldltfact(A; shift=0, perm=Int[]) -> CHOLMOD.Factor
 
    Compute the LDLt factorization of a sparse symmetric or Hermitian
    matrix \"A\". A fill-reducing permutation is used.  The main
@@ -6906,6 +7110,12 @@ popdisplay(d::Display)
    \"\\\", but also the methods \"diag\", \"det\", \"logdet\" are
    defined. The function calls the C library CHOLMOD and many other
    functions from the library are wrapped but not exported.
+
+   Setting optional \"shift\" keyword argument computes the
+   factorization of \"A+shift*I\" instead of \"A\".  If the \"perm\"
+   argument is nonempty, it should be a permutation of *1:size(A,1)*
+   giving the ordering to use (instead of CHOLMOD's default AMD
+   ordering).
 
 "),
 
@@ -7125,7 +7335,7 @@ popdisplay(d::Display)
 ("Base","eigvecs","eigvecs(A, [eigvals,][permute=true,][scale=true]) -> Matrix
 
    Returns a matrix \"M\" whose columns are the eigenvectors of \"A\".
-   (The \"k``th eigenvector can be obtained from the slice ``M[:,
+   (The \"k\"th eigenvector can be obtained from the slice \"M[:,
    k]\".) The \"permute\" and \"scale\" keywords are the same as for
    \"eigfact()\".
 
@@ -7140,8 +7350,8 @@ popdisplay(d::Display)
    Computes the eigenvalue decomposition of \"A\", returning an
    \"Eigen\" factorization object \"F\" which contains the eigenvalues
    in \"F[:values]\" and the eigenvectors in the columns of the matrix
-   \"F[:vectors]\". (The \"k``th eigenvector can be obtained from the
-   slice ``F[:vectors][:, k]\".)
+   \"F[:vectors]\". (The \"k\"th eigenvector can be obtained from the
+   slice \"F[:vectors][:, k]\".)
 
    The following functions are available for \"Eigen\" objects:
    \"inv\", \"det\".
@@ -7167,8 +7377,8 @@ popdisplay(d::Display)
    \"B\", returning a \"GeneralizedEigen\" factorization object \"F\"
    which contains the generalized eigenvalues in \"F[:values]\" and
    the generalized eigenvectors in the columns of the matrix
-   \"F[:vectors]\". (The \"k``th generalized eigenvector can be
-   obtained from the slice ``F[:vectors][:, k]\".)
+   \"F[:vectors]\". (The \"k\"th generalized eigenvector can be
+   obtained from the slice \"F[:vectors][:, k]\".)
 
 "),
 
@@ -7388,9 +7598,23 @@ popdisplay(d::Display)
 
 "),
 
+("Base","triu","triu(M, k)
+
+   Returns the upper triangle of \"M\" starting from the \"k\"th
+   superdiagonal.
+
+"),
+
 ("Base","triu!","triu!(M)
 
    Upper triangle of a matrix, overwriting \"M\" in the process.
+
+"),
+
+("Base","triu!","triu!(M, k)
+
+   Returns the upper triangle of \"M\" starting from the \"k\"th
+   superdiagonal, overwriting \"M\" in the process.
 
 "),
 
@@ -7400,29 +7624,43 @@ popdisplay(d::Display)
 
 "),
 
+("Base","tril","tril(M, k)
+
+   Returns the lower triangle of \"M\" starting from the \"k\"th
+   subdiagonal.
+
+"),
+
 ("Base","tril!","tril!(M)
 
    Lower triangle of a matrix, overwriting \"M\" in the process.
 
 "),
 
+("Base","tril!","tril!(M, k)
+
+   Returns the lower triangle of \"M\" starting from the \"k\"th
+   subdiagonal, overwriting \"M\" in the process.
+
+"),
+
 ("Base","diagind","diagind(M[, k])
 
-   A \"Range\" giving the indices of the \"k\"-th diagonal of the
+   A \"Range\" giving the indices of the \"k\"th diagonal of the
    matrix \"M\".
 
 "),
 
 ("Base","diag","diag(M[, k])
 
-   The \"k\"-th diagonal of a matrix, as a vector. Use \"diagm\" to
+   The \"k\"th diagonal of a matrix, as a vector. Use \"diagm\" to
    construct a diagonal matrix.
 
 "),
 
 ("Base","diagm","diagm(v[, k])
 
-   Construct a diagonal matrix and place \"v\" on the \"k\"-th
+   Construct a diagonal matrix and place \"v\" on the \"k\"th
    diagonal.
 
 "),
@@ -7516,8 +7754,9 @@ popdisplay(d::Display)
 ("Base","vecnorm","vecnorm(A[, p])
 
    For any iterable container \"A\" (including arrays of any
-   dimension) of numbers, compute the \"p\"-norm (defaulting to
-   \"p=2\") as if \"A\" were a vector of the corresponding length.
+   dimension) of numbers (or any element type for which \"norm\" is
+   defined), compute the \"p\"-norm (defaulting to \"p=2\") as if
+   \"A\" were a vector of the corresponding length.
 
    For example, if \"A\" is a matrix and \"p=2\", then this is
    equivalent to the Frobenius norm.
@@ -7726,6 +7965,12 @@ popdisplay(d::Display)
 ("Base","istriu","istriu(A) -> Bool
 
    Test whether a matrix is upper triangular.
+
+"),
+
+("Base","isdiag","isdiag(A) -> Bool
+
+   Test whether a matrix is diagonal.
 
 "),
 
@@ -8209,6 +8454,13 @@ popdisplay(d::Display)
 
 "),
 
+("Base.LinAlg.BLAS","I","I
+
+   An object of type \"UniformScaling\", representing an identity
+   matrix of any size.
+
+"),
+
 ("Base","-","-(x)
 
    Unary minus operator.
@@ -8451,12 +8703,6 @@ popdisplay(d::Display)
 
 "),
 
-("Base","linrange","linrange(start, end, length)
-
-   Construct a range by length, given a starting and ending value.
-
-"),
-
 ("Base","==","==(x, y)
 
    Generic equality operator, giving a single \"Bool\" result. Falls
@@ -8643,8 +8889,8 @@ popdisplay(d::Display)
 
       julia> B
       2x2 Array{Float64,2}:
-       3.0 3.0
-       7.0 7.0
+       3.0  3.0
+       7.0  7.0
 
 "),
 
@@ -9042,8 +9288,11 @@ popdisplay(d::Display)
 ("Base","log","log(x)
 
    Compute the natural logarithm of \"x\". Throws \"DomainError\" for
-   negative \"Real\" arguments. Use complex negative arguments
-   instead.
+   negative \"Real\" arguments. Use complex negative arguments to
+   obtain complex results.
+
+   There is an experimental variant in the \"Base.Math.JuliaLibm\"
+   module, which is typically faster and more accurate.
 
 "),
 
@@ -9072,6 +9321,9 @@ popdisplay(d::Display)
 
    Accurate natural logarithm of \"1+x\".  Throws \"DomainError\" for
    \"Real\" arguments less than -1.
+
+   There is an experimental variant in the \"Base.Math.JuliaLibm\"
+   module, which is typically faster and more accurate.
 
 "),
 
@@ -10911,39 +11163,52 @@ golden
 ("Base","BigInt","BigInt(x)
 
    Create an arbitrary precision integer. \"x\" may be an \"Int\" (or
-   anything that can be converted to an \"Int\") or an
-   \"AbstractString\". The usual mathematical operators are defined
-   for this type, and results are promoted to a \"BigInt\".
+   anything that can be converted to an \"Int\").  The usual
+   mathematical operators are defined for this type, and results are
+   promoted to a \"BigInt\".
+
+   Instances can be constructed from strings via \"parse()\", or using
+   the \"big\" string literal.
 
 "),
 
 ("Base","BigFloat","BigFloat(x)
 
    Create an arbitrary precision floating point number. \"x\" may be
-   an \"Integer\", a \"Float64\", an \"AbstractString\" or a
-   \"BigInt\". The usual mathematical operators are defined for this
-   type, and results are promoted to a \"BigFloat\". Note that because
-   floating-point numbers are not exactly-representable in decimal
-   notation, \"BigFloat(2.1)\" may not yield what you expect. You may
-   prefer to initialize constants using strings, e.g.,
-   \"BigFloat(\"2.1\")\".
+   an \"Integer\", a \"Float64\" or a \"BigInt\". The usual
+   mathematical operators are defined for this type, and results are
+   promoted to a \"BigFloat\".
+
+   Note that because decimal literals are converted to floating point
+   numbers when parsed, \"BigFloat(2.1)\" may not yield what you
+   expect. You may instead prefer to initialize constants from strings
+   via \"parse()\", or using the \"big\" string literal.
+
+      julia> big\"2.1\"
+      2.099999999999999999999999999999999999999999999999999999999999999999999999999986e+00 with 256 bits of precision
 
 "),
 
 ("Base","get_rounding","get_rounding(T)
 
-   Get the current floating point rounding mode for type \"T\". Valid
-   modes are \"RoundNearest\", \"RoundToZero\", \"RoundUp\",
+   Get the current floating point rounding mode for type \"T\",
+   controlling the rounding of basic arithmetic functions (\"+()\",
+   \"-()\", \"*()\", \"/()\" and \"sqrt()\") and type conversion.
+
+   Valid modes are \"RoundNearest\", \"RoundToZero\", \"RoundUp\",
    \"RoundDown\", and \"RoundFromZero\" (\"BigFloat\" only).
 
 "),
 
 ("Base","set_rounding","set_rounding(T, mode)
 
-   Set the rounding mode of floating point type \"T\". Note that this
-   may affect other types, for instance changing the rounding mode of
-   \"Float64\" will change the rounding mode of \"Float32\". See
-   \"get_rounding\" for available modes
+   Set the rounding mode of floating point type \"T\", controlling the
+   rounding of basic arithmetic functions (\"+()\", \"-()\", \"*()\",
+   \"/()\" and \"sqrt()\") and type conversion.
+
+   Note that this may affect other types, for instance changing the
+   rounding mode of \"Float64\" will change the rounding mode of
+   \"Float32\". See \"get_rounding\" for available modes
 
 "),
 
@@ -11020,6 +11285,19 @@ golden
    Returns \"true\" if \"x\" is prime, and \"false\" otherwise.
 
       julia> isprime(3)
+      true
+
+"),
+
+("Base","isprime","isprime(x::BigInt[, reps = 25]) -> Bool
+
+   Probabilistic primality test. Returns \"true\" if \"x\" is prime;
+   and \"false\" if \"x\" is not prime with high probability. The
+   false positive rate is about \"0.25^reps\". \"reps = 25\" is
+   considered safe for cryptographic applications (Knuth,
+   Seminumerical Algorithms).
+
+      julia> isprime(big(3))
       true
 
 "),
@@ -11182,13 +11460,14 @@ golden
 
 "),
 
-("Base","yieldto","yieldto(task, args...)
+("Base","yieldto","yieldto(task, arg = nothing)
 
    Switch to the given task. The first time a task is switched to, the
    task's function is called with no arguments. On subsequent
-   switches, \"args\" are returned from the task's last call to
+   switches, \"arg\" is returned from the task's last call to
    \"yieldto\". This is a low-level call that only switches tasks, not
-   considering states or scheduling in any way.
+   considering states or scheduling in any way. Its use is
+   discouraged.
 
 "),
 
@@ -11300,8 +11579,8 @@ golden
 
 ("Base","@task","@task()
 
-   Wrap an expression in a Task executing it, and return the Task.
-   This only creates a task, and does not run it.
+   Wrap an expression in a Task without executing it, and return the
+   Task. This only creates a task, and does not run it.
 
 "),
 
@@ -11309,6 +11588,30 @@ golden
 
    Block the current task for a specified number of seconds. The
    minimum sleep time is 1 millisecond or input of \"0.001\".
+
+"),
+
+("Base","ReentrantLock","ReentrantLock()
+
+   Creates a reentrant lock. The same task can acquire the lock as
+   many times as required. Each lock must be matched with an unlock.
+
+"),
+
+("Base","lock","lock(l::ReentrantLock)
+
+   Associates \"l\" with the current task. If \"l\" is already locked
+   by a different task, waits for it to become available. The same
+   task can acquire the lock multiple times. Each \"lock\" must be
+   matched by an \"unlock\"
+
+"),
+
+("Base","unlock","unlock(l::ReentrantLock)
+
+   Releases ownership of the lock by the current task. If the lock had
+   been acquired before, it just decrements an internal counter and
+   returns immediately.
 
 "),
 
@@ -11727,9 +12030,11 @@ golden
 ("Base.Pkg","dir","dir() -> AbstractString
 
    Returns the absolute path of the package directory. This defaults
-   to \"joinpath(homedir(),\".julia\")\" on all platforms (i.e.
-   \"~/.julia\" in UNIX shell syntax). If the \"JULIA_PKGDIR\"
-   environment variable is set, that path is used instead. If
+   to \"joinpath(homedir(),\".julia\",\"v\$(VERSION.major).\$(VERSION
+   .minor)\")\" on all platforms (i.e. \"~/.julia/v0.4\" in UNIX shell
+   syntax).  If the \"JULIA_PKGDIR\" environment variable is set, then
+   that path is used in the returned value as \"joinpath(ENV[\"JULIA_
+   PKGDIR\"],\"v\$(VERSION.major).\$(VERSION.minor)\")\". If
    \"JULIA_PKGDIR\" is a relative path, it is interpreted relative to
    whatever the current working directory is.
 
@@ -11878,6 +12183,10 @@ golden
    versions after. This is an inverse for both \"Pkg.checkout\" and
    \"Pkg.pin\".
 
+   You can also supply an iterable collection of package names, e.g.,
+   \"Pkg.free((\"Pkg1\", \"Pkg2\"))\" to free multiple packages at
+   once.
+
 "),
 
 ("Base.Pkg","build","build()
@@ -12021,7 +12330,7 @@ golden
 
 "),
 
-("Base.Profile","callers","callers(funcname[, data, lidict][, filename=<filename>][, linerange=<start:stop>]) -> Vector{(count, linfo)}
+("Base.Profile","callers","callers(funcname[, data, lidict][, filename=<filename>][, linerange=<start:stop>]) -> Vector{Tuple{count, linfo}}
 
    Given a previous profiling run, determine who called a particular
    function. Supplying the filename (and optionally, range of line
@@ -12243,9 +12552,27 @@ golden
 
 "),
 
+("Base","ascii","ascii(::Ptr{UInt8}[, length])
+
+   Create an ASCII string from the address of a C (0-terminated)
+   string encoded in ASCII. A copy is made; the ptr can be safely
+   freed. If \"length\" is specified, the string does not have to be
+   0-terminated.
+
+"),
+
 ("Base","utf8","utf8(::Array{UInt8, 1})
 
    Create a UTF-8 string from a byte array.
+
+"),
+
+("Base","utf8","utf8(::Ptr{UInt8}[, length])
+
+   Create a UTF-8 string from the address of a C (0-terminated) string
+   encoded in UTF-8. A copy is made; the ptr can be safely freed. If
+   \"length\" is specified, the string does not have to be
+   0-terminated.
 
 "),
 
@@ -12319,24 +12646,24 @@ golden
 
 "),
 
-("Base","is_valid_ascii","is_valid_ascii(s) -> Bool
+("Base","isvalid","isvalid(value) -> Bool
 
-   Returns true if the argument (\"ASCIIString\", \"UTF8String\", or
-   byte vector) is valid ASCII, false otherwise.
-
-"),
-
-("Base","is_valid_utf8","is_valid_utf8(s) -> Bool
-
-   Returns true if the argument (\"ASCIIString\", \"UTF8String\", or
-   byte vector) is valid UTF-8, false otherwise.
+   Returns true if the given value is valid for its type, which
+   currently can be one of \"Char\", \"ASCIIString\", \"UTF8String\",
+   \"UTF16String\", or \"UTF32String\"
 
 "),
 
-("Base","is_valid_char","is_valid_char(c) -> Bool
+("Base","isvalid","isvalid(T, value) -> Bool
 
-   Returns true if the given char or integer is a valid Unicode code
-   point.
+   Returns true if the given value is valid for that type. Types
+   currently can be \"Char\", \"ASCIIString\", \"UTF8String\",
+   \"UTF16String\", or \"UTF32String\" Values for \"Char\" can be of
+   type \"Char\" or \"UInt32\" Values for \"ASCIIString\" and
+   \"UTF8String\" can be of that type, or \"Vector{UInt8}\" Values for
+   \"UTF16String\" can be \"UTF16String\" or \"Vector{UInt16}\" Values
+   for \"UTF32String\" can be \"UTF32String\", \"Vector{Char}\" or
+   \"Vector{UInt32}\"
 
 "),
 
@@ -12382,15 +12709,15 @@ golden
 
 ("Base","lpad","lpad(string, n, p)
 
-   Make a string at least \"n\" characters long by padding on the left
-   with copies of \"p\".
+   Make a string at least \"n\" columns wide when printed, by padding
+   on the left with copies of \"p\".
 
 "),
 
 ("Base","rpad","rpad(string, n, p)
 
-   Make a string at least \"n\" characters long by padding on the
-   right with copies of \"p\".
+   Make a string at least \"n\" columns wide when printed, by padding
+   on the right with copies of \"p\".
 
 "),
 
@@ -12773,30 +13100,23 @@ golden
 
 "),
 
-("Base","is_valid_utf16","is_valid_utf16(s) -> Bool
-
-   Returns true if the argument (\"UTF16String\" or \"UInt16\" array)
-   is valid UTF-16.
-
-"),
-
 ("Base","utf32","utf32(s)
 
-   Create a UTF-32 string from a byte array, array of \"UInt32\", or
-   any other string type.  (Conversions of byte arrays check for a
-   byte-order marker in the first four bytes, and do not include it in
-   the resulting string.)
+   Create a UTF-32 string from a byte array, array of \"Char\" or
+   \"UInt32\", or any other string type.  (Conversions of byte arrays
+   check for a byte-order marker in the first four bytes, and do not
+   include it in the resulting string.)
 
    Note that the resulting \"UTF32String\" data is terminated by the
    NUL codepoint (32-bit zero), which is not treated as a character in
    the string (so that it is mostly invisible in Julia); this allows
    the string to be passed directly to external functions requiring
    NUL-terminated data.  This NUL is appended automatically by the
-   *utf32(s)* conversion function.  If you have a \"UInt32\" array
-   \"A\" that is already NUL-terminated UTF-32 data, then you can
-   instead use *UTF32String(A)`* to construct the string without
-   making a copy of the data and treating the NUL as a terminator
-   rather than as part of the string.
+   *utf32(s)* conversion function.  If you have a \"Char\" or
+   \"UInt32\" array \"A\" that is already NUL-terminated UTF-32 data,
+   then you can instead use *UTF32String(A)`* to construct the string
+   without making a copy of the data and treating the NUL as a
+   terminator rather than as part of the string.
 
 "),
 

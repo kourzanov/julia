@@ -1,3 +1,5 @@
+# This file is a part of Julia. License is MIT: http://julialang.org/license
+
 ####################
 # LU Factorization #
 ####################
@@ -117,51 +119,66 @@ function getindex{T,S<:StridedMatrix}(A::LU{T,S}, d::Symbol)
         L = tril!(A.factors[1:m, 1:min(m,n)])
         for i = 1:min(m,n); L[i,i] = one(T); end
         return L
-    end
-    d == :U && return triu!(A.factors[1:min(m,n), 1:n])
-    d == :p && return ipiv2perm(A.ipiv, m)
-    if d == :P
+    elseif d == :U
+        return triu!(A.factors[1:min(m,n), 1:n])
+    elseif d == :p
+        return ipiv2perm(A.ipiv, m)
+    elseif d == :P
         p = A[:p]
         P = zeros(T, m, m)
         for i in 1:m
             P[i,p[i]] = one(T)
         end
         return P
+    else
+        throw(KeyError(d))
     end
-    throw(KeyError(d))
 end
 
 A_ldiv_B!{T<:BlasFloat, S<:StridedMatrix}(A::LU{T, S}, B::StridedVecOrMat{T}) = @assertnonsingular LAPACK.getrs!('N', A.factors, A.ipiv, B) A.info
 A_ldiv_B!{T,S<:StridedMatrix}(A::LU{T,S}, b::StridedVector) = A_ldiv_B!(UpperTriangular(A.factors), A_ldiv_B!(UnitLowerTriangular(A.factors), b[ipiv2perm(A.ipiv, length(b))]))
 A_ldiv_B!{T,S<:StridedMatrix}(A::LU{T,S}, B::StridedMatrix) = A_ldiv_B!(UpperTriangular(A.factors), A_ldiv_B!(UnitLowerTriangular(A.factors), B[ipiv2perm(A.ipiv, size(B, 1)),:]))
-At_ldiv_B{T<:BlasFloat,S<:StridedMatrix}(A::LU{T,S}, B::StridedVecOrMat{T}) = @assertnonsingular LAPACK.getrs!('T', A.factors, A.ipiv, copy(B)) A.info
-Ac_ldiv_B{T<:BlasComplex,S<:StridedMatrix}(A::LU{T,S}, B::StridedVecOrMat{T}) = @assertnonsingular LAPACK.getrs!('C', A.factors, A.ipiv, copy(B)) A.info
+
+At_ldiv_B!{T<:BlasFloat,S<:StridedMatrix}(A::LU{T,S}, B::StridedVecOrMat{T}) = @assertnonsingular LAPACK.getrs!('T', A.factors, A.ipiv, B) A.info
+At_ldiv_B!{T,S<:StridedMatrix}(A::LU{T,S}, b::StridedVector) = At_ldiv_B!(UnitLowerTriangular(A.factors), At_ldiv_B!(UpperTriangular(A.factors), b))[invperm(ipiv2perm(A.ipiv, length(b)))]
+At_ldiv_B!{T,S<:StridedMatrix}(A::LU{T,S}, B::StridedMatrix) = At_ldiv_B!(UnitLowerTriangular(A.factors), At_ldiv_B!(UpperTriangular(A.factors), B))[invperm(ipiv2perm(A.ipiv, size(B,1))),:]
+
+Ac_ldiv_B!{T<:Real,S<:StridedMatrix}(F::LU{T,S}, B::StridedVecOrMat{T}) = At_ldiv_B!(F, B)
+Ac_ldiv_B!{T<:BlasComplex,S<:StridedMatrix}(A::LU{T,S}, B::StridedVecOrMat{T}) = @assertnonsingular LAPACK.getrs!('C', A.factors, A.ipiv, B) A.info
+Ac_ldiv_B!{T,S<:StridedMatrix}(A::LU{T,S}, b::StridedVector) = Ac_ldiv_B!(UnitLowerTriangular(A.factors), Ac_ldiv_B!(UpperTriangular(A.factors), b))[invperm(ipiv2perm(A.ipiv, length(b)))]
+Ac_ldiv_B!{T,S<:StridedMatrix}(A::LU{T,S}, B::StridedMatrix) = Ac_ldiv_B!(UnitLowerTriangular(A.factors), Ac_ldiv_B!(UpperTriangular(A.factors), B))[invperm(ipiv2perm(A.ipiv, size(B,1))),:]
+
 At_ldiv_Bt{T<:BlasFloat,S<:StridedMatrix}(A::LU{T,S}, B::StridedVecOrMat{T}) = @assertnonsingular LAPACK.getrs!('T', A.factors, A.ipiv, transpose(B)) A.info
+At_ldiv_Bt(A::LU, B::StridedVecOrMat) = At_ldiv_B(A, transpose(B))
+
 Ac_ldiv_Bc{T<:BlasComplex,S<:StridedMatrix}(A::LU{T,S}, B::StridedVecOrMat{T}) = @assertnonsingular LAPACK.getrs!('C', A.factors, A.ipiv, ctranspose(B)) A.info
+Ac_ldiv_Bc(A::LU, B::StridedVecOrMat) = Ac_ldiv_B(A, ctranspose(B))
 
 function det{T,S}(A::LU{T,S})
     n = chksquare(A)
     A.info > 0 && return zero(typeof(A.factors[1]))
-    return prod(diag(A.factors)) * (Bool(sum(A.ipiv .!= 1:n) % 2) ? -one(T) : one(T))
+    return prod(diag(A.factors)) * (isodd(sum(A.ipiv .!= 1:n)) ? -one(T) : one(T))
 end
 
 function logdet2{T<:Real,S}(A::LU{T,S})  # return log(abs(det)) and sign(det)
     n = chksquare(A)
     dg = diag(A.factors)
-    s = (Bool(sum(A.ipiv .!= 1:n) % 2) ? -one(T) : one(T)) * prod(sign(dg))
+    s = (isodd(sum(A.ipiv .!= 1:n)) ? -one(T) : one(T)) * prod(sign(dg))
     sum(log(abs(dg))), s
 end
 
 function logdet{T<:Real,S}(A::LU{T,S})
     d,s = logdet2(A)
-    s>=0 || error("DomainError: determinant is negative")
+    if s < 0
+        throw(DomainError("Determinant is negative"))
+    end
     d
 end
 
 function logdet{T<:Complex,S}(A::LU{T,S})
     n = chksquare(A)
     s = sum(log(diag(A.factors)))
-    if Bool(sum(A.ipiv .!= 1:n) % 2)
+    if isodd(sum(A.ipiv .!= 1:n))
         s = Complex(real(s), imag(s)+π)
     end
     r, a = reim(s)
@@ -169,7 +186,7 @@ function logdet{T<:Complex,S}(A::LU{T,S})
     complex(r,a)
 end
 
-inv{T<:BlasFloat,S<:StridedMatrix}(A::LU{T,S}) = @assertnonsingular LAPACK.getri!(copy(A.factors), A.ipiv) A.info
+inv!{T<:BlasFloat,S<:StridedMatrix}(A::LU{T,S}) = @assertnonsingular LAPACK.getri!(A.factors, A.ipiv) A.info
 
 cond{T<:BlasFloat,S<:StridedMatrix}(A::LU{T,S}, p::Number) = inv(LAPACK.gecon!(p == 1 ? '1' : 'I', A.factors, norm((A[:L]*A[:U])[A[:p],:], p)))
 cond(A::LU, p::Number) = norm(A[:L]*A[:U],p)*norm(inv(A),p)
@@ -247,7 +264,9 @@ factorize(A::Tridiagonal) = lufact(A)
 # See dgtts2.f
 function A_ldiv_B!{T}(A::LU{T,Tridiagonal{T}}, B::AbstractVecOrMat)
     n = size(A,1)
-    n == size(B,1) || throw(DimensionMismatch())
+    if n != size(B,1)
+        throw(DimensionMismatch("Matrix has dimensions ($n,$n) but right hand side has $(size(B,1)) rows"))
+    end
     nrhs = size(B,2)
     dl = A.factors.dl
     d = A.factors.d
@@ -276,7 +295,9 @@ end
 
 function At_ldiv_B!{T}(A::LU{T,Tridiagonal{T}}, B::AbstractVecOrMat)
     n = size(A,1)
-    n == size(B,1) || throw(DimentionsMismatch(""))
+    if n != size(B,1)
+        throw(DimensionMismatch("Matrix has dimensions ($n,$n) but right hand side has $(size(B,1)) rows"))
+    end
     nrhs = size(B,2)
     dl = A.factors.dl
     d = A.factors.d
@@ -309,7 +330,9 @@ end
 # Ac_ldiv_B!{T<:Real}(A::LU{T,Tridiagonal{T}}, B::AbstractVecOrMat) = At_ldiv_B!(A,B)
 function Ac_ldiv_B!{T}(A::LU{T,Tridiagonal{T}}, B::AbstractVecOrMat)
     n = size(A,1)
-    n == size(B,1) || throw(DimentionsMismatch(""))
+    if n != size(B,1)
+        throw(DimensionMismatch("Matrix has dimensions ($n,$n) but right hand side has $(size(B,1)) rows"))
+    end
     nrhs = size(B,2)
     dl = A.factors.dl
     d = A.factors.d

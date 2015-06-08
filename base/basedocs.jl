@@ -1,3 +1,5 @@
+# This file is a part of Julia. License is MIT: http://julialang.org/license
+
 import .Docs: keywords
 
 keywords[:hello] = keywords[:hi] = doc"Hello, Human."
@@ -321,6 +323,8 @@ keywords[:immutable] = doc"""
       push!([1,2,3], 4) == [1,2,3,4]
   """ push!
 
+if Base.USE_GPL_LIBS
+
 @doc doc"""
       fft(A[, dims])
 
@@ -346,6 +350,8 @@ keywords[:immutable] = doc"""
   `FFTW.set_num_threads(np)` to use `np` threads, if you have `np`
   processors.
   """ fft
+
+end # USE_GPL_LIBS
 
 @doc doc"""
       include("file.jl")

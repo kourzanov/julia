@@ -1,3 +1,5 @@
+# This file is a part of Julia. License is MIT: http://julialang.org/license
+
 ## integer arithmetic ##
 
 const IntTypes = (Int8, UInt8, Int16, UInt16, Int32, UInt32,
@@ -18,7 +20,7 @@ end
 /(x::Integer, y::Integer) = float(x)/float(y)
 inv(x::Integer) = float(one(x))/float(x)
 
-isodd(n::Integer) = Bool(rem(n,2))
+isodd(n::Integer) = rem(n,2) != 0
 iseven(n::Integer) = !isodd(n)
 
 signbit(x::Integer) = x < 0
@@ -254,8 +256,12 @@ macro uint128_str(s)
     parse(UInt128,s)
 end
 
-macro bigint_str(s)
-    parse(BigInt,s)
+macro big_str(s)
+    n = tryparse(BigInt,s)
+    !isnull(n) && return get(n)
+    n = tryparse(BigFloat,s)
+    !isnull(n) && return get(n)
+    throw(ArgumentError("invalid number format $(repr(s)) for BigInt or BigFloat"))
 end
 
 ## system word size ##

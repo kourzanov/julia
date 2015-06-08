@@ -1,28 +1,8 @@
-## UTF-32 in the native byte order, i.e. plain old character arrays ##
-
-immutable UTF32String <: DirectIndexString
-    data::Array{Char,1} # includes 32-bit NULL termination after string chars
-
-    function UTF32String(a::Array{Char,1})
-        if length(a) < 1 || a[end] != Char(0)
-            throw(ArgumentError("UTF32String data must be NULL-terminated"))
-        end
-        new(a)
-    end
-end
+# This file is a part of Julia. License is MIT: http://julialang.org/license
 
 next(s::UTF32String, i::Int) = (s.data[i], i+1)
 endof(s::UTF32String) = length(s.data) - 1
 length(s::UTF32String) = length(s.data) - 1
-
-function utf32(c::Integer...)
-    a = Array(Char, length(c) + 1)
-    for i = 1:length(c)
-        a[i] = Char(c[i])
-    end
-    a[end] = Char(0)
-    UTF32String(a)
-end
 
 utf32(x) = convert(UTF32String, x)
 convert(::Type{UTF32String}, c::Char) = UTF32String(Char[c, Char(0)])
@@ -71,7 +51,7 @@ unsafe_convert{T<:Union(Int32,UInt32,Char)}(::Type{Ptr{T}}, s::UTF32String) =
 
 function convert(T::Type{UTF32String}, bytes::AbstractArray{UInt8})
     isempty(bytes) && return UTF32String(Char[0])
-    length(bytes) & 3 != 0 && throw(ArgumentError("need multiple of 4 bytes"))
+    length(bytes) & 3 != 0 && throw(UnicodeError(UTF_ERR_ODD_BYTES_32,0,0))
     data = reinterpret(Char, bytes)
     # check for byte-order mark (BOM):
     if data[1] == Char(0x0000feff) # native byte order
@@ -90,6 +70,14 @@ function convert(T::Type{UTF32String}, bytes::AbstractArray{UInt8})
     UTF32String(d)
 end
 
+function isvalid(::Type{UTF32String}, str::Union(Vector{Char}, Vector{UInt32}))
+    for i=1:length(str)
+        @inbounds if !isvalid(Char, reinterpret(UInt32, str[i])) ; return false ; end
+    end
+    return true
+end
+isvalid(str::Vector{Char}) = isvalid(UTF32String, str)
+
 utf32(p::Ptr{Char}, len::Integer) = utf32(pointer_to_array(p, len))
 utf32(p::Union(Ptr{UInt32}, Ptr{Int32}), len::Integer) = utf32(convert(Ptr{Char}, p), len)
 function utf32(p::Union(Ptr{Char}, Ptr{UInt32}, Ptr{Int32}))
@@ -106,7 +94,7 @@ function map(f, s::UTF32String)
     for i = 1:(length(d)-1)
         c2 = f(d[i])
         if !isa(c2, Char)
-            throw(ArgumentError("map(f,s::AbstractString) requires f to return Char; try map(f,collect(s)) or a comprehension instead"))
+            throw(UnicodeError(UTF_ERR_MAP_CHAR, 0, 0))
         end
         out[i] = (c2::Char)
     end

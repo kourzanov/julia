@@ -1,3 +1,5 @@
+# This file is a part of Julia. License is MIT: http://julialang.org/license
+
 using Base.Test
 using Base.LAPACK.bdsqr!
 
@@ -51,4 +53,72 @@ let # Issue #7886
     x, r = LAPACK.gelsy!([0 1; 0 2; 0 3.], [2, 4, 6.])
     @test_approx_eq x [0,2]
     @test r == 1
+end
+
+#gebal/gebak
+for elty in (Float32, Float64, Complex64, Complex128)
+    A = rand(elty,10,10)
+    B = copy(A)
+    ilo, ihi, scale = LAPACK.gebal!('B',B)
+    Bvs = eigvecs(B)
+    Avs = eigvecs(A)
+    Bvs = LAPACK.gebak!('B','R',ilo,ihi,scale,Bvs)
+    @test_approx_eq Bvs Avs
+end
+
+#gels
+for elty in (Float32, Float64, Complex64, Complex128)
+    A = rand(elty,10,10)
+    X = rand(elty,10)
+    B,Y,z = LAPACK.gels!('N',copy(A),copy(X))
+    @test_approx_eq A\X Y
+end
+
+#getrf/getri
+for elty in (Float32, Float64, Complex64, Complex128)
+    A = rand(elty,10,10)
+    iA = inv(A)
+    A, ipiv = LAPACK.getrf!(A)
+    A = LAPACK.getri!(A, ipiv)
+    @test_approx_eq A iA
+end
+
+#geev - complex is easier for now
+for elty in (Complex64, Complex128)
+    A = rand(elty,10,10)
+    Aw, Avl, Avr = LAPACK.geev!('N','V',copy(A))
+    fA = eigfact(A)
+    @test_approx_eq fA[:values] Aw
+    @test_approx_eq fA[:vectors] Avr
+end
+
+#gtsv
+for elty in (Float32, Float64, Complex64, Complex128)
+    du = rand(elty,9)
+    d  = rand(elty,10)
+    dl = rand(elty,9)
+    b  = rand(elty,10)
+    c = Tridiagonal(dl,d,du) \ b
+    b = LAPACK.gtsv!(dl,d,du,b)
+    @test_approx_eq b c
+end
+
+#sysv
+for elty in (Float32, Float64, Complex64, Complex128)
+    A = rand(elty,10,10)
+    A = A + A.' #symmetric!
+    b = rand(elty,10)
+    c = A \ b
+    b,A = LAPACK.sysv!('U',A,b)
+    @test_approx_eq b c
+end
+
+#hesv
+for elty in (Complex64, Complex128)
+    A = rand(elty,10,10)
+    A = A + A' #hermitian!
+    b = rand(elty,10)
+    c = A \ b
+    b,A = LAPACK.hesv!('U',A,b)
+    @test_approx_eq b c
 end

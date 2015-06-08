@@ -1,3 +1,5 @@
+# This file is a part of Julia. License is MIT: http://julialang.org/license
+
 module Entry
 
 import Base: thispatch, nextpatch, nextminor, nextmajor, check_new_version
@@ -215,6 +217,30 @@ function free(pkg::AbstractString)
     end
 end
 
+function free(pkgs)
+    try
+        for pkg in pkgs
+            ispath(pkg,".git") || error("$pkg is not a git repo")
+            Read.isinstalled(pkg) || error("$pkg cannot be freed – not an installed package")
+            avail = Read.available(pkg)
+            isempty(avail) && error("$pkg cannot be freed – not a registered package")
+            Git.dirty(dir=pkg) && error("$pkg cannot be freed – repo is dirty")
+            info("Freeing $pkg")
+            vers = sort!(collect(keys(avail)), rev=true)
+            for ver in vers
+                sha1 = avail[ver].sha1
+                Git.iscommit(sha1, dir=pkg) || continue
+                Git.run(`checkout -q $sha1`, dir=pkg)
+                break
+            end
+            isempty(Cache.prefetch(pkg, Read.url(pkg), [a.sha1 for (v,a)=avail])) && continue
+            error("can't find any registered versions of $pkg to checkout")
+        end
+    finally
+        resolve()
+    end
+end
+
 function pin(pkg::AbstractString, head::AbstractString)
     ispath(pkg,".git") || error("$pkg is not a git repo")
     branch = "pinned.$(head[1:8]).tmp"
@@ -246,24 +272,24 @@ function update(branch::AbstractString)
             Git.run(`checkout -q $branch`)
         end
         # TODO: handle merge conflicts
-        Base.with_env("GIT_MERGE_AUTOEDIT","no") do
+        Base.withenv("GIT_MERGE_AUTOEDIT"=>"no") do
             Git.run(`pull --rebase -q`, out=DevNull)
         end
     end
     avail = Read.available()
     # this has to happen before computing free/fixed
-    @sync for pkg in filter!(Read.isinstalled,collect(keys(avail)))
-        @async Cache.prefetch(pkg, Read.url(pkg), [a.sha1 for (v,a)=avail[pkg]])
+    for pkg in filter!(Read.isinstalled,collect(keys(avail)))
+        Cache.prefetch(pkg, Read.url(pkg), [a.sha1 for (v,a)=avail[pkg]])
     end
     instd = Read.installed(avail)
     free = Read.free(instd)
-    @sync for (pkg,ver) in free
-        @async Cache.prefetch(pkg, Read.url(pkg), [a.sha1 for (v,a)=avail[pkg]])
+    for (pkg,ver) in free
+        Cache.prefetch(pkg, Read.url(pkg), [a.sha1 for (v,a)=avail[pkg]])
     end
     fixed = Read.fixed(avail,instd)
-    @sync for (pkg,ver) in fixed
+    for (pkg,ver) in fixed
         ispath(pkg,".git") || continue
-        @async begin
+        begin
             if Git.attached(dir=pkg) && !Git.dirty(dir=pkg)
                 info("Updating $pkg...")
                 @recover begin
@@ -693,7 +719,8 @@ function test!(pkg::AbstractString, errs::Vector{AbstractString}, notests::Vecto
             try
                 color = Base.have_color? "--color=yes" : "--color=no"
                 codecov = coverage? ["--code-coverage=user", "--inline=no"] : ["--code-coverage=none"]
-                run(`$JULIA_HOME/julia --check-bounds=yes $codecov $color $test_path`)
+                julia_exe = joinpath(JULIA_HOME, Base.julia_exename())
+                run(`$julia_exe --check-bounds=yes $codecov $color $test_path`)
                 info("$pkg tests passed")
             catch err
                 warnbanner(err, label="[ ERROR: $pkg ]")

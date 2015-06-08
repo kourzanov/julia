@@ -26,6 +26,7 @@ The constructs introducing such blocks are:
 -  ``for`` loops
 -  ``try`` blocks
 -  ``catch`` blocks
+-  ``finally`` blocks
 -  ``let`` blocks
 -  ``type`` blocks.
 
@@ -190,7 +191,7 @@ global scope. This is especially evident in the case of assignments:
     julia> for i = 1:1; y = 10; end
 
     julia> y
-    ERROR: y not defined
+    ERROR: UndefVarError: y not defined
 
     julia> y = 0
     0

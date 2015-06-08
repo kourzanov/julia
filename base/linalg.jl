@@ -1,3 +1,5 @@
+# This file is a part of Julia. License is MIT: http://julialang.org/license
+
 module LinAlg
 
 importall Base
@@ -69,6 +71,7 @@ export
     gradient,
     hessfact,
     hessfact!,
+    isdiag,
     ishermitian,
     isposdef,
     isposdef!,
@@ -112,6 +115,7 @@ export
     triu,
     tril!,
     triu!,
+    vecdot,
     vecnorm,
 
 # Operators
@@ -153,10 +157,8 @@ typealias BlasComplex Union(Complex128,Complex64)
 
 if USE_BLAS64
     typealias BlasInt Int64
-    blas_int(x) = Int64(x)
 else
     typealias BlasInt Int32
-    blas_int(x) = Int32(x)
 end
 
 #Check that stride of matrix/vector is 1
@@ -206,7 +208,12 @@ include("linalg/lapack.jl")
 include("linalg/dense.jl")
 include("linalg/tridiag.jl")
 include("linalg/triangular.jl")
+
 include("linalg/factorization.jl")
+include("linalg/qr.jl")
+include("linalg/eigen.jl")
+include("linalg/svd.jl")
+include("linalg/schur.jl")
 include("linalg/cholesky.jl")
 include("linalg/lu.jl")
 

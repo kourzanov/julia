@@ -1,3 +1,5 @@
+# This file is a part of Julia. License is MIT: http://julialang.org/license
+
 abstract AbstractCmd
 
 type Cmd <: AbstractCmd
@@ -117,9 +119,19 @@ ignorestatus(cmd::Cmd) = (cmd.ignorestatus=true; cmd)
 ignorestatus(cmd::Union(OrCmds,AndCmds)) = (ignorestatus(cmd.a); ignorestatus(cmd.b); cmd)
 detach(cmd::Cmd) = (cmd.detach=true; cmd)
 
-setenv{S<:ByteString}(cmd::Cmd, env::Array{S}; dir="") = (cmd.env = ByteString[x for x in env]; setenv(cmd, dir=dir); cmd)
-setenv(cmd::Cmd, env::Associative; dir="") = (cmd.env = ByteString[string(k)*"="*string(v) for (k,v) in env]; setenv(cmd, dir=dir); cmd)
-setenv(cmd::Cmd; dir="") = (cmd.dir = dir; cmd)
+# like bytestring(s), but throw an error if s contains NUL, since
+# libuv requires NUL-terminated strings
+function cstr(s)
+    if Base.containsnul(s)
+        throw(ArgumentError("strings containing NUL cannot be passed to spawned processes"))
+    end
+    return bytestring(s)
+end
+
+setenv{S<:ByteString}(cmd::Cmd, env::Array{S}; dir="") = (cmd.env = ByteString[cstr(x) for x in env]; setenv(cmd, dir=dir); cmd)
+setenv(cmd::Cmd, env::Associative; dir="") = (cmd.env = ByteString[cstr(string(k)*"="*string(v)) for (k,v) in env]; setenv(cmd, dir=dir); cmd)
+setenv{T<:AbstractString}(cmd::Cmd, env::Pair{T}...; dir="") = (cmd.env = ByteString[cstr(k*"="*string(v)) for (k,v) in env]; setenv(cmd, dir=dir); cmd)
+setenv(cmd::Cmd; dir="") = (cmd.dir = cstr(dir); cmd)
 
 (&)(left::AbstractCmd, right::AbstractCmd) = AndCmds(left, right)
 redir_out(src::AbstractCmd, dest::AbstractCmd) = OrCmds(src, dest)
@@ -422,7 +434,6 @@ eachline(cmd::AbstractCmd) = eachline(cmd, DevNull)
 function open(cmds::AbstractCmd, mode::AbstractString="r", stdio::AsyncStream=DevNull)
     if mode == "r"
         processes = @tmp_rpipe out tmp spawn(false, cmds, (stdio,tmp,STDERR))
-        start_reading(out)
         (out, processes)
     elseif mode == "w"
         processes = @tmp_wpipe tmp inpipe spawn(false, cmds, (tmp,stdio,STDERR))
@@ -455,8 +466,7 @@ end
 function readbytes(cmd::AbstractCmd, stdin::AsyncStream=DevNull)
     (out,pc) = open(cmd, "r", stdin)
     !success(pc) && pipeline_error(pc)
-    wait_close(out)
-    return takebuf_array(out.buffer)
+    return readbytes(out)
 end
 
 function readall(cmd::AbstractCmd, stdin::AsyncStream=DevNull)
@@ -558,18 +568,18 @@ end
 ## implementation of `cmd` syntax ##
 
 arg_gen()          = ByteString[]
-arg_gen(x::AbstractString) = ByteString[x]
+arg_gen(x::AbstractString) = ByteString[cstr(x)]
 arg_gen(cmd::Cmd)  = cmd.exec
 
 function arg_gen(head)
     if applicable(start, head)
         vals = ByteString[]
         for x in head
-            push!(vals, string(x))
+            push!(vals, cstr(string(x)))
         end
         return vals
     else
-        return ByteString[string(head)]
+        return ByteString[cstr(string(head))]
     end
 end
 
@@ -578,7 +588,7 @@ function arg_gen(head, tail...)
     tail = arg_gen(tail...)
     vals = ByteString[]
     for h = head, t = tail
-        push!(vals, bytestring(h, t))
+        push!(vals, cstr(bytestring(h, t)))
     end
     vals
 end

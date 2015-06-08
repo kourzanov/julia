@@ -1,3 +1,5 @@
+# This file is a part of Julia. License is MIT: http://julialang.org/license
+
 # test meta-expressions that annotate blocks of code
 
 module MetaTest
@@ -54,7 +56,7 @@ _attach(val, ex) = pushmeta!(ex, :test, val)
     false
 end
 
-asts = code_lowered(dummy, ())
+asts = code_lowered(dummy, Tuple{})
 @test length(asts) == 1
 ast = asts[1]
 

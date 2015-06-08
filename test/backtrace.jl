@@ -1,3 +1,5 @@
+# This file is a part of Julia. License is MIT: http://julialang.org/license
+
 bt = backtrace()
 have_backtrace = false
 for l in bt
@@ -16,8 +18,13 @@ end
 dlls = Libdl.dllist()
 @test !isempty(dlls)
 @test length(dlls) > 3 # at a bare minimum, probably have some version of libstdc, libgcc, libjulia, ...
-@test Base.samefile(Libdl.dlpath(dlls[1]), dlls[1])
-@test Base.samefile(Libdl.dlpath(dlls[end]), dlls[end])
+if @unix? true : (Base.windows_version() >= Base.WINDOWS_VISTA_VER)
+    for dl in dlls
+        if isfile(dl) && (Libdl.dlopen_e(dl) != C_NULL)
+            @test Base.samefile(Libdl.dlpath(dl), dl)
+        end
+    end
+end
 @test length(filter(dlls) do dl
         return ismatch(Regex("^libjulia(?:.*)\.$(Libdl.dlext)(?:\..+)?\$"), basename(dl))
     end) == 1 # look for something libjulia-like (but only one)

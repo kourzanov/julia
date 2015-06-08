@@ -1,3 +1,5 @@
+// This file is a part of Julia. License is MIT: http://julialang.org/license
+
 /*
   init.c
   system initialization and global state
@@ -84,8 +86,7 @@ DLLEXPORT void gdblookup(ptrint_t ip);
 
 static const char system_image_path[256] = JL_SYSTEM_IMAGE_PATH;
 
-jl_options_t jl_options = { 0,    // version
-                            0,    // quiet
+jl_options_t jl_options = { 0,    // quiet
                             NULL, // julia_home
                             NULL, // julia_bin
                             NULL, // build_path
@@ -112,6 +113,7 @@ jl_options_t jl_options = { 0,    // version
                             JL_OPTIONS_FAST_MATH_DEFAULT,
                             0,    // worker
                             NULL, // bindto
+                            JL_OPTIONS_HANDLE_SIGNALS_ON,
 };
 
 int jl_boot_file_loaded = 0;
@@ -158,6 +160,13 @@ static void jl_find_stack_bottom(void)
     jl_stack_lo = jl_stack_hi - stack_size;
 }
 
+// what to do on SIGINT
+DLLEXPORT void jl_sigint_action(void)
+{
+    if (exit_on_sigint) jl_exit(0);
+    jl_throw(jl_interrupt_exception);
+}
+
 #ifdef _OS_WINDOWS_
 static char *strsignal(int sig)
 {
@@ -194,13 +203,12 @@ void __cdecl crt_sig_handler(int sig, int num)
         break;
     case SIGINT:
         signal(SIGINT, (void (__cdecl *)(int))crt_sig_handler);
-        if (exit_on_sigint) jl_exit(0);
         if (jl_defer_signal) {
             jl_signal_pending = sig;
         }
         else {
             jl_signal_pending = 0;
-            jl_throw(jl_interrupt_exception);
+            jl_sigint_action();
         }
         break;
     default: // SIGSEGV, (SSIGTERM, IGILL)
@@ -282,9 +290,18 @@ void segv_handler(int sig, siginfo_t *info, void *context)
         sigprocmask(SIG_UNBLOCK, &sset, NULL);
         jl_throw(jl_memory_exception);
     }
+#ifdef SEGV_EXCEPTION
+    else {
+        sigemptyset(&sset);
+        sigaddset(&sset, SIGSEGV);
+        sigprocmask(SIG_UNBLOCK, &sset, NULL);
+        jl_throw(jl_segv_exception);
+    }
+#else
     else {
         sigdie_handler(sig, info, context);
     }
+#endif
 }
 #endif
 
@@ -325,7 +342,6 @@ volatile HANDLE hMainThread = NULL;
 
 static BOOL WINAPI sigint_handler(DWORD wsig) //This needs winapi types to guarantee __stdcall
 {
-    if (exit_on_sigint) jl_exit(0);
     int sig;
     //windows signals use different numbers from unix (raise)
     switch(wsig) {
@@ -339,6 +355,7 @@ static BOOL WINAPI sigint_handler(DWORD wsig) //This needs winapi types to guara
     }
     else {
         jl_signal_pending = 0;
+        if (exit_on_sigint) jl_exit(0);
         if ((DWORD)-1 == SuspendThread(hMainThread)) {
             //error
             jl_safe_printf("error: SuspendThread failed\n");
@@ -476,7 +493,6 @@ void restore_signals(void)
 
 void sigint_handler(int sig, siginfo_t *info, void *context)
 {
-    if (exit_on_sigint) jl_exit(0);
     if (jl_defer_signal) {
         jl_signal_pending = sig;
     }
@@ -486,7 +502,7 @@ void sigint_handler(int sig, siginfo_t *info, void *context)
         sigemptyset(&sset);
         sigaddset(&sset, SIGINT);
         sigprocmask(SIG_UNBLOCK, &sset, NULL);
-        jl_throw(jl_interrupt_exception);
+        jl_sigint_action();
     }
 }
 #endif
@@ -513,6 +529,13 @@ static void jl_uv_exitcleanup_walk(uv_handle_t *handle, void *arg)
 void jl_write_coverage_data(void);
 void jl_write_malloc_log(void);
 
+static struct uv_shutdown_queue_item *next_shutdown_queue_item(struct uv_shutdown_queue_item *item)
+{
+    struct uv_shutdown_queue_item *rv = item->next;
+    free(item);
+    return rv;
+}
+
 DLLEXPORT void jl_atexit_hook()
 {
 #if defined(JL_GC_MARKSWEEP) && defined(GC_FINAL_STATS)
@@ -530,7 +553,7 @@ DLLEXPORT void jl_atexit_hook()
             }
             JL_CATCH {
                 jl_printf(JL_STDERR, "\natexit hook threw an error: ");
-                jl_show(jl_stderr_obj(),jl_exception_in_transit);
+                jl_static_show(JL_STDERR, jl_exception_in_transit);
             }
         }
     }
@@ -559,7 +582,7 @@ DLLEXPORT void jl_atexit_hook()
             while (item) {
                 uv_handle_t *handle = item->h;
                 if (handle->type != UV_FILE && uv_is_closing(handle)) {
-                    item = item->next;
+                    item = next_shutdown_queue_item(item);
                     continue;
                 }
                 switch(handle->type) {
@@ -590,7 +613,7 @@ DLLEXPORT void jl_atexit_hook()
                 default:
                     assert(0);
                 }
-                item = item->next;
+                item = next_shutdown_queue_item(item);
             }
         }
         JL_CATCH {
@@ -598,7 +621,7 @@ DLLEXPORT void jl_atexit_hook()
             uv_unref(item->h);
             jl_printf(JL_STDERR, "error during exit cleanup: close: ");
             jl_static_show(JL_STDERR, jl_exception_in_transit);
-            item = item->next;
+            item = next_shutdown_queue_item(item);
         }
     }
     uv_run(loop,UV_RUN_DEFAULT); //let libuv spin until everything has finished closing
@@ -733,6 +756,17 @@ void *mach_segv_listener(void *arg)
     }
 }
 
+#ifdef SEGV_EXCEPTION
+
+void darwin_segv_handler(unw_context_t *uc)
+{
+    bt_size = rec_backtrace_ctx(bt_data, MAX_BT_SIZE, uc);
+    jl_exception_in_transit = jl_segv_exception;
+    jl_rethrow();
+}
+
+#endif
+
 void darwin_stack_overflow_handler(unw_context_t *uc)
 {
     bt_size = rec_backtrace_ctx(bt_data, MAX_BT_SIZE, uc);
@@ -785,8 +819,12 @@ kern_return_t catch_exception_raise(mach_port_t            exception_port,
     ret = thread_get_state(thread,x86_EXCEPTION_STATE64,(thread_state_t)&exc_state,&exc_count);
     HANDLE_MACH_ERROR("thread_get_state(1)",ret);
     uint64_t fault_addr = exc_state.__faultvaddr;
+#ifdef SEGV_EXCEPTION
+    if (1) {
+#else
     if (is_addr_on_stack((void*)fault_addr) ||
         ((exc_state.__err & PAGE_PRESENT) == PAGE_PRESENT)) {
+#endif
         ret = thread_get_state(thread,x86_THREAD_STATE64,(thread_state_t)&state,&count);
         HANDLE_MACH_ERROR("thread_get_state(2)",ret);
         old_state = state;
@@ -809,6 +847,10 @@ kern_return_t catch_exception_raise(mach_port_t            exception_port,
         state.__rdi = (uint64_t)uc;
         if ((exc_state.__err & PAGE_PRESENT) == PAGE_PRESENT)
             state.__rip = (uint64_t)darwin_accerr_handler;
+#ifdef SEGV_EXCEPTION
+        else if (!is_addr_on_stack((void*)fault_addr))
+            state.__rip = (uint64_t)darwin_segv_handler;
+#endif
         else
             state.__rip = (uint64_t)darwin_stack_overflow_handler;
 
@@ -935,7 +977,20 @@ static void jl_resolve_sysimg_location(JL_IMAGE_SEARCH rel)
     }
     if (jl_options.build_path)
         jl_options.build_path = abspath(jl_options.build_path);
+    if (jl_options.machinefile)
+        jl_options.machinefile = abspath(jl_options.machinefile);
+    if (jl_options.load)
+        jl_options.load = abspath(jl_options.load);
 }
+
+#ifdef _OS_DARWIN_
+void attach_exception_port()
+{
+    kern_return_t ret;
+    ret = thread_set_exception_ports(mach_thread_self(),EXC_MASK_BAD_ACCESS,segv_port,EXCEPTION_DEFAULT,MACHINE_THREAD_STATE);
+    HANDLE_MACH_ERROR("thread_set_exception_ports",ret);
+}
+#endif
 
 void _julia_init(JL_IMAGE_SEARCH rel)
 {
@@ -1021,6 +1076,7 @@ void _julia_init(JL_IMAGE_SEARCH rel)
 
     if (!jl_options.image_file) {
         jl_core_module = jl_new_module(jl_symbol("Core"));
+        jl_top_module = jl_core_module;
         jl_init_intrinsic_functions();
         jl_init_primitives();
 
@@ -1042,7 +1098,7 @@ void _julia_init(JL_IMAGE_SEARCH rel)
         }
         JL_CATCH {
             jl_printf(JL_STDERR, "error during init:\n");
-            jl_show(jl_stderr_obj(), jl_exception_in_transit);
+            jl_static_show(JL_STDERR, jl_exception_in_transit);
             jl_printf(JL_STDERR, "\n");
             jl_exit(1);
         }
@@ -1072,6 +1128,22 @@ void _julia_init(JL_IMAGE_SEARCH rel)
     jl_current_module = jl_main_module;
     jl_root_task->current_module = jl_current_module;
 
+    if (jl_options.handle_signals == JL_OPTIONS_HANDLE_SIGNALS_ON)
+        jl_install_default_signal_handlers();
+
+#ifdef JL_GC_MARKSWEEP
+    jl_gc_enable();
+#endif
+
+    if (jl_options.image_file)
+        jl_init_restored_modules();
+
+    if (jl_options.handle_signals == JL_OPTIONS_HANDLE_SIGNALS_ON)
+        jl_install_sigint_handler();
+}
+
+void jl_install_default_signal_handlers(void)
+{
 #ifndef _OS_WINDOWS_
     signal_stack = malloc(sig_stack_size);
     struct sigaction actf;
@@ -1105,8 +1177,7 @@ void _julia_init(JL_IMAGE_SEARCH rel)
     }
     pthread_attr_destroy(&attr);
 
-    ret = thread_set_exception_ports(mach_thread_self(),EXC_MASK_BAD_ACCESS,segv_port,EXCEPTION_DEFAULT,MACHINE_THREAD_STATE);
-    HANDLE_MACH_ERROR("thread_set_exception_ports",ret);
+    attach_exception_port();
 #else // defined(_OS_DARWIN_)
     stack_t ss;
     ss.ss_flags = 0;
@@ -1169,18 +1240,9 @@ void _julia_init(JL_IMAGE_SEARCH rel)
     }
     SetUnhandledExceptionFilter(exception_handler);
 #endif
-
-#ifdef JL_GC_MARKSWEEP
-    jl_gc_enable();
-#endif
-
-    if (jl_options.image_file)
-        jl_init_restored_modules();
-
-    jl_install_sigint_handler();
 }
 
-DLLEXPORT void jl_install_sigint_handler()
+DLLEXPORT void jl_install_sigint_handler(void)
 {
 #ifdef _OS_WINDOWS_
     SetConsoleCtrlHandler((PHANDLER_ROUTINE)sigint_handler,1);
@@ -1208,40 +1270,59 @@ DLLEXPORT void julia_save()
         if (jl_options.compile_enabled == JL_OPTIONS_COMPILE_ALL)
             jl_compile_all();
         char *build_ji;
-        if (asprintf(&build_ji, "%s.ji",build_path) > 0) {
+        // TODO: these should be replaced by an option to write either a .ji or a .so
+        int write_ji = 1;    // save a .ji file
+        int separate_so = 1; // save a separate .so file
+        ios_t *s = NULL;
+
+        if (write_ji) {
+            if (asprintf(&build_ji, "%s.ji",build_path) <= 0) {
+                jl_printf(JL_STDERR,"\nFATAL: failed to create string for .ji build path\n");
+                return;
+            }
             jl_save_system_image(build_ji);
             free(build_ji);
-            if (jl_options.dumpbitcode == JL_OPTIONS_DUMPBITCODE_ON) {
-                char *build_bc;
-                if (asprintf(&build_bc, "%s.bc",build_path) > 0) {
-                    jl_dump_bitcode(build_bc);
-                    free(build_bc);
-                }
-                else {
-                    jl_printf(JL_STDERR,"\nWARNING: failed to create string for .bc build path\n");
-                }
-            }
-            char *build_o;
-            if (asprintf(&build_o, "%s.o",build_path) > 0) {
-                jl_dump_objfile(build_o,0);
-                free(build_o);
-            }
-            else {
-                jl_printf(JL_STDERR,"\nFATAL: failed to create string for .o build path\n");
-            }
         }
         else {
-            jl_printf(JL_STDERR,"\nFATAL: failed to create string for .ji build path\n");
+            s = jl_create_system_image();
+        }
+
+        if (jl_options.dumpbitcode == JL_OPTIONS_DUMPBITCODE_ON) {
+            char *build_bc;
+            if (asprintf(&build_bc, "%s.bc",build_path) > 0) {
+                jl_dump_bitcode(build_bc);
+                free(build_bc);
+            }
+            else {
+                jl_printf(JL_STDERR,"\nWARNING: failed to create string for .bc build path\n");
+            }
+        }
+
+        if (!write_ji || separate_so) {
+            char *build_o;
+            if (asprintf(&build_o, "%s.o",build_path) <= 0) {
+                jl_printf(JL_STDERR,"\nFATAL: failed to create string for .o build path\n");
+                return;
+            }
+            if (separate_so) {
+                jl_dump_objfile(build_o, 0, NULL, 0);
+            }
+            else {
+                assert(s != NULL);
+                jl_dump_objfile(build_o, 0, (const char*)s->buf, s->size);
+            }
+            free(build_o);
         }
     }
 }
 
 jl_function_t *jl_typeinf_func=NULL;
 
-DLLEXPORT void jl_enable_inference(void)
+DLLEXPORT void jl_set_typeinf_func(jl_value_t* f)
 {
-    jl_typeinf_func = (jl_function_t*)jl_get_global(jl_base_module,
-                                                    jl_symbol("typeinf_ext"));
+    if (!jl_is_function(f))
+        jl_error("jl_set_typeinf_func must set a jl_function_t*");
+    jl_typeinf_func = (jl_function_t*)f;
 }
 
 static jl_value_t *core(char *name)
@@ -1288,6 +1369,10 @@ void jl_get_builtin_hooks(void)
     jl_boundserror_type    = (jl_datatype_t*)core("BoundsError");
     jl_memory_exception    = jl_new_struct_uninit((jl_datatype_t*)core("OutOfMemoryError"));
 
+#ifdef SEGV_EXCEPTION
+    jl_segv_exception      = jl_new_struct_uninit((jl_datatype_t*)core("SegmentationFault"));
+#endif
+
     jl_ascii_string_type = (jl_datatype_t*)core("ASCIIString");
     jl_utf8_string_type = (jl_datatype_t*)core("UTF8String");
     jl_symbolnode_type = (jl_datatype_t*)core("SymbolNode");
@@ -1295,8 +1380,7 @@ void jl_get_builtin_hooks(void)
     jl_weakref_type = (jl_datatype_t*)core("WeakRef");
 
     jl_array_uint8_type = jl_apply_type((jl_value_t*)jl_array_type,
-                                        jl_tuple2(jl_uint8_type,
-                                                  jl_box_long(1)));
+                                        jl_svec2(jl_uint8_type, jl_box_long(1)));
 }
 
 DLLEXPORT void jl_get_system_hooks(void)

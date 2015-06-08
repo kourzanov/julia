@@ -1,3 +1,5 @@
+# This file is a part of Julia. License is MIT: http://julialang.org/license
+
 ## number-theoretic functions ##
 
 function gcd{T<:Integer}(a::T, b::T)
@@ -68,8 +70,8 @@ end
 # ^ for any x supporting *
 to_power_type(x::Number) = oftype(x*x, x)
 to_power_type(x) = x
-function power_by_squaring(x, p::Integer)
-    x = to_power_type(x)
+function power_by_squaring(x_, p::Integer)
+    x = to_power_type(x_)
     if p == 1
         return copy(x)
     elseif p == 0

@@ -1,3 +1,5 @@
+# This file is a part of Julia. License is MIT: http://julialang.org/license
+
 @doc """
 
 `tests, net_on = choosetests(choices)` selects a set of tests to be
@@ -16,9 +18,9 @@ function choosetests(choices = [])
         "linalg", "core", "keywordargs", "numbers", "strings",
         "dates", "dict", "hashing", "remote", "iobuffer", "staged",
         "arrayops", "tuple", "subarray", "reduce", "reducedim", "random",
-        "intfuncs", "simdloop", "blas", "fft", "dsp", "sparse",
+        "intfuncs", "simdloop", "blas", "sparse",
         "bitarray", "copy", "math", "fastmath", "functional",
-        "operators", "path", "ccall",
+        "operators", "path", "ccall", "unicode",
         "bigint", "sorting", "statistics", "spawn", "backtrace",
         "priorityqueue", "file", "version", "resolve",
         "pollfd", "mpfr", "broadcast", "complex", "socket",
@@ -31,10 +33,13 @@ function choosetests(choices = [])
         "enums", "cmdlineargs", "i18n"
     ]
 
+    if Base.USE_GPL_LIBS
+        testnames = [testnames, "fft", "dsp"; ]
+    end
+
     if isdir(joinpath(JULIA_HOME, Base.DOCDIR, "examples"))
         push!(testnames, "examples")
     end
-    @unix_only push!(testnames, "unicode")
 
     # parallel tests depend on other workers - do them last
     push!(testnames, "parallel")
@@ -44,12 +49,16 @@ function choosetests(choices = [])
     if "linalg" in tests
         # specifically selected case
         filter!(x -> x != "linalg", tests)
-        prepend!(tests, ["linalg1", "linalg2", "linalg3", "linalg4",
-            "linalg/lapack", "linalg/triangular", "linalg/tridiag",
-            "linalg/bidiag", "linalg/diagonal",
-            "linalg/pinv", "linalg/givens", "linalg/cholesky", "linalg/lu",
-            "linalg/arnoldi", "linalg/symmetric"])
+        linalgtests = ["linalg1", "linalg2", "linalg3", "linalg4",
+                       "linalg/lapack", "linalg/triangular", "linalg/tridiag",
+                       "linalg/bidiag", "linalg/diagonal",
+                       "linalg/pinv", "linalg/givens", "linalg/cholesky", "linalg/lu",
+                       "linalg/symmetric"]
+        if Base.USE_GPL_LIBS
+            push!(linalgtests, "linalg/arnoldi")
         end
+        prepend!(tests, linalgtests)
+    end
 
     net_required_for = ["socket", "parallel"]
     net_on = true

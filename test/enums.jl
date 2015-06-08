@@ -1,3 +1,5 @@
+# This file is a part of Julia. License is MIT: http://julialang.org/license
+
 module TestEnums
 
 using Base.Test
@@ -46,7 +48,7 @@ using Base.Test
 @test convert(BigInt,apple) == 0
 @test convert(Bool,apple) == false
 @test convert(Bool,orange) == true
-@test convert(Bool,kiwi)
+@test_throws InexactError convert(Bool,kiwi)
 @test names(Fruit) == [:apple, :orange, :kiwi]
 
 f(x::Fruit) = "hey, I'm a Fruit"
@@ -166,5 +168,8 @@ end
 
 @test repr(apple) == "apple::"*string(Fruit)
 @test string(apple) == "apple"
+
+@enum LogLevel DEBUG INFO WARN ERROR CRITICAL
+@test DEBUG < CRITICAL
 
 end # module

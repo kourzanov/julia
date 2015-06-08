@@ -1,3 +1,5 @@
+# This file is a part of Julia. License is MIT: http://julialang.org/license
+
 export
 # Modules
     Collections,
@@ -14,6 +16,7 @@ export
     LinAlg,
     BLAS,
     LAPACK,
+    Serializer,
     SparseMatrix,
     Docs,
     Markdown,
@@ -94,6 +97,7 @@ export
     RoundNearestTiesUp,
     RoundToZero,
     RoundUp,
+    SerializationState,
     Set,
     SharedArray,
     SharedMatrix,
@@ -144,6 +148,8 @@ export
     Culonglong,
     Cushort,
     Cwchar_t,
+    Cstring,
+    Cwstring,
 
 # Exceptions
     ArgumentError,
@@ -159,6 +165,7 @@ export
     SystemError,
     TypeError,
     AssertionError,
+    UnicodeError,
 
 # Global constants and variables
     ARGS,
@@ -518,6 +525,7 @@ export
     invperm,
     ipermute!,
     ipermutedims,
+    isassigned,
     isperm,
     issorted,
     last,
@@ -634,6 +642,7 @@ export
     givens,
     hessfact!,
     hessfact,
+    isdiag,
     ishermitian,
     isposdef!,
     isposdef,
@@ -679,6 +688,7 @@ export
     tril,
     triu!,
     triu,
+    vecdot,
     vecnorm,
     ⋅,
     ×,
@@ -814,10 +824,6 @@ export
     ind2chr,
     info,
     is_assigned_char,
-    is_valid_ascii,
-    is_valid_char,
-    is_valid_utf8,
-    is_valid_utf16,
     isalnum,
     isalpha,
     isascii,
@@ -1008,6 +1014,7 @@ export
     task_local_storage,
     unlock,
     yield,
+    yieldto,
 
 # time
     sleep,
@@ -1096,6 +1103,7 @@ export
 
 # misc
     atexit,
+    atreplinit,
     clipboard,
     exit,
     ntuple,
@@ -1169,10 +1177,7 @@ export
     serialize,
     skip,
     skipchars,
-    start_reading,
     start_timer,
-    start_watching,
-    stop_reading,
     stop_timer,
     takebuf_array,
     takebuf_string,
@@ -1243,6 +1248,7 @@ export
     joinpath,
     normpath,
     realpath,
+    relpath,
     splitdir,
     splitdrive,
     splitext,
@@ -1263,6 +1269,7 @@ export
     isfifo,
     isfile,
     islink,
+    ismount,
     ispath,
     isreadable,
     issetgid,
@@ -1279,6 +1286,7 @@ export
     mv,
     operm,
     pwd,
+    readlink,
     rm,
     stat,
     symlink,
@@ -1299,6 +1307,7 @@ export
     setenv,
     spawn,
     success,
+    withenv,
 
 # C interface
     cfunction,
@@ -1321,7 +1330,7 @@ export
     @__FILE__,
     @int128_str,
     @uint128_str,
-    @bigint_str,
+    @big_str,
     @mstr,   # triple-quoted strings
     @cmd,    # `commands`
 
@@ -1344,6 +1353,7 @@ export
     # profiling
     @time,
     @timed,
+    @timev,
     @elapsed,
     @allocated,
     @profile,
@@ -1367,8 +1377,6 @@ export
     @unix_only,
     @osx_only,
     @linux_only,
-    @windowsxp_only,
-    @non_windowsxp_only,
 
     # tasks
     @schedule,
@@ -1385,6 +1393,7 @@ export
     @parallel,
 
     # metaprogramming utilities
+    @generated,
     @gensym,
     @eval,
     @vectorize_1arg,

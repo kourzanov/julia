@@ -1,3 +1,5 @@
+# This file is a part of Julia. License is MIT: http://julialang.org/license
+
 # Linear algebra functions for dense matrices in column major format
 
 ## BLAS cutoff threshold constants
@@ -54,7 +56,9 @@ function mapreduce_seq_impl{T<:BlasComplex}(::Abs2Fun, ::AddFun, a::Union(Array{
 end
 
 function norm{T<:BlasFloat, TI<:Integer}(x::StridedVector{T}, rx::Union(UnitRange{TI},Range{TI}))
-    (minimum(rx) < 1 || maximum(rx) > length(x)) && throw(BoundsError())
+    if minimum(rx) < 1 || maximum(rx) > length(x)
+        throw(BoundsError())
+    end
     BLAS.nrm2(length(rx), pointer(x)+(first(rx)-1)*sizeof(T), step(rx))
 end
 
@@ -66,6 +70,9 @@ vecnorm2{T<:BlasFloat}(x::Union(Array{T},StridedVector{T})) =
 
 function triu!(M::AbstractMatrix, k::Integer)
     m, n = size(M)
+    if (k > 0 && k > n) || (k < 0 && -k > m)
+        throw(BoundsError())
+    end
     idx = 1
     for j = 0:n-1
         ii = min(max(0, j+1-k), m)
@@ -81,6 +88,9 @@ triu(M::Matrix, k::Integer) = triu!(copy(M), k)
 
 function tril!(M::AbstractMatrix, k::Integer)
     m, n = size(M)
+    if (k > 0 && k > n) || (k < 0 && -k > m)
+        throw(BoundsError())
+    end
     idx = 1
     for j = 0:n-1
         ii = min(max(0, j-k), m)
@@ -160,8 +170,9 @@ kron(a::Vector, b::Matrix)=kron(reshape(a,length(a),1),b)
 ^(A::Matrix, p::Integer) = p < 0 ? inv(A^-p) : Base.power_by_squaring(A,p)
 
 function ^(A::Matrix, p::Number)
-    isinteger(p) && return A^Integer(real(p))
-
+    if isinteger(p)
+        return A^Integer(real(p))
+    end
     chksquare(A)
     v, X = eig(A)
     any(v.<0) && (v = complex(v))
@@ -268,7 +279,9 @@ function rcswap!{T<:Number}(i::Integer, j::Integer, X::StridedMatrix{T})
 end
 
 function sqrtm{T<:Real}(A::StridedMatrix{T})
-    issym(A) && return sqrtm(Symmetric(A))
+    if issym(A)
+        return sqrtm(Symmetric(A))
+    end
     n = chksquare(A)
     SchurF = schurfact(complex(A))
     R = full(sqrtm(UpperTriangular(SchurF[:T])))
@@ -276,7 +289,9 @@ function sqrtm{T<:Real}(A::StridedMatrix{T})
     all(imag(retmat) .== 0) ? real(retmat) : retmat
 end
 function sqrtm{T<:Complex}(A::StridedMatrix{T})
-    ishermitian(A) && return sqrtm(Hermitian(A))
+    if ishermitian(A)
+        return sqrtm(Hermitian(A))
+    end
     n = chksquare(A)
     SchurF = schurfact(A)
     R = full(sqrtm(UpperTriangular(SchurF[:T])))
@@ -285,17 +300,17 @@ end
 sqrtm(a::Number) = (b = sqrt(complex(a)); imag(b) == 0 ? real(b) : b)
 sqrtm(a::Complex) = sqrt(a)
 
-function inv{S}(A::StridedMatrix{S})
-    T = typeof(one(S)/one(S))
-    Ac = convert(AbstractMatrix{T}, A)
-    if istriu(Ac)
-        Ai = inv(UpperTriangular(A))
-    elseif istril(Ac)
-        Ai = inv(LowerTriangular(A))
+function inv{T}(A::StridedMatrix{T})
+    S = typeof((one(T)*zero(T) + one(T)*zero(T))/one(T))
+    AA = convert(AbstractArray{S}, A)
+    if istriu(AA)
+        Ai = inv(UpperTriangular(AA))
+    elseif istril(AA)
+        Ai = inv(LowerTriangular(AA))
     else
-        Ai = inv(lufact(Ac))
+        Ai = inv(lufact(AA))
     end
-    return convert(typeof(Ac), Ai)
+    return convert(typeof(AA), Ai)
 end
 
 function factorize{T}(A::Matrix{T})
@@ -390,42 +405,51 @@ end
 
 ## Moore-Penrose pseudoinverse
 function pinv{T}(A::StridedMatrix{T}, tol::Real)
-    m, n        = size(A)
-    (m == 0 || n == 0) && return Array(T, n, m)
+    m, n = size(A)
+    Tout = typeof(zero(T)/sqrt(one(T) + one(T)))
+    if m == 0 || n == 0
+        return Array(Tout, n, m)
+    end
     if istril(A)
-       if( istriu(A) )
-          maxabsA = maximum(abs(diag(A)))
-          B = zeros(T,n,m);
-          for i = 1:min(m,n)
-             if( abs(A[i,i]) > tol*maxabsA && isfinite(one(T)/A[i,i]) )
-                 B[i,i] = one(T)/A[i,i]
-             end
-          end
-          return B;
-       end
+        if istriu(A)
+            maxabsA = maximum(abs(diag(A)))
+            B = zeros(Tout, n, m);
+            for i = 1:min(m, n)
+                if abs(A[i,i]) > tol*maxabsA
+                    Aii = inv(A[i,i])
+                    if isfinite(Aii)
+                        B[i,i] = Aii
+                    end
+                end
+            end
+            return B;
+        end
     end
     SVD         = svdfact(A, thin=true)
-    S           = eltype(SVD[:S])
-    Sinv        = zeros(S, length(SVD[:S]))
-    index       = SVD[:S] .> tol*maximum(SVD[:S])
-    Sinv[index] = one(S) ./ SVD[:S][index]
-    Sinv[find(!isfinite(Sinv))] = zero(S)
-    return SVD[:Vt]'scale(Sinv, SVD[:U]')
+    Stype       = eltype(SVD.S)
+    Sinv        = zeros(Stype, length(SVD.S))
+    index       = SVD.S .> tol*maximum(SVD.S)
+    Sinv[index] = one(Stype) ./ SVD.S[index]
+    Sinv[find(!isfinite(Sinv))] = zero(Stype)
+    return SVD.Vt'scale(Sinv, SVD.U')
 end
 function pinv{T}(A::StridedMatrix{T})
     tol = eps(real(float(one(T))))*maximum(size(A))
     return pinv(A, tol)
 end
 pinv(a::StridedVector) = pinv(reshape(a, length(a), 1))
-pinv(x::Number) = isfinite(one(x)/x) ? one(x)/x : zero(x)
+function pinv(x::Number)
+    xi = inv(x)
+    return ifelse(isfinite(xi), xi, zero(xi))
+end
 
 ## Basis for null space
 function nullspace{T}(A::StridedMatrix{T})
     m, n = size(A)
     (m == 0 || n == 0) && return eye(T, n)
-    SVD = svdfact(A, thin=false)
-    indstart = sum(SVD[:S] .> max(m,n)*maximum(SVD[:S])*eps(eltype(SVD[:S]))) + 1
-    return SVD[:V][:,indstart:end]
+    SVD = svdfact(A, thin = false)
+    indstart = sum(SVD.S .> max(m,n)*maximum(SVD.S)*eps(eltype(SVD.S))) + 1
+    return SVD.Vt[indstart:end,:]'
 end
 nullspace(a::StridedVector) = nullspace(reshape(a, length(a), 1))
 

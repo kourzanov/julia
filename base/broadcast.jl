@@ -1,3 +1,5 @@
+# This file is a part of Julia. License is MIT: http://julialang.org/license
+
 module Broadcast
 
 using ..Cartesian
@@ -13,9 +15,9 @@ export broadcast_getindex, broadcast_setindex!
 
 droparg1(a, args...) = args
 
-longer_tuple(x::(), retx::Tuple, y::(), rety::Tuple) = retx
-longer_tuple(x::(), retx::Tuple, y::Tuple, rety::Tuple) = rety
-longer_tuple(x::Tuple, retx::Tuple, y::(), rety::Tuple) = retx
+longer_tuple(x::Tuple{}, retx::Tuple, y::Tuple{}, rety::Tuple) = retx
+longer_tuple(x::Tuple{}, retx::Tuple, y::Tuple, rety::Tuple) = rety
+longer_tuple(x::Tuple, retx::Tuple, y::Tuple{}, rety::Tuple) = retx
 longer_tuple(x::Tuple, retx::Tuple, y::Tuple, rety::Tuple) =
     longer_tuple(droparg1(x...), retx, droparg1(y...), rety)
 longer_tuple(x::Tuple, y::Tuple) = longer_tuple(x, x, y, y)
@@ -239,7 +241,7 @@ broadcast!_function(f::Function) = (B, As...) -> broadcast!(f, B, As...)
 broadcast_function(f::Function) = (As...) -> broadcast(f, As...)
 
 broadcast_getindex(src::AbstractArray, I::AbstractArray...) = broadcast_getindex!(Array(eltype(src), broadcast_shape(I...)), src, I...)
-stagedfunction broadcast_getindex!(dest::AbstractArray, src::AbstractArray, I::AbstractArray...)
+@generated function broadcast_getindex!(dest::AbstractArray, src::AbstractArray, I::AbstractArray...)
     N = length(I)
     Isplat = Expr[:(I[$d]) for d = 1:N]
     quote
@@ -254,7 +256,7 @@ stagedfunction broadcast_getindex!(dest::AbstractArray, src::AbstractArray, I::A
     end
 end
 
-stagedfunction broadcast_setindex!(A::AbstractArray, x, I::AbstractArray...)
+@generated function broadcast_setindex!(A::AbstractArray, x, I::AbstractArray...)
     N = length(I)
     Isplat = Expr[:(I[$d]) for d = 1:N]
     quote
@@ -271,7 +273,7 @@ stagedfunction broadcast_setindex!(A::AbstractArray, x, I::AbstractArray...)
             X = x
             # To call setindex_shape_check, we need to create fake 1-d indexes of the proper size
             @nexprs $N d->(fakeI_d = 1:shape_d)
-            Base.setindex_shape_check(X, (@ntuple $N fakeI)...)
+            @ncall $N Base.setindex_shape_check X shape
             k = 1
             @nloops $N i d->(1:shape_d) d->(@nexprs $N k->(j_d_k = size(I_k, d) == 1 ? 1 : i_d)) begin
                 @nexprs $N k->(@inbounds J_k = @nref $N I_k d->j_d_k)

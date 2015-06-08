@@ -1,3 +1,5 @@
+# This file is a part of Julia. License is MIT: http://julialang.org/license
+
 ## converting pointers to an appropriate unsigned ##
 
 const C_NULL = box(Ptr{Void}, 0)
@@ -19,7 +21,7 @@ unsafe_convert(::Type{Ptr{UInt8}}, x::Symbol) = ccall(:jl_symbol_name, Ptr{UInt8
 unsafe_convert(::Type{Ptr{Int8}}, x::Symbol) = ccall(:jl_symbol_name, Ptr{Int8}, (Any,), x)
 unsafe_convert(::Type{Ptr{UInt8}}, s::ByteString) = unsafe_convert(Ptr{UInt8}, s.data)
 unsafe_convert(::Type{Ptr{Int8}}, s::ByteString) = convert(Ptr{Int8}, unsafe_convert(Ptr{UInt8}, s.data))
-# convert strings to ByteString to pass as pointers
+# convert strings to ByteString etc. to pass as pointers
 cconvert(::Type{Ptr{UInt8}}, s::AbstractString) = bytestring(s)
 cconvert(::Type{Ptr{Int8}}, s::AbstractString) = bytestring(s)
 
@@ -40,7 +42,7 @@ function pointer_to_array{T,N}(p::Ptr{T}, dims::NTuple{N,Integer}, own::Bool=fal
         end
         i += 1
     end
-    pointer_to_array(p, convert((Int...), dims), own)
+    pointer_to_array(p, convert(Tuple{Vararg{Int}}, dims), own)
 end
 unsafe_load(p::Ptr,i::Integer) = pointerref(p, Int(i))
 unsafe_load(p::Ptr) = unsafe_load(p, 1)

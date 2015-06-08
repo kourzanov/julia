@@ -1,3 +1,6 @@
+# This file is a part of Julia. License is MIT: http://julialang.org/license
+
+using Base.Test
 # import Base: ViewIndex, nextLD, dimsizeexpr, rangetype, merge_indexes, first_index, stride1expr, tailsize, subarray_linearindexing_dim
 using Base.Cartesian
 
@@ -352,6 +355,12 @@ if !testfull
     end
 end
 
+# issue #11289
+x11289 = randn(5,5)
+@test isempty(sub(x11289, Int[], :))
+@test isempty(sub(x11289, [2,5], Int[]))
+@test isempty(sub(x11289, Int[], 2))
+
 ####### "Classical" tests #######
 
 # sub
@@ -386,6 +395,8 @@ sA = sub(A, 1:2:3, 1:3:5, 1:2:8)
 @test sA[:] == A[1:2:3, 1:3:5, 1:2:8][:]
 # issue #8807
 @test sub(sub([1:5;], 1:5), 1:5) == [1:5;]
+# Test with mixed types
+@test sA[:, Int16[1,2], big(2)] == [31 40; 33 42]
 
 # sub logical indexing #4763
 A = sub([1:10;], 5:8)

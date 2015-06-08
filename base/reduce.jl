@@ -1,3 +1,5 @@
+# This file is a part of Julia. License is MIT: http://julialang.org/license
+
 ## reductions ##
 
 ###### Generic (map)reduce functions ######
@@ -310,7 +312,7 @@ function mapfoldl(f, ::OrFun, itr)
     return false
 end
 
-function mapreduce_impl(f, op::AndFun, A::AbstractArray, ifirst::Int, ilast::Int)
+function mapreduce_impl(f, op::AndFun, A::AbstractArray{Bool}, ifirst::Int, ilast::Int)
     while ifirst <= ilast
         @inbounds x = A[ifirst]
         !f(x) && return false
@@ -319,7 +321,7 @@ function mapreduce_impl(f, op::AndFun, A::AbstractArray, ifirst::Int, ilast::Int
     return true
 end
 
-function mapreduce_impl(f, op::OrFun, A::AbstractArray, ifirst::Int, ilast::Int)
+function mapreduce_impl(f, op::OrFun, A::AbstractArray{Bool}, ifirst::Int, ilast::Int)
     while ifirst <= ilast
         @inbounds x = A[ifirst]
         f(x) && return true

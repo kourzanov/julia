@@ -40,6 +40,10 @@
       This function raises an error under operating systems that do not support
       soft symbolic links, such as Windows XP.
 
+.. function:: readlink(path) -> AbstractString
+
+   Returns the value of a symbolic link ``path``.
+
 .. function:: chmod(path, mode)
 
    Change the permissions mode of ``path`` to ``mode``. Only integer ``mode``\ s
@@ -105,10 +109,14 @@
    Like uperm but gets the permissions for people who neither own the file nor are a
    member of the group owning the file
 
-.. function:: cp(src::AbstractString,dst::AbstractString; recursive=false)
+.. function:: cp(src::AbstractString, dst::AbstractString; remove_destination::Bool=false, follow_symlinks::Bool=false)
 
-   Copy a file from `src` to `dest`. Passing ``recursive=true`` will enable
-   recursive copying of directories.
+   Copy the file, link, or directory from *src* to *dest*.
+   \"remove_destination=true\" will first remove an existing `dst`.
+
+   If `follow_symlinks=false`, and src is a symbolic link, dst will be created as a symbolic link.
+   If `follow_symlinks=true` and src is a symbolic link, dst will be a copy of the file or directory
+   `src` refers to.
 
 .. function:: download(url,[localfile])
 
@@ -118,9 +126,10 @@
    use or situations in which more options are need, please use a package that provides the
    desired functionality instead.
 
-.. function:: mv(src::AbstractString,dst::AbstractString)
+.. function:: mv(src::AbstractString,dst::AbstractString; remove_destination::Bool=false)
 
-   Move a file from `src` to `dst`.
+   Move the file, link, or directory from *src* to *dest*.
+   \"remove_destination=true\" will first remove an existing `dst`.
 
 .. function:: rm(path::AbstractString; recursive=false)
 
@@ -139,14 +148,14 @@
 
    Obtain the path of a temporary directory (possibly shared with other processes).
 
-.. function:: mktemp()
+.. function:: mktemp([parent=tempdir()])
 
    Returns ``(path, io)``, where ``path`` is the path of a new temporary file
-   and ``io`` is an open file object for this path.
+   in ``parent`` and ``io`` is an open file object for this path.
 
-.. function:: mktempdir()
+.. function:: mktempdir([parent=tempdir()])
 
-   Create a temporary directory and return its path.
+   Create a temporary directory in the ``parent`` directory and return its path.
 
 .. function:: isblockdev(path) -> Bool
 
@@ -176,6 +185,10 @@
 .. function:: islink(path) -> Bool
 
    Returns ``true`` if ``path`` is a symbolic link, ``false`` otherwise.
+
+.. function:: ismount(path) -> Bool
+
+   Returns ``true`` if ``path`` is a mount point, ``false`` otherwise.
 
 .. function:: ispath(path) -> Bool
 
@@ -249,6 +262,13 @@
 .. function:: realpath(path::AbstractString) -> AbstractString
 
    Canonicalize a path by expanding symbolic links and removing "." and ".." entries.
+
+.. function:: relpath(path::AbstractString, startpath::AbstractString = ".") -> AbstractString
+
+   Return a relative filepath to path either from the current directory or from an optional
+   start directory.
+   This is a path computation: the filesystem is not accessed to confirm the existence or
+   nature of path or startpath.
 
 .. function:: expanduser(path::AbstractString) -> AbstractString
 

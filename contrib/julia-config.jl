@@ -1,4 +1,5 @@
 #!/usr/bin/env julia
+# This file is a part of Julia. License is MIT: http://julialang.org/license
 
 const options =
 [
@@ -13,7 +14,7 @@ function imagePath()
 end
 
 function libDir()
-    abspath(dirname(Sys.dlpath("libjulia")));
+    abspath(dirname(Libdl.dlpath("libjulia")));
 end
 
 function includeDir()

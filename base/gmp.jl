@@ -1,3 +1,5 @@
+# This file is a part of Julia. License is MIT: http://julialang.org/license
+
 module GMP
 
 export BigInt
@@ -6,8 +8,7 @@ import Base: *, +, -, /, <, <<, >>, >>>, <=, ==, >, >=, ^, (~), (&), (|), ($),
              binomial, cmp, convert, div, divrem, factorial, fld, gcd, gcdx, lcm, mod,
              ndigits, promote_rule, rem, show, isqrt, string, isprime, powermod,
              sum, trailing_zeros, trailing_ones, count_ones, base, tryparse_internal,
-             serialize, deserialize, bin, oct, dec, hex, isequal, invmod,
-             prevpow2, nextpow2, ndigits0z, widen, signed
+             bin, oct, dec, hex, isequal, invmod, prevpow2, nextpow2, ndigits0z, widen, signed
 
 if Clong == Int32
     typealias ClongMax Union(Int8, Int16, Int32)
@@ -74,21 +75,28 @@ widen(::Type{BigInt})  = BigInt
 signed(x::BigInt) = x
 
 BigInt(x::BigInt) = x
-BigInt(s::AbstractString) = parse(BigInt,s)
 
 function tryparse_internal(::Type{BigInt}, s::AbstractString, startpos::Int, endpos::Int, base::Int, raise::Bool)
     _n = Nullable{BigInt}()
-    sgn, base, i = Base.parseint_preamble(true,base,s,startpos,endpos)
+
+    # don't make a copy in the common case where we are parsing a whole bytestring
+    bstr = startpos == start(s) && endpos == endof(s) ? bytestring(s) : bytestring(SubString(s,i,endpos))
+
+    sgn, base, i = Base.parseint_preamble(true,base,bstr,start(bstr),endof(bstr))
     if i == 0
-        raise && throw(ArgumentError("premature end of integer: $(repr(s))"))
+        raise && throw(ArgumentError("premature end of integer: $(repr(bstr))"))
         return _n
     end
     z = BigInt()
-    err = ccall((:__gmpz_set_str, :libgmp),
-               Int32, (Ptr{BigInt}, Ptr{UInt8}, Int32),
-               &z, SubString(s,i,endpos), base)
+    if Base.containsnul(bstr)
+        err = -1 # embedded NUL char (not handled correctly by GMP)
+    else
+        err = ccall((:__gmpz_set_str, :libgmp),
+                    Int32, (Ptr{BigInt}, Ptr{UInt8}, Int32),
+                    &z, pointer(bstr)+(i-start(bstr)), base)
+    end
     if err != 0
-        raise && throw(ArgumentError("invalid BigInt: $(repr(s))"))
+        raise && throw(ArgumentError("invalid BigInt: $(repr(bstr))"))
         return _n
     end
     Nullable(sgn < 0 ? -z : z)
@@ -197,6 +205,7 @@ function call{T<:CdoubleMax}(::Type{T}, n::BigInt, ::RoundingMode{:Up})
     x = T(n,RoundToZero)
     x < n ? nextfloat(x) : x
 end
+
 function call{T<:CdoubleMax}(::Type{T}, n::BigInt, ::RoundingMode{:Nearest})
     x = T(n,RoundToZero)
     if maxintfloat(T) <= abs(x) < T(Inf)
@@ -224,15 +233,6 @@ convert(::Type{Float32}, n::BigInt) = Float32(n,RoundNearest)
 convert(::Type{Float16}, n::BigInt) = Float16(n,RoundNearest)
 
 promote_rule{T<:Integer}(::Type{BigInt}, ::Type{T}) = BigInt
-
-# serialization
-
-function serialize(s, n::BigInt)
-    Base.serialize_type(s, BigInt)
-    serialize(s, base(62,n))
-end
-
-deserialize(s, ::Type{BigInt}) = get(tryparse_internal(BigInt, deserialize(s), 62, true))
 
 # Binary ops
 for (fJ, fC) in ((:+, :add), (:-,:sub), (:*, :mul),

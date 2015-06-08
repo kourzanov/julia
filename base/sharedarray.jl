@@ -1,3 +1,5 @@
+# This file is a part of Julia. License is MIT: http://julialang.org/license
+
 type SharedArray{T,N} <: DenseArray{T,N}
     dims::NTuple{N,Int}
     pids::Vector{Int}
@@ -48,8 +50,8 @@ function SharedArray(T::Type, dims::NTuple; init=false, pids=Int[])
     local S = nothing
     local shmmem_create_pid
     try
-        # On OSX, the shm_seg_name length must be < 32 characters
-        shm_seg_name = string("/jl", getpid(), round(Int64,time() * 10^9))
+        # On OSX, the shm_seg_name length must be <= 31 characters (including the terminating NULL character)
+        shm_seg_name = @sprintf("/jl%06u%s", getpid() % 10^6, randstring(20))
         if onlocalhost
             shmmem_create_pid = myid()
             s = shm_mmap_array(T, dims, shm_seg_name, JL_O_CREAT | JL_O_RDWR)
@@ -187,19 +189,20 @@ end
 
 # Don't serialize s (it is the complete array) and
 # pidx, which is relevant to the current process only
-function serialize(s, S::SharedArray)
-    serialize_type(s, typeof(S))
-    for n in SharedArray.names
+function serialize(s::SerializationState, S::SharedArray)
+    Serializer.serialize_cycle(s, S) && return
+    Serializer.serialize_type(s, typeof(S))
+    for n in SharedArray.name.names
         if n in [:s, :pidx, :loc_subarr_1d]
-            writetag(s, UndefRefTag)
+            Serializer.writetag(s.io, Serializer.UNDEFREF_TAG)
         else
             serialize(s, getfield(S, n))
         end
     end
 end
 
-function deserialize{T,N}(s, t::Type{SharedArray{T,N}})
-    S = invoke(deserialize, (Any, DataType), s, t)
+function deserialize{T,N}(s::SerializationState, t::Type{SharedArray{T,N}})
+    S = invoke(deserialize, Tuple{SerializationState, DataType}, s, t)
     init_loc_flds(S)
     S
 end
@@ -210,7 +213,8 @@ convert(::Type{Array}, S::SharedArray) = S.s
 getindex(S::SharedArray) = getindex(S.s)
 getindex(S::SharedArray, I::Real) = getindex(S.s, I)
 getindex(S::SharedArray, I::AbstractArray) = getindex(S.s, I)
-stagedfunction getindex(S::SharedArray, I::Union(Real,AbstractVector)...)
+getindex(S::SharedArray, I::Colon) = getindex(S.s, I)
+@generated function getindex(S::SharedArray, I::Union(Real,AbstractVector,Colon)...)
     N = length(I)
     Isplat = Expr[:(I[$d]) for d = 1:N]
     quote
@@ -221,7 +225,8 @@ end
 setindex!(S::SharedArray, x) = setindex!(S.s, x)
 setindex!(S::SharedArray, x, I::Real) = setindex!(S.s, x, I)
 setindex!(S::SharedArray, x, I::AbstractArray) = setindex!(S.s, x, I)
-stagedfunction setindex!(S::SharedArray, x, I::Union(Real,AbstractVector)...)
+setindex!(S::SharedArray, x, I::Colon) = setindex!(S.s, x, I)
+@generated function setindex!(S::SharedArray, x, I::Union(Real,AbstractVector,Colon)...)
     N = length(I)
     Isplat = Expr[:(I[$d]) for d = 1:N]
     quote
@@ -247,7 +252,7 @@ function rand!{T}(S::SharedArray{T})
 end
 
 function randn!(S::SharedArray)
-    f = S->map!(x->randn, S.loc_subarr_1d)
+    f = S->map!(x->randn(), S.loc_subarr_1d)
     @sync for p in procs(S)
         @async remotecall_wait(p, f, S)
     end
@@ -390,8 +395,8 @@ function _shm_mmap_array(T, dims, shm_seg_name, mode)
     mmap_array(T, dims, s, zero(FileOffset), grow=false)
 end
 
-shm_unlink(shm_seg_name) = ccall(:shm_unlink, Cint, (Ptr{UInt8},), shm_seg_name)
-shm_open(shm_seg_name, oflags, permissions) = ccall(:shm_open, Int, (Ptr{UInt8}, Int, Int), shm_seg_name, oflags, permissions)
+shm_unlink(shm_seg_name) = ccall(:shm_unlink, Cint, (Cstring,), shm_seg_name)
+shm_open(shm_seg_name, oflags, permissions) = ccall(:shm_open, Int, (Cstring, Int, Int), shm_seg_name, oflags, permissions)
 
 end # @unix_only
 

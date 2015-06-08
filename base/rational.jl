@@ -1,3 +1,5 @@
+# This file is a part of Julia. License is MIT: http://julialang.org/license
+
 immutable Rational{T<:Integer} <: Real
     num::T
     den::T
@@ -61,7 +63,7 @@ convert{T<:Integer}(::Type{Rational{T}}, x::Integer) = Rational{T}(convert(T,x),
 convert(::Type{Rational}, x::Rational) = x
 convert(::Type{Rational}, x::Integer) = convert(Rational{typeof(x)},x)
 
-convert(::Type{Bool}, x::Rational) = (x!=0) # to resolve ambiguity
+convert(::Type{Bool}, x::Rational) = x==0 ? false : x==1 ? true : throw(InexactError()) # to resolve ambiguity
 convert{T<:Integer}(::Type{T}, x::Rational) = (isinteger(x) ? convert(T, x.num) : throw(InexactError()))
 
 convert(::Type{FloatingPoint}, x::Rational) = float(x.num)/float(x.den)
@@ -77,6 +79,9 @@ function convert{T<:Integer}(::Type{Rational{T}}, x::FloatingPoint)
 end
 convert(::Type{Rational}, x::Float64) = convert(Rational{Int64}, x)
 convert(::Type{Rational}, x::Float32) = convert(Rational{Int}, x)
+
+big{T<:Integer}(z::Complex{Rational{T}}) = Complex{Rational{BigInt}}(z)
+big{T<:Integer,N}(x::AbstractArray{Complex{Rational{T}},N}) = convert(AbstractArray{Complex{Rational{BigInt}},N}, x)
 
 promote_rule{T<:Integer,S<:Integer}(::Type{Rational{T}}, ::Type{S}) = Rational{promote_type(T,S)}
 promote_rule{T<:Integer,S<:Integer}(::Type{Rational{T}}, ::Type{Rational{S}}) = Rational{promote_type(T,S)}

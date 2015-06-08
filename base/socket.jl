@@ -1,7 +1,10 @@
+# This file is a part of Julia. License is MIT: http://julialang.org/license
+
 ## IP ADDRESS HANDLING ##
 abstract IPAddr
 
 Base.isless{T<:IPAddr}(a::T, b::T) = isless(a.host, b.host)
+Base.convert{T<:Integer}(dt::Type{T}, ip::IPAddr) = dt(ip.host)
 
 immutable IPv4 <: IPAddr
     host::UInt32
@@ -260,6 +263,7 @@ type TCPSocket <: Socket
     closenotify::Condition
     sendbuf::Nullable{IOBuffer}
     lock::ReentrantLock
+    throttle::Int
 
     TCPSocket(handle) = new(
         handle,
@@ -270,7 +274,8 @@ type TCPSocket <: Socket
         false, Condition(),
         false, Condition(),
         nothing,
-        ReentrantLock()
+        ReentrantLock(),
+        DEFAULT_READ_BUFFER_SZ
     )
 end
 function TCPSocket()
@@ -493,7 +498,7 @@ function recvfrom(sock::UDPSocket)
         error("UDPSocket is not initialized and open")
     end
     _recv_start(sock)
-    stream_wait(sock,sock.recvnotify)::(Union(IPv4, IPv6), Vector{UInt8})
+    stream_wait(sock,sock.recvnotify)::Tuple{Union(IPv4, IPv6), Vector{UInt8}}
 end
 
 
@@ -572,7 +577,7 @@ end
 
 function getaddrinfo(cb::Function, host::ASCIIString)
     callback_dict[cb] = cb
-    uv_error("getaddrinfo",ccall(:jl_getaddrinfo, Int32, (Ptr{Void}, Ptr{UInt8}, Ptr{UInt8}, Any),
+    uv_error("getaddrinfo",ccall(:jl_getaddrinfo, Int32, (Ptr{Void}, Cstring, Ptr{UInt8}, Any),
         eventloop(), host, C_NULL, cb))
 end
 getaddrinfo(cb::Function, host::AbstractString) = getaddrinfo(cb,ascii(host))
@@ -609,7 +614,9 @@ function getipaddr()
         end
         sockaddr = ccall(:jl_uv_interface_address_sockaddr,Ptr{Void},(Ptr{UInt8},),current_addr)
         if ccall(:jl_sockaddr_in_is_ip4,Int32,(Ptr{Void},),sockaddr) == 1
-            return IPv4(ntoh(ccall(:jl_sockaddr_host4,UInt32,(Ptr{Void},),sockaddr)))
+            rv = IPv4(ntoh(ccall(:jl_sockaddr_host4,UInt32,(Ptr{Void},),sockaddr)))
+            ccall(:uv_free_interface_addresses,Void,(Ptr{UInt8},Int32),addr,count)
+            return rv
         # Uncomment to enbable IPv6
         #elseif ccall(:jl_sockaddr_in_is_ip6,Int32,(Ptr{Void},),sockaddr) == 1
         #   host = Array(UInt128,1)

@@ -1,3 +1,5 @@
+# This file is a part of Julia. License is MIT: http://julialang.org/license
+
 ## multi.jl - multiprocessing
 ##
 ## julia starts with one process, and processors can be added using:
@@ -111,7 +113,7 @@ type WorkerConfig
 
     function WorkerConfig()
         wc = new()
-        for n in fieldnames(WorkerConfig)
+        for n in 1:length(WorkerConfig.types)
             T = eltype(fieldtype(WorkerConfig, n))
             setfield!(wc, n, Nullable{T}())
         end
@@ -122,22 +124,34 @@ end
 @enum WorkerState W_RUNNING W_TERMINATING W_TERMINATED
 type Worker
     id::Int
-    r_stream::AsyncStream
-    w_stream::AsyncStream
-    manager::ClusterManager
-    config::WorkerConfig
-
     del_msgs::Array{Any,1}
     add_msgs::Array{Any,1}
     gcflag::Bool
     state::WorkerState
 
-    Worker(id, r_stream, w_stream, manager, config) =
-        new(id, r_stream, buffer_writes(w_stream), manager, config, [], [], false, W_RUNNING)
+    r_stream::AsyncStream
+    w_stream::AsyncStream
+    manager::ClusterManager
+    config::WorkerConfig
+
+    function Worker(id, r_stream, w_stream, manager, config)
+        w = Worker(id)
+        w.r_stream = r_stream
+        w.w_stream = buffer_writes(w_stream)
+        w.manager = manager
+        w.config = config
+        w
+    end
+
+    function Worker(id)
+        if haskey(map_pid_wrkr, id)
+            return map_pid_wrkr[id]
+        end
+        new(id, [], [], false, W_RUNNING)
+    end
 end
 
 Worker(id, r_stream, w_stream, manager) = Worker(id, r_stream, w_stream, manager, WorkerConfig())
-
 
 
 function send_msg_now(w::Worker, kind, args...)
@@ -149,6 +163,9 @@ function send_msg(w::Worker, kind, args...)
 end
 
 function flush_gc_msgs(w::Worker)
+    if !isdefined(w, :w_stream)
+        return
+    end
     w.gcflag = false
     msgs = copy(w.add_msgs)
     if !isempty(msgs)
@@ -315,15 +332,16 @@ function worker_from_id(pg::ProcessGroup, i)
     if in(i, map_del_wrkr)
         throw(ProcessExitedException())
     end
-    if myid()==1 && !haskey(map_pid_wrkr,i)
-        error("no process with id $i exists")
+    if !haskey(map_pid_wrkr,i)
+        if myid() == 1
+            error("no process with id $i exists")
+        end
+        w = Worker(i)
+        map_pid_wrkr[i] = w
+    else
+        w = map_pid_wrkr[i]
     end
-    start = time()
-    while (!haskey(map_pid_wrkr, i) && ((time() - start) < 60.0))
-        sleep(0.1)
-        yield()
-    end
-    map_pid_wrkr[i]
+    w
 end
 
 function worker_id_from_socket(s)
@@ -468,7 +486,7 @@ function del_client(pg, id, client)
     nothing
 end
 
-function del_clients(pairs::(Any,Any)...)
+function del_clients(pairs::Tuple{Any,Any}...)
     for p in pairs
         del_client(p[1], p[2])
     end
@@ -504,7 +522,7 @@ function add_client(id, client)
     nothing
 end
 
-function add_clients(pairs::(Any,Any)...)
+function add_clients(pairs::Tuple{Any,Any}...)
     for p in pairs
         add_client(p[1], p[2])
     end
@@ -525,18 +543,18 @@ function send_add_client(rr::RemoteRef, i)
     end
 end
 
-function serialize(s, rr::RemoteRef)
-    i = worker_id_from_socket(s)
+function serialize(s::SerializationState, rr::RemoteRef)
+    i = worker_id_from_socket(s.io)
     #println("$(myid()) serializing $rr to $i")
     if i != -1
         #println("send add $rr to $i")
         send_add_client(rr, i)
     end
-    invoke(serialize, (Any, Any), s, rr)
+    invoke(serialize, Tuple{SerializationState, Any}, s, rr)
 end
 
-function deserialize(s, t::Type{RemoteRef})
-    rr = invoke(deserialize, (Any, DataType), s, t)
+function deserialize(s::SerializationState, t::Type{RemoteRef})
+    rr = invoke(deserialize, Tuple{SerializationState, DataType}, s, t)
     where = rr.where
     if where == myid()
         add_client(rr2id(rr), myid())
@@ -793,7 +811,6 @@ end
 function process_messages(r_stream::TCPSocket, w_stream::TCPSocket; kwargs...)
     @schedule begin
         disable_nagle(r_stream)
-        start_reading(r_stream)
         wait_connected(r_stream)
         if r_stream != w_stream
             disable_nagle(w_stream)
@@ -981,11 +998,15 @@ function start_worker(out::IO)
 
     disable_nagle(sock)
 
+    if ccall(:jl_running_on_valgrind,Cint,()) != 0
+        println(out, "PID = $(getpid())")
+    end
+
     try
         # To prevent hanging processes on remote machines, newly launched workers exit if the
         # master process does not connect in time.
         # TODO : Make timeout configurable.
-        check_master_connect(60.0)
+        check_master_connect(parse(Float64, get(ENV, "JULIA_WORKER_TIMEOUT", "60.0")))
         while true; wait(); end
     catch err
         print(STDERR, "unhandled exception on $(myid()): $(err)\nexiting.\n")
@@ -1352,6 +1373,9 @@ function pmap(f, lsts...; err_retry=true, err_stop=false, pids = workers())
 
     results = Dict{Int,Any}()
 
+    busy_workers = fill(false, length(pids))
+    busy_workers_ntfy = Condition()
+
     retryqueue = []
     task_in_err = false
     is_task_in_error() = task_in_err
@@ -1371,17 +1395,29 @@ function pmap(f, lsts...; err_retry=true, err_stop=false, pids = workers())
             return (getnextidx(), nxtvals)
         elseif !isempty(retryqueue)
             return shift!(retryqueue)
+        elseif err_retry
+            # Handles the condition where we have finished processing the requested lsts as well
+            # as any retryqueue entries, but there are still some jobs active that may result
+            # in an error and have to be retried.
+            while any(busy_workers)
+                wait(busy_workers_ntfy)
+                if !isempty(retryqueue)
+                    return shift!(retryqueue)
+                end
+            end
+            return nothing
         else
             return nothing
         end
     end
 
     @sync begin
-        for wpid in pids
+        for (pididx, wpid) in enumerate(pids)
             @async begin
                 tasklet = getnext_tasklet()
                 while (tasklet != nothing)
                     (idx, fvals) = tasklet
+                    busy_workers[pididx] = true
                     try
                         result = remotecall_fetch(wpid, f, fvals...)
                         if isa(result, Exception)
@@ -1396,8 +1432,15 @@ function pmap(f, lsts...; err_retry=true, err_stop=false, pids = workers())
                             results[idx] = ex
                         end
                         set_task_in_error()
+
+                        busy_workers[pididx] = false
+                        notify(busy_workers_ntfy; all=true)
+
                         break # remove this worker from accepting any more tasks
                     end
+
+                    busy_workers[pididx] = false
+                    notify(busy_workers_ntfy; all=true)
 
                     tasklet = getnext_tasklet()
                 end
@@ -1523,6 +1566,7 @@ end
 
 
 function timedwait(testcb::Function, secs::Float64; pollint::Float64=0.1)
+    pollint > 0 || throw(ArgumentError("cannot set pollint to $pollint seconds"))
     start = time()
     done = RemoteRef()
     timercb(aw) = begin

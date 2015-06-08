@@ -1,3 +1,5 @@
+# This file is a part of Julia. License is MIT: http://julialang.org/license
+
 # basic booleans
 @test true
 @test !false
@@ -32,17 +34,17 @@
 @test Bool(true) == true
 @test Bool(0) == false
 @test Bool(1) == true
-@test Bool(-1) == true
+@test_throws InexactError Bool(-1)
 @test Bool(0.0) == false
 @test Bool(1.0) == true
-@test Bool(0.1) == true
-@test Bool(-1.0) == true
+@test_throws InexactError Bool(0.1)
+@test_throws InexactError Bool(-1.0)
 @test Bool(Complex(0,0)) == false
 @test Bool(Complex(1,0)) == true
-@test_throws InexactError Bool(Complex(0,1)) == true
+@test_throws InexactError Bool(Complex(0,1))
 @test Bool(0//1) == false
 @test Bool(1//1) == true
-@test Bool(1//2) == true
+@test_throws InexactError Bool(1//2)
 
 # basic arithmetic
 @test 2 + 3 == 5
@@ -375,7 +377,18 @@ end
 @test base(12,typemax(Int128)) == "2a695925806818735399a37a20a31b3534a7"
 
 @test hex2num("3ff0000000000000") == 1.
+@test hex2num("bff0000000000000") == -1.
 @test hex2num("4000000000000000") == 2.
+@test hex2num("7ff0000000000000") == Inf
+@test hex2num("fff0000000000000") == -Inf
+@test isnan(hex2num("7ff8000000000000"))
+@test isnan(hex2num("fff8000000000000"))
+@test hex2num("3f800000") == 1.0f0
+@test hex2num("bf800000") == -1.0f0
+@test hex2num("7f800000") == Inf32
+@test hex2num("ff800000") == -Inf32
+@test isnan(hex2num("7fc00000"))
+@test isnan(hex2num("ffc00000"))
 
 # floating-point printing
 @test repr(1.0) == "1.0"
@@ -391,6 +404,15 @@ end
 @test repr(NaN) == "NaN"
 @test repr(-NaN) == "NaN"
 @test repr(Float64(pi)) == "3.141592653589793"
+# issue 6608
+@test sprint(showcompact, 666666.6) == "6.66667e5"
+@test sprint(showcompact, 666666.049) == "666666.0"
+@test sprint(showcompact, 666665.951) == "666666.0"
+@test sprint(showcompact, 66.66666) == "66.6667"
+@test sprint(showcompact, -666666.6) == "-6.66667e5"
+@test sprint(showcompact, -666666.049) == "-666666.0"
+@test sprint(showcompact, -666665.951) == "-666666.0"
+@test sprint(showcompact, -66.66666) == "-66.6667"
 
 @test repr(1.0f0) == "1.0f0"
 @test repr(-1.0f0) == "-1.0f0"
@@ -1630,7 +1652,8 @@ end
 @test isa(0b0000000000000000000000000000000000000000000000000000000000000000,UInt64)
 @test isa(0b00000000000000000000000000000000000000000000000000000000000000000,UInt128)
 @test isa(0b00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000,UInt128)
-@test isa(0b000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000,BigInt)
+# remove BigInt unsigned integer literals #11105
+@test_throws ParseError parse("0b000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")
 @test isa(0b11111111,UInt8)
 @test isa(0b111111111,UInt16)
 @test isa(0b1111111111111111,UInt16)
@@ -1640,7 +1663,8 @@ end
 @test isa(0b1111111111111111111111111111111111111111111111111111111111111111,UInt64)
 @test isa(0b11111111111111111111111111111111111111111111111111111111111111111,UInt128)
 @test isa(0b11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111,UInt128)
-@test isa(0b111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111,BigInt)
+# remove BigInt unsigned integer literals #11105
+@test_throws ParseError parse("0b111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111")
 
 # octal literals
 
@@ -1658,7 +1682,8 @@ end
 @test isa(0o000000000000000000000,UInt64)
 @test isa(0o0000000000000000000000,UInt128)
 @test isa(0o000000000000000000000000000000000000000000,UInt128)
-@test isa(0o0000000000000000000000000000000000000000000,BigInt)
+# remove BigInt unsigned integer literals #11105
+@test_throws ParseError parse("0o0000000000000000000000000000000000000000000")
 @test isa(0o11,UInt8)
 @test isa(0o111,UInt8)
 @test isa(0o11111,UInt16)
@@ -1669,9 +1694,8 @@ end
 @test isa(0o1111111111111111111111,UInt64)
 @test isa(0o111111111111111111111111111111111111111111,UInt128)
 @test isa(0o1111111111111111111111111111111111111111111,UInt128)
-@test isa(0o11111111111111111111111111111111111111111111,BigInt)
-@test 0o4000000000000000000000000000000000000000000 ==
-    340282366920938463463374607431768211456
+# remove BigInt unsigned integer literals #11105
+@test_throws ParseError parse("0o11111111111111111111111111111111111111111111")
 
 # hexadecimal literals
 
@@ -1684,7 +1708,9 @@ end
 @test isa(0x0000000000000000,UInt64)
 @test isa(0x00000000000000000,UInt128)
 @test isa(0x00000000000000000000000000000000,UInt128)
-@test isa(0x000000000000000000000000000000000,BigInt)
+# remove BigInt unsigned integer literals #11105
+@test_throws ParseError parse("0x000000000000000000000000000000000")
+
 @test isa(0x11,UInt8)
 @test isa(0x111,UInt16)
 @test isa(0x1111,UInt16)
@@ -1694,7 +1720,8 @@ end
 @test isa(0x1111111111111111,UInt64)
 @test isa(0x11111111111111111,UInt128)
 @test isa(0x11111111111111111111111111111111,UInt128)
-@test isa(0x111111111111111111111111111111111,BigInt)
+# remove BigInt unsigned integer literals #11105
+@test_throws ParseError parse("0x111111111111111111111111111111111")
 
 # "-" is not part of unsigned literals
 @test -0x10 == -(0x10)
@@ -1707,17 +1734,13 @@ end
 @test -0o0000000000000000000001 == -(0o0000000000000000000001)
 @test -0b00000000000000000000000000000000000000000000000000000000000000001 ==
     -(0b00000000000000000000000000000000000000000000000000000000000000001)
-@test -0x000000000000000000000000000000001 == -(0x000000000000000000000000000000001)
-@test -0o0000000000000000000000000000000000000000001 ==
-    -(0o0000000000000000000000000000000000000000001)
-@test -0b000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001 ==
-    -(0b000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001)
 
 @test isa(-0x00,UInt8)
 @test isa(-0x0000000000000000,UInt64)
 @test isa(-0x00000000000000000,UInt128)
 @test isa(-0x00000000000000000000000000000000,UInt128)
-@test isa(-0x000000000000000000000000000000000,BigInt)
+# remove BigInt unsigned integer literals #11105
+@test_throws ParseError parse("-0x000000000000000000000000000000000")
 
 # Float32 literals
 @test isa(1f0,Float32)
@@ -1810,10 +1833,43 @@ approx_eq(a, b) = approx_eq(a, b, 1e-6)
 @test approx_eq(ceil(-123.456,1), -123.4)
 @test approx_eq(floor(123.456,1), 123.4)
 @test approx_eq(floor(-123.456,1), -123.5)
+# rounding with too much (or too few) precision
+for x in (12345.6789, 0, -12345.6789)
+    y = float(x)
+    @test y == trunc(x, 1000)
+    @test y == round(x, 1000)
+    @test y == floor(x, 1000)
+    @test y == ceil(x, 1000)
+end
+x = 12345.6789
+@test 0.0 == trunc(x, -1000)
+@test 0.0 == round(x, -1000)
+@test 0.0 == floor(x, -1000)
+@test Inf == ceil(x, -1000)
+x = -12345.6789
+@test -0.0 == trunc(x, -1000)
+@test -0.0 == round(x, -1000)
+@test -Inf == floor(x, -1000)
+@test -0.0 == ceil(x, -1000)
+x = 0.0
+@test 0.0 == trunc(x, -1000)
+@test 0.0 == round(x, -1000)
+@test 0.0 == floor(x, -1000)
+@test 0.0 == ceil(x, -1000)
 # rounding in other bases
 @test approx_eq(round(pi,2,2), 3.25)
 @test approx_eq(round(pi,3,2), 3.125)
 @test approx_eq(round(pi,3,5), 3.144)
+# vectorized trunc/round/floor/ceil with digits/base argument
+a = rand(2, 2, 2)
+for f in (trunc, round, floor, ceil)
+    @test f(a[:, 1, 1], 2) == map(x->f(x, 2), a[:, 1, 1])
+    @test f(a[:, :, 1], 2) == map(x->f(x, 2), a[:, :, 1])
+    @test f(a, 9, 2) == map(x->f(x, 9, 2), a)
+    @test f(a[:, 1, 1], 9, 2) == map(x->f(x, 9, 2), a[:, 1, 1])
+    @test f(a[:, :, 1], 9, 2) == map(x->f(x, 9, 2), a[:, :, 1])
+    @test f(a, 9, 2) == map(x->f(x, 9, 2), a)
+ end
 # significant digits (would be nice to have a smart vectorized
 # version of signif)
 @test approx_eq(signif(123.456,1), 100.)
@@ -1887,7 +1943,7 @@ approx_eq(a, b) = approx_eq(a, b, 1e-6)
 @test rationalize(Int64, nextfloat(0.1),tol=1.5eps(0.1)) == 1//10
 @test rationalize(Int128,nextfloat(0.1),tol=1.5eps(0.1)) == 1//10
 @test rationalize(BigInt,nextfloat(0.1),tol=1.5eps(0.1)) == 1//10
-@test rationalize(BigInt,nextfloat(BigFloat("0.1")),tol=1.5eps(big(0.1))) == 1//10
+@test rationalize(BigInt,nextfloat(parse(BigFloat,"0.1")),tol=1.5eps(big(0.1))) == 1//10
 @test rationalize(Int64, nextfloat(0.1),tol=0) == 7205759403792795//72057594037927936
 @test rationalize(Int128,nextfloat(0.1),tol=0) == 7205759403792795//72057594037927936
 @test rationalize(BigInt,nextfloat(0.1),tol=0) == 7205759403792795//72057594037927936
@@ -1896,12 +1952,12 @@ approx_eq(a, b) = approx_eq(a, b, 1e-6)
 @test rationalize(Int64, prevfloat(0.1)) == 1//10
 @test rationalize(Int128,prevfloat(0.1)) == 1//10
 @test rationalize(BigInt,prevfloat(0.1)) == 1//10
-@test rationalize(BigInt,prevfloat(BigFloat("0.1"))) == 1//10
+@test rationalize(BigInt,prevfloat(parse(BigFloat,"0.1"))) == 1//10
 @test rationalize(Int64, prevfloat(0.1),tol=0) == 7205759403792793//72057594037927936
 @test rationalize(Int128,prevfloat(0.1),tol=0) == 7205759403792793//72057594037927936
 @test rationalize(BigInt,prevfloat(0.1),tol=0) == 7205759403792793//72057594037927936
 
-@test rationalize(BigInt,nextfloat(BigFloat("0.1")),tol=0) == 46316835694926478169428394003475163141307993866256225615783033603165251855975//463168356949264781694283940034751631413079938662562256157830336031652518559744
+@test rationalize(BigInt,nextfloat(parse(BigFloat,"0.1")),tol=0) == 46316835694926478169428394003475163141307993866256225615783033603165251855975//463168356949264781694283940034751631413079938662562256157830336031652518559744
 
 
 @test rationalize(Int8, 200f0) == 1//0
@@ -2069,6 +2125,13 @@ end
 @test 2.0f0^(1//3) == 2.0f0^(1.0f0/3)
 @test 2^(1//3) == 2^(1/3)
 
+# factorization of factors > 2^16
+@test factor((big(2)^31-1)^2) == Dict(big(2^31-1) => 2)
+@test factor((big(2)^31-1)*(big(2)^17-1)) == Dict(big(2^31-1) => 1, big(2^17-1) => 1)
+
+# fast factorization of Int128 (#11477)
+@test factor((Int128(2)^39-7)^2) == Dict(Int128(2)^39-7 => 2)
+
 # large shift amounts
 @test Int32(-1)>>31 == -1
 @test Int32(-1)>>32 == -1
@@ -2183,8 +2246,13 @@ end
 @test_throws DomainError nextpow(2,0)
 @test_throws DomainError prevpow(2,0)
 
+@test_throws ArgumentError nextprod([2,3,5],Int128(typemax(Int))+1)
 @test nextprod([2,3,5],30) == 30
 @test nextprod([2,3,5],33) == 36
+
+@test_throws ArgumentError prevprod([2,3,5],Int128(typemax(Int))+1)
+@test prevprod([2,3,5],30) == 30
+@test prevprod([2,3,5],33) == 32
 
 @test nextfloat(0.0) == 5.0e-324
 @test prevfloat(0.0) == -5.0e-324
@@ -2425,4 +2493,11 @@ end
 for T in (Int8,Int16,Int32,Int64,Int128,UInt8,UInt16,UInt32,UInt64,UInt128)
     @test_throws InexactError T(big(typemax(T))+1)
     @test_throws InexactError T(big(typemin(T))-1)
+end
+
+for (d,B) in ((4//2+1im,Rational{BigInt}),(3.0+1im,BigFloat),(2+1im,BigInt))
+    @test typeof(big(d)) == Complex{B}
+    @test big(d) == d
+    @test typeof(big([d])) == Vector{Complex{B}}
+    @test big([d]) == [d]
 end

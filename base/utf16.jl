@@ -1,17 +1,20 @@
-immutable UTF16String <: AbstractString
-    data::Array{UInt16,1} # includes 16-bit NULL termination after string chars
-    function UTF16String(data::Vector{UInt16})
-        if length(data) < 1 || data[end] != 0
-            throw(ArgumentError("UTF16String data must be NULL-terminated"))
-        end
-        new(data)
-    end
-end
+# This file is a part of Julia. License is MIT: http://julialang.org/license
 
 utf16_is_lead(c::UInt16) = (c & 0xfc00) == 0xd800
 utf16_is_trail(c::UInt16) = (c & 0xfc00) == 0xdc00
 utf16_is_surrogate(c::UInt16) = (c & 0xf800) == 0xd800
 utf16_get_supplementary(lead::UInt16, trail::UInt16) = Char(UInt32(lead-0xd7f7)<<10 + trail)
+
+function length(s::UTF16String)
+    d = s.data
+    len = length(d) - 1
+    len == 0 && return 0
+    cnum = 0
+    for i = 1:len
+        @inbounds cnum += !utf16_is_trail(d[i])
+    end
+    cnum
+end
 
 function endof(s::UTF16String)
     d = s.data
@@ -19,19 +22,21 @@ function endof(s::UTF16String)
     i == 0 && return i
     utf16_is_surrogate(d[i]) ? i-1 : i
 end
+
 function next(s::UTF16String, i::Int)
     if !utf16_is_surrogate(s.data[i])
         return Char(s.data[i]), i+1
     elseif length(s.data)-1 > i && utf16_is_lead(s.data[i]) && utf16_is_trail(s.data[i+1])
         return utf16_get_supplementary(s.data[i], s.data[i+1]), i+2
     end
-    throw(ArgumentError("invalid UTF-16 character index"))
+    throw(UnicodeError(UTF_ERR_INVALID_INDEX,0,0))
 end
 
 function reverseind(s::UTF16String, i::Integer)
     j = length(s.data) - i
     return Base.utf16_is_trail(s.data[j]) ? j-1 : j
 end
+
 lastidx(s::UTF16String) = length(s.data) - 1 # s.data includes NULL terminator
 
 function reverse(s::UTF16String)
@@ -48,16 +53,18 @@ function reverse(s::UTF16String)
     return UTF16String(out)
 end
 
-# TODO: optmize this
+# TODO: optimize this
 function encode16(s::AbstractString)
     buf = UInt16[]
     for ch in s
         c = reinterpret(UInt32, ch)
         if c < 0x10000
             push!(buf, UInt16(c))
+        elseif c <= 0x10ffff
+            push!(buf, UInt16(0xd7c0 + (c>>10)))
+            push!(buf, UInt16(0xdc00 + (c & 0x3ff)))
         else
-            push!(buf, UInt16(0xd7c0 + (c>>10) & 0x3ff))
-            push!(buf, UInt16(0xdc00 + c & 0x3ff))
+            throw(UnicodeError(UTF_ERR_INVALID_CHAR, 0, ch))
         end
     end
     push!(buf, 0) # NULL termination
@@ -78,7 +85,7 @@ sizeof(s::UTF16String) = sizeof(s.data) - sizeof(UInt16)
 unsafe_convert{T<:Union(Int16,UInt16)}(::Type{Ptr{T}}, s::UTF16String) =
     convert(Ptr{T}, pointer(s))
 
-function is_valid_utf16(data::AbstractArray{UInt16})
+function isvalid(::Type{UTF16String}, data::AbstractArray{UInt16})
     i = 1
     n = length(data) # this may include NULL termination; that's okay
     while i < n # check for unpaired surrogates
@@ -93,10 +100,8 @@ function is_valid_utf16(data::AbstractArray{UInt16})
     return i > n || !utf16_is_surrogate(data[i])
 end
 
-is_valid_utf16(s::UTF16String) = is_valid_utf16(s.data)
-
 function convert(::Type{UTF16String}, data::AbstractVector{UInt16})
-    !is_valid_utf16(data) && throw(ArgumentError("invalid UTF16 data"))
+    !isvalid(UTF16String, data) && throw(UnicodeError(UTF_ERR_INVALID_16,0,0))
     len = length(data)
     d = Array(UInt16, len + 1)
     d[end] = 0 # NULL terminate
@@ -111,7 +116,7 @@ convert(T::Type{UTF16String}, data::AbstractArray{Int16}) =
 
 function convert(T::Type{UTF16String}, bytes::AbstractArray{UInt8})
     isempty(bytes) && return UTF16String(UInt16[0])
-    isodd(length(bytes)) && throw(ArgumentError("odd number of bytes"))
+    isodd(length(bytes)) && throw(UnicodeError(UTF_ERR_ODD_BYTES_16, length(bytes), 0))
     data = reinterpret(UInt16, bytes)
     # check for byte-order mark (BOM):
     if data[1] == 0xfeff        # native byte order
@@ -127,7 +132,7 @@ function convert(T::Type{UTF16String}, bytes::AbstractArray{UInt8})
         copy!(d,1, data,1, length(data)) # assume native byte order
     end
     d[end] = 0 # NULL terminate
-    !is_valid_utf16(d) && throw(ArgumentError("invalid UTF16 data"))
+    !isvalid(UTF16String, d) && throw(UnicodeError(UTF_ERR_INVALID_16,0,0))
     UTF16String(d)
 end
 

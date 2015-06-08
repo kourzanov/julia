@@ -1,10 +1,14 @@
+# This file is a part of Julia. License is MIT: http://julialang.org/license
+
 module MPFR
 
 export
     BigFloat,
     get_bigfloat_precision,
     set_bigfloat_precision,
-    with_bigfloat_precision
+    with_bigfloat_precision,
+    bigfloat_str,
+    big_str
 
 import
     Base: (*), +, -, /, <, <=, ==, >, >=, ^, besselj, besselj0, besselj1, bessely,
@@ -16,9 +20,8 @@ import
         gamma, lgamma, digamma, erf, erfc, zeta, eta, log1p, airyai,
         eps, signbit, sin, cos, tan, sec, csc, cot, acos, asin, atan,
         cosh, sinh, tanh, sech, csch, coth, acosh, asinh, atanh, atan2,
-        serialize, deserialize, cbrt, typemax, typemin, unsafe_trunc,
-        realmin, realmax, get_rounding, set_rounding, maxintfloat, widen,
-        significand, frexp
+        cbrt, typemax, typemin, unsafe_trunc, realmin, realmax, get_rounding,
+        set_rounding, maxintfloat, widen, significand, frexp, tryparse
 
 import Base.Rounding: get_rounding_raw, set_rounding_raw
 
@@ -77,14 +80,6 @@ function BigFloat(x::BigInt)
     return z
 end
 
-function BigFloat(x::AbstractString, base::Int)
-    z = BigFloat()
-    err = ccall((:mpfr_set_str, :libmpfr), Int32, (Ptr{BigFloat}, Ptr{UInt8}, Int32, Int32), &z, x, base, ROUNDING_MODE[end])
-    err == 0 || throw("incorrectly formatted number \"$x\"")
-    return z
-end
-BigFloat(x::AbstractString) = BigFloat(x, 10)
-
 BigFloat(x::Integer) = BigFloat(BigInt(x))
 
 BigFloat(x::Union(Bool,Int8,Int16,Int32)) = BigFloat(convert(Clong,x))
@@ -92,6 +87,12 @@ BigFloat(x::Union(UInt8,UInt16,UInt32)) = BigFloat(convert(Culong,x))
 
 BigFloat(x::Union(Float16,Float32)) = BigFloat(Float64(x))
 BigFloat(x::Rational) = BigFloat(num(x)) / BigFloat(den(x))
+
+function tryparse(::Type{BigFloat}, s::AbstractString, base::Int=0)
+    z = BigFloat()
+    err = ccall((:mpfr_set_str, :libmpfr), Int32, (Ptr{BigFloat}, Cstring, Int32, Int32), &z, s, base, ROUNDING_MODE[end])
+    err == 0 ? Nullable(z) : Nullable{BigFloat}()
+end
 
 convert(::Type{Rational}, x::BigFloat) = convert(Rational{BigInt}, x)
 convert{S}(::Type{BigFloat}, x::Rational{S}) = BigFloat(x) # to resolve ambiguity
@@ -196,15 +197,6 @@ function convert(::Type{Rational{BigInt}}, x::FloatingPoint)
     s = max(precision(x) - exponent(x), 0)
     BigInt(ldexp(x,s)) // (BigInt(1) << s)
 end
-
-# serialization
-
-function serialize(s, n::BigFloat)
-    Base.serialize_type(s, BigFloat)
-    serialize(s, string(n))
-end
-
-deserialize(s, ::Type{BigFloat}) = BigFloat(deserialize(s))
 
 # Basic arithmetic without promotion
 for (fJ, fC) in ((:+,:add), (:*,:mul))
@@ -773,18 +765,20 @@ function with_bigfloat_precision(f::Function, precision::Integer)
 end
 
 function string(x::BigFloat)
-    lng = 128
-    for i = 1:2
-        z = Array(UInt8, lng + 1)
-        lng = ccall((:mpfr_snprintf,:libmpfr), Int32, (Ptr{UInt8}, Culong, Ptr{UInt8}, Ptr{BigFloat}...), z, lng + 1, "%.Re", &x)
-        if lng < 128 || i == 2
-            return bytestring(z[1:lng])
-        end
+    lng::Int32 = 127
+    buf = Array(UInt8, lng + 1)
+    lng = ccall((:mpfr_snprintf,:libmpfr), Int32, (Ptr{UInt8}, Culong, Ptr{UInt8}, Ptr{BigFloat}...), buf, lng + 1, "%.Re", &x)
+    if lng < 84 # print at least 78 decimal places
+        lng = ccall((:mpfr_sprintf,:libmpfr), Int32, (Ptr{UInt8}, Ptr{UInt8}, Ptr{BigFloat}...), buf, "%.78Re", &x)
+    elseif lng > 127
+        buf = Array(UInt8, lng + 1)
+        lng = ccall((:mpfr_snprintf,:libmpfr), Int32, (Ptr{UInt8}, Culong, Ptr{UInt8}, Ptr{BigFloat}...), buf, lng + 1, "%.Re", &x)
     end
+    return bytestring(pointer(buf), 1 <= x < 10 || x == 0 ? lng - 4 : lng)
 end
 
 print(io::IO, b::BigFloat) = print(io, string(b))
-show(io::IO, b::BigFloat) = print(io, string(b), " with $(precision(b)) bits of precision")
+show(io::IO, b::BigFloat) = print(io, string(b))
 showcompact(io::IO, b::BigFloat) = print(io, string(b))
 
 # get/set exponent min/max

@@ -1,3 +1,5 @@
+# This file is a part of Julia. License is MIT: http://julialang.org/license
+
 ## from base/boot.jl:
 #
 # immutable UTF8String <: AbstractString
@@ -37,7 +39,17 @@ function endof(s::UTF8String)
     end
     i
 end
-length(s::UTF8String) = Int(ccall(:u8_strlen, Csize_t, (Ptr{UInt8},), s.data))
+
+is_utf8_continuation(byte::UInt8) = ((byte&0xc0) == 0x80)
+
+function length(s::UTF8String)
+    d = s.data
+    cnum = 0
+    for i = 1:length(d)
+        @inbounds cnum += !is_utf8_continuation(d[i])
+    end
+    cnum
+end
 
 function next(s::UTF8String, i::Int)
     # potentially faster version
@@ -60,7 +72,7 @@ function next(s::UTF8String, i::Int)
         end
         if 0 < j && i <= j+utf8_trailing[d[j]+1] <= length(d)
             # b is a continuation byte of a valid UTF-8 character
-            throw(ArgumentError("invalid UTF-8 character index"))
+            throw(UnicodeError(UTF_ERR_CONT, i, d[j]))
         end
         # move past 1 byte in case the data is actually Latin-1
         return '\ufffd', i+1
@@ -186,7 +198,7 @@ function reverse(s::UTF8String)
     out = similar(s.data)
     if ccall(:u8_reverse, Cint, (Ptr{UInt8}, Ptr{UInt8}, Csize_t),
              out, s.data, length(out)) == 1
-        throw(ArgumentError("invalid UTF-8 data"))
+        throw(UnicodeError(UTF_ERR_INVALID_8,0,0))
     end
     UTF8String(out)
 end
@@ -200,7 +212,7 @@ write(io::IO, s::UTF8String) = write(io, s.data)
 utf8(x) = convert(UTF8String, x)
 convert(::Type{UTF8String}, s::UTF8String) = s
 convert(::Type{UTF8String}, s::ASCIIString) = UTF8String(s.data)
-convert(::Type{UTF8String}, a::Array{UInt8,1}) = is_valid_utf8(a) ? UTF8String(a) : throw(ArgumentError("invalid UTF-8 sequence"))
+convert(::Type{UTF8String}, a::Array{UInt8,1}) = isvalid(UTF8String, a) ? UTF8String(a) : throw(UnicodeError(UTF_ERR_INVALID_8))
 function convert(::Type{UTF8String}, a::Array{UInt8,1}, invalids_as::AbstractString)
     l = length(a)
     idx = 1
@@ -223,6 +235,9 @@ function convert(::Type{UTF8String}, a::Array{UInt8,1}, invalids_as::AbstractStr
     UTF8String(a)
 end
 convert(::Type{UTF8String}, s::AbstractString) = utf8(bytestring(s))
+
+utf8(p::Ptr{UInt8}) = UTF8String(bytestring(p))
+utf8(p::Ptr{UInt8}, len::Integer) = utf8(pointer_to_array(p, len))
 
 # The last case is the replacement character 0xfffd (3 bytes)
 utf8sizeof(c::Char) = c < Char(0x80) ? 1 : c < Char(0x800) ? 2 : c < Char(0x10000) ? 3 : c < Char(0x110000) ? 4 : 3

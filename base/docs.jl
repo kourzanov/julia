@@ -1,3 +1,5 @@
+# This file is a part of Julia. License is MIT: http://julialang.org/license
+
 module Docs
 
 import Base.Markdown: @doc_str, MD
@@ -15,14 +17,14 @@ macro init ()
     quote
         if !isdefined(:META)
             const $META = ObjectIdDict()
-            doc($META, doc"Documentation metadata for $(string(current_module())).")
+            doc!($META, @doc_str $("Documentation metadata for `$(current_module())`."))
             push!(modules, current_module())
             nothing
         end
     end
 end
 
-function doc(obj, data)
+function doc!(obj, data)
     meta()[obj] = data
 end
 
@@ -38,7 +40,7 @@ function newmethod(defs)
     keylen = -1
     key = nothing
     for def in defs
-        length(def.sig) > keylen && (keylen = length(def.sig); key = def)
+        length(def.sig.parameters) > keylen && (keylen = length(def.sig.parameters); key = def)
     end
     return key
 end
@@ -51,16 +53,20 @@ function newmethod(funcs, f)
     return newmethod(applicable)
 end
 
+def_dict(f) = [def => def.func for def in methods(f)]
+
 function trackmethod(def)
     name = uncurly(unblock(def).args[1].args[1])
     f = esc(name)
     quote
+        funcs = nothing
         if $(isexpr(name, Symbol)) && isdefined($(Expr(:quote, name))) && isgeneric($f)
-            funcs = [def => def.func for def in methods($f)]
-            $(esc(def))
+            funcs = def_dict($f)
+        end
+        $(esc(def))
+        if funcs !== nothing
             $f, newmethod(funcs, $f)
         else
-            $(esc(def))
             $f, newmethod(methods($f))
         end
     end
@@ -76,7 +82,7 @@ FuncDoc() = FuncDoc(Method[], Dict(), Dict())
 
 getset(coll, key, default) = coll[key] = get(coll, key, default)
 
-function doc(f::Function, m::Method, data, source)
+function doc!(f::Function, m::Method, data, source)
     fd = getset(meta(), f, FuncDoc())
     isa(fd, FuncDoc) || error("Can't document a method when the function already has metadata")
     !haskey(fd.meta, m) && push!(fd.order, m)
@@ -111,10 +117,14 @@ end
 catdoc() = nothing
 catdoc(xs...) = vcat(xs...)
 
+# Generic Callables
+
+doc(f, ::Method) = doc(f)
+
 # Modules
 
 function doc(m::Module)
-    md = invoke(doc, (Any,), m)
+    md = invoke(doc, Tuple{Any}, m)
     md == nothing || return md
     readme = Pkg.dir(string(m), "README.md")
     if isfile(readme)
@@ -140,7 +150,7 @@ end
 
 uncurly(ex) = isexpr(ex, :curly) ? ex.args[1] : ex
 
-namify(ex::Expr) = namify(ex.args[1])
+namify(ex::Expr) = isexpr(ex, :.)? ex : namify(ex.args[1])
 namify(sy::Symbol) = sy
 
 function mdify(ex)
@@ -157,7 +167,7 @@ function namedoc(meta, def, name)
     quote
         @init
         $(esc(def))
-        doc($(esc(name)), $(mdify(meta)))
+        doc!($(esc(name)), $(mdify(meta)))
         nothing
     end
 end
@@ -166,7 +176,7 @@ function funcdoc(meta, def)
     quote
         @init
         f, m = $(trackmethod(def))
-        doc(f, m, $(mdify(meta)), $(esc(Expr(:quote, def))))
+        doc!(f, m, $(mdify(meta)), $(esc(Expr(:quote, def))))
         f
     end
 end
@@ -175,7 +185,7 @@ function objdoc(meta, def)
     quote
         @init
         f = $(esc(def))
-        doc(f, $(mdify(meta)))
+        doc!(f, $(mdify(meta)))
         f
     end
 end
@@ -188,7 +198,7 @@ function docm(meta, def)
     isexpr(def′, :type) && return namedoc(meta, def, namify(def′.args[2]))
     isexpr(def′, :abstract) && return namedoc(meta, def, namify(def′))
     fexpr(def′) && return funcdoc(meta, def)
-    isexpr(def, :macrocall) && (def = namify(def))
+    isexpr(def′, :macrocall) && (def = namify(def′))
     return objdoc(meta, def)
 end
 

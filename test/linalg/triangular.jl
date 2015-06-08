@@ -1,3 +1,5 @@
+# This file is a part of Julia. License is MIT: http://julialang.org/license
+
 debug = false
 using Base.Test
 using Base.LinAlg: BlasFloat, errorbounds, full!, naivesub!, transpose!, UnitUpperTriangular, UnitLowerTriangular
@@ -20,7 +22,7 @@ for elty1 in (Float32, Float64, Complex64, Complex128, BigFloat, Int)
                         (UnitLowerTriangular, :L))
 
         # Construct test matrix
-        A1 = t1(elty1 == Int ? rand(1:7, n, n) : convert(Matrix{elty1}, (elty1 <: Complex ? complex(randn(n, n), randn(n, n)) : randn(n, n)) |> t -> chol(t't, uplo1)))
+        A1 = t1(elty1 == Int ? rand(1:7, n, n) : convert(Matrix{elty1}, (elty1 <: Complex ? complex(randn(n, n), randn(n, n)) : randn(n, n)) |> t -> chol(t't, Val{uplo1})))
 
         debug && println("elty1: $elty1, A1: $t1")
 
@@ -96,13 +98,15 @@ for elty1 in (Float32, Float64, Complex64, Complex128, BigFloat, Int)
         @test full(-A1) == -full(A1)
 
         # Binary operations
-        @test A1*0.5 == full(A1*0.5)
-        @test 0.5*A1 == full(0.5*A1)
-        @test A1/0.5 == full(A1/0.5)
-        @test 0.5\A1 == full(0.5\A1)
+        @test A1*0.5 == full(A1)*0.5
+        @test 0.5*A1 == 0.5*full(A1)
+        @test A1/0.5 == full(A1)/0.5
+        @test 0.5\A1 == 0.5\full(A1)
 
         # inversion
         @test_approx_eq inv(A1) inv(lufact(full(A1)))
+        inv(full(A1)) # issue #11298
+        @test isa(inv(A1), t1)
 
         # Determinant
         @test_approx_eq_eps det(A1) det(lufact(full(A1))) sqrt(eps(real(float(one(elty1)))))*n*n
@@ -141,7 +145,7 @@ for elty1 in (Float32, Float64, Complex64, Complex128, BigFloat, Int)
 
                 debug && println("elty1: $elty1, A1: $t1, elty2: $elty2")
 
-                A2 = t2(elty2 == Int ? rand(1:7, n, n) : convert(Matrix{elty2}, (elty2 <: Complex ? complex(randn(n, n), randn(n, n)) : randn(n, n)) |> t-> chol(t't, uplo2)))
+                A2 = t2(elty2 == Int ? rand(1:7, n, n) : convert(Matrix{elty2}, (elty2 <: Complex ? complex(randn(n, n), randn(n, n)) : randn(n, n)) |> t-> chol(t't, Val{uplo2})))
 
                 # Convert
                 if elty1 <: Real && !(elty2 <: Integer)
@@ -160,7 +164,14 @@ for elty1 in (Float32, Float64, Complex64, Complex128, BigFloat, Int)
                 @test_approx_eq full(A1*A2') full(A1)*full(A2)'
                 @test_approx_eq full(A1'A2') full(A1)'full(A2)'
                 @test_approx_eq full(A1/A2) full(A1)/full(A2)
-
+                if elty2 != BigFloat
+                    @test_throws DimensionMismatch eye(n+1)/A2
+                    @test_throws DimensionMismatch eye(n+1)/A2'
+                    @test_throws DimensionMismatch eye(n+1)*A2
+                    @test_throws DimensionMismatch eye(n+1)*A2'
+                    @test_throws DimensionMismatch A2'*eye(n+1)
+                    @test_throws DimensionMismatch A2*eye(n+1)
+                end
             end
         end
 
@@ -274,3 +285,11 @@ for eltya in (Float32, Float64, Complex64, Complex128, BigFloat, Int)
         end
     end
 end
+
+# Issue 10742 and similar
+@test istril(UpperTriangular(diagm([1,2,3,4])))
+@test istriu(LowerTriangular(diagm([1,2,3,4])))
+@test isdiag(UpperTriangular(diagm([1,2,3,4])))
+@test isdiag(LowerTriangular(diagm([1,2,3,4])))
+@test !isdiag(UpperTriangular(rand(4, 4)))
+@test !isdiag(LowerTriangular(rand(4, 4)))

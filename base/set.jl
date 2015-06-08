@@ -1,3 +1,5 @@
+# This file is a part of Julia. License is MIT: http://julialang.org/license
+
 type Set{T}
     dict::Dict{T,Void}
 
@@ -129,4 +131,13 @@ function filter!(f, s::Set)
         end
     end
     return s
+end
+
+const hashs_seed = UInt === UInt64 ? 0x852ada37cfe8e0ce : 0xcfe8e0ce
+function hash(s::Set, h::UInt)
+    h += hashs_seed
+    for x in s
+        h $= hash(x)
+    end
+    return h
 end

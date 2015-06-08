@@ -1,3 +1,5 @@
+# This file is a part of Julia. License is MIT: http://julialang.org/license
+
 ## floating-point functions ##
 
 copysign(x::Float64, y::Float64) = box(Float64,copysign_float(unbox(Float64,x),unbox(Float64,y)))
@@ -30,9 +32,9 @@ num2hex(x::Float64) = hex(box(UInt64,unbox(Float64,x)),16)
 
 function hex2num(s::AbstractString)
     if length(s) <= 8
-        return box(Float32,unbox(Int32,parse(Int32,s,16)))
+        return box(Float32,unbox(UInt32,parse(UInt32,s,16)))
     end
-    return box(Float64,unbox(Int64,parse(Int64,s,16)))
+    return box(Float64,unbox(UInt64,parse(UInt64,s,16)))
 end
 
 @vectorize_1arg Number abs
@@ -73,7 +75,16 @@ for f in (:trunc,:floor,:ceil,:round)
             [ ($f)(T, x[i,j])::T for i = 1:size(x,1), j = 1:size(x,2) ]
         end
         function ($f){T}(::Type{T}, x::AbstractArray)
-            reshape([ ($f)(T, x[i])::T for i = 1:length(x) ], size(x))
+            reshape([ ($f)(T, x[i])::T for i in eachindex(x) ], size(x))
+        end
+        function ($f){R}(x::AbstractArray{R,1}, digits::Integer, base::Integer=10)
+            [ ($f)(x[i], digits, base) for i = 1:length(x) ]
+        end
+        function ($f){R}(x::AbstractArray{R,2}, digits::Integer, base::Integer=10)
+            [ ($f)(x[i,j], digits, base) for i = 1:size(x,1), j = 1:size(x,2) ]
+        end
+        function ($f)(x::AbstractArray, digits::Integer, base::Integer=10)
+            reshape([ ($f)(x[i], digits, base) for i in eachindex(x) ], size(x))
         end
     end
 end
@@ -85,7 +96,7 @@ function round{R}(x::AbstractArray{R,2}, r::RoundingMode)
     [ round(x[i,j], r) for i = 1:size(x,1), j = 1:size(x,2) ]
 end
 function round(x::AbstractArray, r::RoundingMode)
-    reshape([ round(x[i], r) for i = 1:length(x) ], size(x))
+    reshape([ round(x[i], r) for i in eachindex(x) ], size(x))
 end
 
 function round{T,R}(::Type{T}, x::AbstractArray{R,1}, r::RoundingMode)
@@ -95,7 +106,7 @@ function round{T,R}(::Type{T}, x::AbstractArray{R,2}, r::RoundingMode)
     [ round(T, x[i,j], r)::T for i = 1:size(x,1), j = 1:size(x,2) ]
 end
 function round{T}(::Type{T}, x::AbstractArray, r::RoundingMode)
-    reshape([ round(T, x[i], r)::T for i = 1:length(x) ], size(x))
+    reshape([ round(T, x[i], r)::T for i in eachindex(x) ], size(x))
 end
 
 # adapted from Matlab File Exchange roundsd: http://www.mathworks.com/matlabcentral/fileexchange/26212
@@ -133,10 +144,23 @@ end
 
 for f in (:round, :ceil, :floor, :trunc)
     @eval begin
-        function ($f)(x, digits::Integer, base::Integer=10)
+        function ($f)(x::Real, digits::Integer, base::Integer=10)
             x = float(x)
             og = convert(eltype(x),base)^digits
-            ($f)(x * og) / og
+            r = ($f)(x * og) / og
+
+            if !isfinite(r)
+                if digits > 0
+                    return x
+                elseif x > 0
+                    return $(:ceil == f ? :(convert(eltype(x), Inf)) : :(zero(x)))
+                elseif x < 0
+                    return $(:floor == f ? :(-convert(eltype(x), Inf)) : :(-zero(x)))
+                else
+                    return x
+                end
+            end
+            return r
         end
     end
 end

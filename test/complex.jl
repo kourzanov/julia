@@ -1,3 +1,5 @@
+# This file is a part of Julia. License is MIT: http://julialang.org/license
+
 @test reim(2 + 3im) == (2, 3)
 
 # sqrt:
@@ -768,3 +770,6 @@ end
 
 # issue/PR #10148
 @test typeof(Int8(1) - im) == Complex{Int8}
+
+# issue #10926
+@test typeof(π - 1im) == Complex{Float64}

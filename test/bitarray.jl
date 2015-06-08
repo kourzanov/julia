@@ -1,3 +1,5 @@
+# This file is a part of Julia. License is MIT: http://julialang.org/license
+
 tc{N}(r1::NTuple{N}, r2::NTuple{N}) = all(map(x->tc(x...), [zip(r1,r2)...]))
 tc{N}(r1::BitArray{N}, r2::Union(BitArray{N},Array{Bool,N})) = true
 tc{T}(r1::T, r2::T) = true
@@ -67,7 +69,7 @@ for (sz,T) in allsizes
 
     @check_bit_operation length(b1) Int
     @check_bit_operation ndims(b1)  Int
-    @check_bit_operation size(b1)   (Int...)
+    @check_bit_operation size(b1)   Tuple{Vararg{Int}}
 
     b2 = similar(b1)
     @check_bit_operation copy!(b2, b1) T
@@ -444,7 +446,7 @@ for m1 = 1 : v1 + 1
             @test b == i
             b2 = copy(b1)
             i2 = copy(i1)
-            i3 = [j => rand(0:3) for j = 1:v2]
+            i3 = [j => rand(0:1) for j = 1:v2]
             b = splice!(b2, m1:m2, values(i3))
             i = splice!(i2, m1:m2, values(i3))
             @test isequal(bitunpack(b2), i2)
@@ -474,7 +476,7 @@ for m1 = 1 : v1
         @test b == i
         b2 = copy(b1)
         i2 = copy(i1)
-        i3 = [j => rand(0:3) for j = 1:v2]
+        i3 = [j => rand(0:1) for j = 1:v2]
         b = splice!(b2, m1:m2, values(i3))
         i = splice!(i2, m1:m2, values(i3))
         @test isequal(bitunpack(b2), i2)
@@ -838,7 +840,7 @@ for i = 3:v1-1
 end
 
 b1 = bitrand(n1, n2)
-@check_bit_operation findnz(b1) (Vector{Int}, Vector{Int}, BitArray)
+@check_bit_operation findnz(b1) Tuple{Vector{Int}, Vector{Int}, BitArray}
 
 timesofar("nnz&find")
 
@@ -1117,7 +1119,7 @@ b2 = bitrand(v1)
 @check_bit_operation dot(b1, b2) Int
 
 b1 = bitrand(n1, n2)
-for k = -max(n1,n2) : max(n1,n2)
+for k = -n1 : n2
     @check_bit_operation tril(b1, k) BitMatrix
     @check_bit_operation triu(b1, k) BitMatrix
 end
@@ -1197,3 +1199,39 @@ resize!(a, 5)
 a = trues(5,5)
 flipbits!(a)
 @test a == falses(5,5)
+
+# findmax, findmin
+a = trues(0)
+@test_throws ArgumentError findmax(a)
+@test_throws ArgumentError findmin(a)
+
+a = falses(6)
+@test findmax(a) == (false,1)
+a = trues(6)
+@test findmin(a) == (true,1)
+a = bitpack([1,0,1,1,0])
+@test findmin(a) == (false,2)
+@test findmax(a) == (true,1)
+a = bitpack([0,0,1,1,0])
+@test findmin(a) == (false,1)
+@test findmax(a) == (true,3)
+
+#qr and svd
+
+A = bitrand(10,10)
+uA = bitunpack(A)
+@test svd(A) == svd(uA)
+@test qr(A) == qr(uA)
+
+#diag and diagm
+
+v = bitrand(10)
+uv = bitunpack(v)
+@test bitunpack(diagm(v)) == diagm(uv)
+v = bitrand(10,2)
+uv = bitunpack(v)
+@test_throws DimensionMismatch diagm(v)
+
+B = bitrand(10,10)
+uB = bitunpack(B)
+@test diag(uB) == bitunpack(diag(B))

@@ -143,7 +143,7 @@ This function provides equivalent functionality, but makes no efforts to optimis
 
 (defconst julia-function-regex
   (rx line-start (* (or space "@inline" "@noinline")) symbol-start
-      (or "function" "stagedfunction")
+      "function"
       (1+ space)
       ;; Don't highlight module names in function declarations:
       (* (seq (1+ (or word (syntax symbol))) "."))
@@ -183,7 +183,7 @@ This function provides equivalent functionality, but makes no efforts to optimis
 (defconst julia-keyword-regex
   (julia--regexp-opt
    '("if" "else" "elseif" "while" "for" "begin" "end" "quote"
-     "try" "catch" "return" "local" "abstract" "function" "stagedfunction" "macro" "ccall"
+     "try" "catch" "return" "local" "abstract" "function" "macro" "ccall"
      "finally" "typealias" "break" "continue" "type" "global"
      "module" "using" "import" "export" "const" "let" "bitstype" "do" "in"
      "baremodule" "importall" "immutable")
@@ -209,7 +209,7 @@ This function provides equivalent functionality, but makes no efforts to optimis
      "Char" "ASCIIString" "UTF8String" "ByteString" "SubString"
      "Array" "DArray" "AbstractArray" "AbstractVector" "AbstractMatrix" "AbstractSparseMatrix" "SubArray" "StridedArray" "StridedVector" "StridedMatrix" "VecOrMat" "StridedVecOrMat" "DenseArray" "SparseMatrixCSC" "BitArray"
      "Range" "OrdinalRange" "StepRange" "UnitRange" "FloatRange"
-     "Tuple" "NTuple"
+     "Tuple" "NTuple" "Vararg"
      "DataType" "Symbol" "Function" "Vector" "Matrix" "Union" "Type" "Any" "Complex" "String" "Ptr" "Void" "Exception" "Task" "Signed" "Unsigned" "Associative" "Dict" "IO" "IOStream" "Rational" "Regex" "RegexMatch" "Set" "IntSet" "Expr" "WeakRef" "ObjectIdDict"
      "AbstractRNG" "MersenneTwister"
      )
@@ -248,8 +248,8 @@ This function provides equivalent functionality, but makes no efforts to optimis
    ))
 
 (defconst julia-block-start-keywords
-  (list "if" "while" "for" "begin" "try" "function" "stagedfunction" "type" "let" "macro"
-	"quote" "do" "immutable"))
+  (list "if" "while" "for" "begin" "try" "function" "type" "let" "macro"
+        "quote" "do" "immutable"))
 
 (defconst julia-block-end-keywords
   (list "end" "else" "elseif" "catch" "finally"))

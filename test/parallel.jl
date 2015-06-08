@@ -1,8 +1,10 @@
+# This file is a part of Julia. License is MIT: http://julialang.org/license
+
 # NOTE: worker processes cannot add more workers, only the client process can.
 require("testdefs.jl")
 
 if nworkers() < 3
-    remotecall_fetch(1, () -> addprocs(3))
+    remotecall_fetch(1, () -> addprocs(3 - nworkers()))
 end
 
 id_me = myid()
@@ -58,6 +60,8 @@ copy!(s, d)
 s = Base.shmem_rand(dims)
 copy!(s, sdata(d))
 @test s == d
+a = rand(dims)
+@test sdata(a) == a
 
 d = SharedArray(Int, dims; init = D->fill!(D.loc_subarr_1d, myid()))
 for p in procs(d)
@@ -67,6 +71,24 @@ for p in procs(d)
     @test d[idxf] == p
     @test d[idxl] == p
 end
+
+# reshape
+
+d = Base.shmem_fill(1.0, (10,10,10))
+@test ones(100, 10) == reshape(d,(100,10))
+d = Base.shmem_fill(1.0, (10,10,10))
+@test_throws DimensionMismatch reshape(d,(50,))
+
+# rand, randn
+d = Base.shmem_rand(dims)
+@test size(rand!(d)) == dims
+d = Base.shmem_fill(1.0, dims)
+@test size(randn!(d)) == dims
+
+# similar
+d = Base.shmem_rand(dims)
+@test size(similar(d, Complex128)) == dims
+@test size(similar(d, dims)) == dims
 
 # issue #6362
 d = Base.shmem_rand(dims)
@@ -102,6 +124,9 @@ map!(x->1, d)
 
 @test fill!(d, 1) == ones(10, 10)
 @test fill!(d, 2.) == fill(2, 10, 10)
+@test d[:] == fill(2, 100)
+@test d[:,1] == fill(2, 10)
+@test d[1,:] == fill(2, 1, 10)
 
 # Boundary cases where length(S) <= length(pids)
 @test 2.0 == remotecall_fetch(id_other, D->D[2], Base.shmem_fill(2.0, 2; pids=[id_me, id_other]))
@@ -139,6 +164,9 @@ workloads = hist(@parallel((a,b)->[a;b], for i=1:7; myid(); end), nprocs())[2]
     end
     @test isready(rr1)
 end
+
+@test_throws ArgumentError sleep(-1)
+@test_throws ArgumentError timedwait(()->false, 0.1, pollint=-0.5)
 
 # specify pids for pmap
 @test sort(workers()[1:2]) == sort(unique(pmap(x->(sleep(0.1);myid()), 1:10, pids = workers()[1:2])))
@@ -196,25 +224,29 @@ if Bool(parse(Int,(get(ENV, "JULIA_TESTFULL", "0"))))
     @test ups == bytestring(UInt8[UInt8(c) for c in pmap(x->uppercase(x), s)])
     @test ups == bytestring(UInt8[UInt8(c) for c in pmap(x->uppercase(Char(x)), s.data)])
 
+    pmappids = remotecall_fetch(1, () -> addprocs(4))
+
     # retry, on error exit
-    res = pmap(x->(x=='a') ? error("EXPECTED TEST ERROR. TO BE IGNORED.") : uppercase(x), s; err_retry=true, err_stop=true);
-    @test length(res) < length(ups)
+    res = pmap(x->(x=='a') ? error("EXPECTED TEST ERROR. TO BE IGNORED.") : uppercase(x), s; err_retry=true, err_stop=true, pids=pmappids);
+    @test (length(res) < length(ups))
     @test isa(res[1], Exception)
 
     # no retry, on error exit
-    res = pmap(x->(x=='a') ? error("EXPECTED TEST ERROR. TO BE IGNORED.") : uppercase(x), s; err_retry=false, err_stop=true);
-    @test length(res) < length(ups)
+    res = pmap(x->(x=='a') ? error("EXPECTED TEST ERROR. TO BE IGNORED.") : uppercase(x), s; err_retry=false, err_stop=true, pids=pmappids);
+    @test (length(res) < length(ups))
     @test isa(res[1], Exception)
 
     # retry, on error continue
-    res = pmap(x->iseven(myid()) ? error("EXPECTED TEST ERROR. TO BE IGNORED.") : uppercase(x), s; err_retry=true, err_stop=false);
+    res = pmap(x->iseven(myid()) ? error("EXPECTED TEST ERROR. TO BE IGNORED.") : uppercase(x), s; err_retry=true, err_stop=false, pids=pmappids);
     @test length(res) == length(ups)
     @test ups == bytestring(UInt8[UInt8(c) for c in res])
 
     # no retry, on error continue
-    res = pmap(x->(x=='a') ? error("EXPECTED TEST ERROR. TO BE IGNORED.") : uppercase(x), s; err_retry=false, err_stop=false);
+    res = pmap(x->(x=='a') ? error("EXPECTED TEST ERROR. TO BE IGNORED.") : uppercase(x), s; err_retry=false, err_stop=false, pids=pmappids);
     @test length(res) == length(ups)
     @test isa(res[1], Exception)
+
+    remotecall_fetch(1, p->rmprocs(p), pmappids)
 
     print("\n\nPassed all pmap tests that print errors.\n")
 

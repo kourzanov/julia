@@ -9,6 +9,8 @@ Linux, OSX: [![Build Status](https://api.travis-ci.org/JuliaLang/julia.svg?branc
 
 Windows: [![Build status](https://ci.appveyor.com/api/projects/status/4vr88cmgo7u02644/branch/master?svg=true)](https://ci.appveyor.com/project/StefanKarpinski/julia/branch/master)
 
+Code Coverage: [![Coverage Status](https://coveralls.io/repos/JuliaLang/julia/badge.svg?branch=master)](https://coveralls.io/r/JuliaLang/julia?branch=master)
+
 <a name="The-Julia-Language"/>
 ## The Julia Language
 
@@ -27,6 +29,7 @@ This is the GitHub repository of Julia source code, including instructions for c
 - **Git clone URL:** <git://github.com/JuliaLang/julia.git>
 - **Mailing lists:** <http://julialang.org/community/>
 - **IRC:** <http://webchat.freenode.net/?channels=julia>
+- **Code coverage:** <https://coveralls.io/r/JuliaLang/julia>
 
 The mailing list for developer discussion is
 <http://groups.google.com/group/julia-dev/>. All are welcome, but the volume
@@ -222,7 +225,7 @@ These notes apply to the Debian 7 image currently available on Google Compute En
  Problem              | Possible Solution
 ------------------------|---------------------
  OpenBLAS build failure | Set one of the following build options in `Make.user` and build again: <ul><li> `OPENBLAS_TARGET_ARCH=BARCELONA` (AMD CPUs) or `OPENBLAS_TARGET_ARCH=NEHALEM` (Intel CPUs)<ul>Set `OPENBLAS_DYNAMIC_ARCH = 0` to disable compiling multiple architectures in a single binary.</ul></li><li> `OPENBLAS_NO_AVX2 = 1` disables AVX2 instructions, allowing OpenBLAS to compile with `OPENBLAS_DYNAMIC_ARCH = 1` using old versions of binutils </li><li> `USE_SYSTEM_BLAS=1` uses the system provided `libblas` <ul><li>Set `LIBBLAS=-lopenblas` and `LIBBLASNAME=libopenblas` to force the use of the system provided OpenBLAS when multiple BLAS versions are installed. </li></ul></li></ul><p> If you get an error that looks like ```../kernel/x86_64/dgemm_kernel_4x4_haswell.S:1709: Error: no such instruction: `vpermpd $ 0xb1,%ymm0,%ymm0'```, then you need to set `OPENBLAS_DYNAMIC_ARCH = 0` or `OPENBLAS_NO_AVX2 = 1`, or you need a newer version of `binutils` (2.18 or newer). ([Issue #7653](https://github.com/JuliaLang/julia/issues/7653))
-Illegal Instruction error | Check if your CPU supports AVX while your OS does not (e.g. through virtualization, as described in [this issue](https://github.com/JuliaLang/julia/issues/3263)), and try installing LLVM 3.3 instead of LLVM 3.2.
+Illegal Instruction error | Check if your CPU supports AVX while your OS does not (e.g. through virtualization, as described in [this issue](https://github.com/JuliaLang/julia/issues/3263)).
 
 ### OS X
 
@@ -334,16 +337,17 @@ Please be aware that this procedure is not officially supported, as it introduce
 
 SuiteSparse is a special case, since it is typically only installed as a static library, while `USE_SYSTEM_SUITESPARSE=1` requires that it is a shared library. Running the script `contrib/repackage_system_suitesparse4.make` will copy your static system SuiteSparse installation into the shared library format required by Julia. `make USE_SYSTEM_SUITESPARSE=1` will then use the SuiteSparse that has been copied into Julia's directory, but will not build a new SuiteSparse library from scratch.
 
-### Intel compilers and Math Kernel Libraries
+### Intel compilers and Math Kernel Library (MKL)
 
-To use the Intel [MKL] BLAS and LAPACK libraries, make sure that MKL version 10.3.6 or higher is installed.
+To build Julia using the Intel compilers (icc, icpc, ifort), and link against
+the [MKL] BLAS and LAPACK libraries, first make sure you have a recent version
+of the compiler suite (version 15 or later).
+
 For a 64-bit architecture, the environment should be set up as follows:
 
     # bash
-    source /path/to/mkl/bin/mklvars.sh intel64 ilp64
-    export MKL_INTERFACE_LAYER=ILP64
+    source /path/to/intel/bin/compilervars.sh intel64
 
-It is recommended that Intel compilers be used to build Julia when using MKL.
 Add the following to the `Make.user` file:
 
     USEICC = 1

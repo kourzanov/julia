@@ -1,3 +1,5 @@
+// This file is a part of Julia. License is MIT: http://julialang.org/license
+
 #include "platform.h"
 
 /*
@@ -109,7 +111,6 @@ jl_value_t *jl_callback_call(jl_function_t *f,jl_value_t *val,int count,...)
         return NULL;
     jl_value_t **argv;
     JL_GC_PUSHARGS(argv,count);
-    memset(argv, 0, count*sizeof(jl_value_t*));
     jl_value_t *v;
     va_list argp;
     va_start(argp,count);
@@ -146,6 +147,16 @@ jl_value_t *jl_callback_call(jl_function_t *f,jl_value_t *val,int count,...)
 
 DLLEXPORT void jl_uv_closeHandle(uv_handle_t *handle)
 {
+    // if the user killed a stdio handle,
+    // revert back to direct stdio FILE* writes
+    // so that errors can still be reported
+    if (handle == (uv_handle_t*)JL_STDIN)
+        JL_STDIN = (JL_STREAM*)STDIN_FILENO;
+    if (handle == (uv_handle_t*)JL_STDOUT)
+        JL_STDOUT = (JL_STREAM*)STDOUT_FILENO;
+    if (handle == (uv_handle_t*)JL_STDERR)
+        JL_STDERR = (JL_STREAM*)STDERR_FILENO;
+    // also let the client app do its own cleanup
     if (handle->data) {
         JULIA_CB(close,handle->data,0);
     }
@@ -179,15 +190,18 @@ DLLEXPORT void jl_uv_alloc_buf(uv_handle_t *handle, size_t suggested_size, uv_bu
 {
     if (handle->data) {
         jl_value_t *ret = JULIA_CB(alloc_buf,handle->data,1,CB_UINT,suggested_size);
-        assert(jl_is_tuple(ret) && jl_is_pointer(jl_t0(ret)));
-        buf->base = (char*)jl_unbox_voidpointer(jl_t0(ret));
+        JL_GC_PUSH1(&ret);
+        // TODO: jl_fieldref allocates boxes here. should avoid that.
+        assert(jl_is_tuple(ret) && jl_nfields(ret)==2 && jl_is_pointer(jl_fieldref(ret,0)));
+        buf->base = (char*)jl_unbox_voidpointer(jl_fieldref(ret,0));
 #ifdef _P64
-        assert(jl_is_uint64(jl_t1(ret)));
-        buf->len = jl_unbox_uint64(jl_t1(ret));
+        assert(jl_is_uint64(jl_fieldref(ret,1)));
+        buf->len = jl_unbox_uint64(jl_fieldref(ret,1));
 #else
-        assert(jl_is_uint32(jl_t1(ret)));
-        buf->len = jl_unbox_uint32(jl_t1(ret));
+        assert(jl_is_uint32(jl_fieldref(ret,1)));
+        buf->len = jl_unbox_uint32(jl_fieldref(ret,1));
 #endif
+        JL_GC_POP();
     }
     else {
         buf->len = 0;
@@ -208,6 +222,7 @@ DLLEXPORT void jl_uv_connectioncb(uv_stream_t *stream, int status)
 DLLEXPORT void jl_uv_getaddrinfocb(uv_getaddrinfo_t *req,int status, struct addrinfo *addr)
 {
     JULIA_CB(getaddrinfo,req->data,2,CB_PTR,addr,CB_INT32,status);
+    free(req);
 }
 
 DLLEXPORT void jl_uv_asynccb(uv_handle_t *handle)
@@ -536,7 +551,7 @@ static void jl_write(uv_stream_t *stream, const char *str, size_t n)
 
     // Fallback for output during early initialisation...
     if (stream == (void*)STDOUT_FILENO || stream == (void*)STDERR_FILENO) {
-        jl_io_loop = uv_default_loop();
+        if (!jl_io_loop) jl_io_loop = uv_default_loop();
         fd = (uv_file)(size_t)stream;
     }
     else if (stream->type == UV_FILE) {
@@ -837,18 +852,6 @@ DLLEXPORT int jl_tcp_quickack(uv_tcp_t *handle, int on)
     return 0;
 }
 #endif
-
-DLLEXPORT jl_uv_libhandle jl_wrap_raw_dl_handle(void *handle)
-{
-    uv_lib_t *lib = (uv_lib_t*)malloc(sizeof(uv_lib_t));
-    #ifdef _OS_WINDOWS_
-    lib->handle=(HMODULE)handle;
-    #else
-    lib->handle=handle;
-    #endif
-    lib->errmsg=NULL;
-    return (jl_uv_libhandle) lib;
-}
 
 #ifndef _OS_WINDOWS_
 

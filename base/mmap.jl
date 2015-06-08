@@ -1,3 +1,5 @@
+# This file is a part of Julia. License is MIT: http://julialang.org/license
+
 ### Generic interface ###
 
 # Arrays
@@ -96,7 +98,7 @@ function mmap_array{T,N}(::Type{T}, dims::NTuple{N,Integer}, s::Union(IO,SharedM
         if Int(hdl) == -1
             error("could not get handle for file to map: $(FormatMessage())")
         end
-        name = C_NULL
+        name = Ptr{Cwchar_t}(C_NULL)
         ro = isreadonly(s)
         create = true
     else
@@ -121,10 +123,10 @@ function mmap_array{T,N}(::Type{T}, dims::NTuple{N,Integer}, s::Union(IO,SharedM
     access = ro ? 4 : 2
     if create
         flprotect = ro ? 0x02 : 0x04
-        mmaphandle = ccall(:CreateFileMappingW, stdcall, Ptr{Void}, (Cptrdiff_t, Ptr{Void}, Cint, Cint, Cint, Ptr{UInt16}),
+        mmaphandle = ccall(:CreateFileMappingW, stdcall, Ptr{Void}, (Cptrdiff_t, Ptr{Void}, Cint, Cint, Cint, Cwstring),
             hdl, C_NULL, flprotect, szfile>>32, szfile&typemax(UInt32), name)
     else
-        mmaphandle = ccall(:OpenFileMappingW, stdcall, Ptr{Void}, (Cint, Cint, Ptr{UInt16}),
+        mmaphandle = ccall(:OpenFileMappingW, stdcall, Ptr{Void}, (Cint, Cint, Cwstring),
             access, true, name)
     end
     if mmaphandle == C_NULL
@@ -164,7 +166,7 @@ function mmap_bitarray{N}(dims::NTuple{N,Integer}, s::IOStream, offset::FileOffs
             throw(ArgumentError("the given file does not contain a valid BitArray of size $(join(dims, 'x')) (open with \"r+\" mode to override)"))
         end
     end
-    B = BitArray{N}(ntuple(N,i->0)...)
+    B = BitArray{N}(ntuple(i->0,N)...)
     B.chunks = chunks
     B.len = n
     if N != 1

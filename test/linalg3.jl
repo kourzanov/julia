@@ -1,3 +1,5 @@
+# This file is a part of Julia. License is MIT: http://julialang.org/license
+
 ## Least squares solutions
 a = [ones(20) 1:20 1:20]
 b = reshape(eye(8, 5), 20, 2)
@@ -230,7 +232,7 @@ b = randn(Base.LinAlg.SCAL_CUTOFF) # make sure we try BLAS path
 @test_throws DimensionMismatch scale!(Array(Float64, 3, 2), a, ones(3))
 
 # scale real matrix by complex type
-@test_throws ErrorException scale!([1.0], 2.0im)
+@test_throws InexactError scale!([1.0], 2.0im)
 @test isequal(scale([1.0], 2.0im),             Complex{Float64}[2.0im])
 @test isequal(scale(2.0im, [1.0]),             Complex{Float64}[2.0im])
 @test isequal(scale(Float32[1.0], 2.0f0im),    Complex{Float32}[2.0im])
@@ -273,3 +275,18 @@ A = [ 1  5  9
 @test diag(zeros(0,1),1) == []
 @test_throws BoundsError diag(zeros(0,1),-1)
 @test_throws BoundsError diag(zeros(0,1),2)
+
+vecdot_(x,y) = invoke(vecdot, (Any,Any), x,y) # generic vecdot
+let A = [1+2im 3+4im; 5+6im 7+8im], B = [2+7im 4+1im; 3+8im 6+5im]
+    @test vecdot(A,B) == dot(vec(A),vec(B)) == vecdot_(A,B) == vecdot(float(A),float(B))
+    @test vecdot(Int[], Int[]) == 0 == vecdot_(Int[], Int[])
+    @test_throws MethodError vecdot(Any[], Any[])
+    @test_throws MethodError vecdot_(Any[], Any[])
+    for n1 = 0:2, n2 = 0:2, d in (vecdot, vecdot_)
+        if n1 != n2
+            @test_throws DimensionMismatch d(1:n1, 1:n2)
+        else
+            @test_approx_eq d(1:n1, 1:n2) vecnorm(1:n1)^2
+        end
+    end
+end

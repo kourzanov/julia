@@ -14,9 +14,12 @@
   (if (any vararg? (butlast l))
       (error "invalid ... on non-final argument"))
   (map (lambda (a)
-         (if (and (pair? a) (eq? (car a) 'kw))
-             `(kw ,(fill-missing-argname (cadr a)) ,(caddr a))
-             (fill-missing-argname a)))
+         (cond ((and (pair? a) (eq? (car a) 'kw))
+                `(kw ,(fill-missing-argname (cadr a)) ,(caddr a)))
+               ((and (pair? a) (eq? (car a) '...))
+                `(... ,(fill-missing-argname (cadr a))))
+               (else
+                (fill-missing-argname a))))
        l))
 
 (define (deparse-arglist l (sep ",")) (string.join (map deparse l) sep))
@@ -110,7 +113,9 @@
          (bad-formal-argument v))
         (else
          (case (car v)
-           ((...)         `(... ,(decl-type (cadr v))))
+           ((...) (if (eq? (length v) 3)
+                      `(... ,(decl-type (cadr v)) ,(caddr v))
+                      `(... ,(decl-type (cadr v)))))
            ((|::|)
             (if (not (symbol? (cadr v)))
                 (bad-formal-argument (cadr v)))
@@ -384,9 +389,7 @@
                     (cons (replace-end (expand-index-colon idx) a n tuples last)
                           ret)))))))
 
-(define (make-decl n t) `(|::| ,n ,(if (and (pair? t) (eq? (car t) '...))
-                                       `(curly Vararg ,(cadr t))
-                                       t)))
+(define (make-decl n t) `(|::| ,n ,t))
 
 (define (function-expr argl body)
   (let ((t (llist-types argl))
@@ -401,9 +404,13 @@
 ;; except for rest arg
 (define (method-lambda-expr argl body)
   (let ((argl (map (lambda (x)
-                     (if (and (pair? x) (eq? (car x) '...))
+                     (if (vararg? x)
                          (make-decl (arg-name x) (arg-type x))
-                         (arg-name x)))
+                         (if (varargexpr? x)
+                             (if (pair? (caddr x))
+                                 x
+                                 `(|::| ,(arg-name x) (curly Vararg Any)))
+                         (arg-name x))))
                    argl)))
     `(lambda ,argl
        (scope-block ,body))))
@@ -450,6 +457,15 @@
            (pair? (caddr e)) (memq (car (caddr e)) '(quote inert))
            (symbol? (cadr (caddr e))))))
 
+;; convert final (... x) to (curly Vararg x)
+(define (dots->vararg a)
+  (if (null? a) a
+      (let ((head (butlast a))
+	    (las  (last a)))
+	(if (vararg? las)
+	    `(,@head (curly Vararg ,(cadr las)))
+	    `(,@head ,las)))))
+
 (define (method-def-expr- name sparams argl body isstaged)
   (receive
    (names bounds) (sparam-name-bounds sparams '() '())
@@ -468,14 +484,24 @@
      (let* ((types (llist-types argl))
             (body  (method-lambda-expr argl body)))
        (if (null? sparams)
-           `(method ,name (tuple (tuple ,@types) (tuple)) ,body ,isstaged)
+           `(method ,name (call (top svec) (curly Tuple ,@(dots->vararg types)) (call (top svec)))
+		    ,body ,isstaged)
            `(method ,name
                     (call (lambda ,names
-                            (tuple (tuple ,@types) (tuple ,@names)))
+                            (call (top svec) (curly Tuple ,@(dots->vararg types)) (call (top svec) ,@names)))
                           ,@(symbols->typevars names bounds #t))
                     ,body ,isstaged))))))
 
 (define (vararg? x) (and (pair? x) (eq? (car x) '...)))
+(define (varargexpr? x) (and
+                         (pair? x)
+                         (eq? (car x) '::)
+                         (or
+                          (eq? (caddr x) 'Vararg)
+                          (and
+                           (pair? (caddr x))
+                           (length> (caddr x) 1)
+                           (eq? (cadr (caddr x)) 'Vararg)))))
 (define (trans?  x) (and (pair? x) (eq? (car x) '|.'|)))
 (define (ctrans? x) (and (pair? x) (eq? (car x) '|'|)))
 
@@ -912,9 +938,9 @@
      (if (null? params)
          `(block
            (global ,name) (const ,name)
-           (composite_type ,name (tuple ,@params)
-                           (tuple ,@(map (lambda (x) `',x) field-names))
-                           ,super (tuple ,@field-types) ,mut ,min-initialized)
+           (composite_type ,name (call (top svec) ,@params)
+                           (call (top svec) ,@(map (lambda (x) `',x) field-names))
+                           ,super (call (top svec) ,@field-types) ,mut ,min-initialized)
            (call
             (lambda ()
               (scope-block
@@ -931,9 +957,9 @@
              (global ,name) (const ,name)
              ,@(map (lambda (v) `(local ,v)) params)
              ,@(map make-assignment params (symbols->typevars params bounds #t))
-             (composite_type ,name (tuple ,@params)
-                             (tuple ,@(map (lambda (x) `',x) field-names))
-                             ,super (tuple ,@field-types) ,mut ,min-initialized)))
+             (composite_type ,name (call (top svec) ,@params)
+                             (call (top svec) ,@(map (lambda (x) `',x) field-names))
+                             ,super (call (top svec) ,@field-types) ,mut ,min-initialized)))
            ;; "inner" constructors
            (call
             (lambda ()
@@ -967,7 +993,7 @@
      (const ,name)
      ,@(map (lambda (v) `(local ,v)) params)
      ,@(map make-assignment params (symbols->typevars params bounds #f))
-     (abstract_type ,name (tuple ,@params) ,super))))
+     (abstract_type ,name (call (top svec) ,@params) ,super))))
 
 (define (bits-def-expr n name params super)
   (receive
@@ -977,7 +1003,7 @@
      (const ,name)
      ,@(map (lambda (v) `(local ,v)) params)
      ,@(map make-assignment params (symbols->typevars params bounds #f))
-     (bits_type ,name (tuple ,@params) ,n ,super))))
+     (bits_type ,name (call (top svec) ,@params) ,n ,super))))
 
 ; take apart a type signature, e.g. T{X} <: S{Y}
 (define (analyze-type-sig ex)
@@ -1001,7 +1027,8 @@
     (if (or (null? F) (null? A))
         `(block
           ,.(reverse! stmts)
-          (call (top ccall) ,name ,RT (tuple ,@atypes) ,.(reverse! C)
+          (call (top ccall) ,name ,RT (call (top svec) ,@(dots->vararg atypes))
+		,.(reverse! C)
                 ,@A))
         (let* ((a     (car A))
                (isseq (and (pair? (car F)) (eq? (caar F) '...)))
@@ -1059,7 +1086,9 @@
                      (expand-binding-forms
                       `(-> ,name ,(caddr e)))
                      e))
-             e)))
+	     (if (and (length= e 2) (symbol? name))
+		 `(method ,name)
+		 e))))
 
       ((->)
        (let ((a (cadr e))
@@ -1263,7 +1292,7 @@
                        (block
                         (const ,name)
                         (= ,name (call (top TypeConstructor)
-                                       (call (top tuple) ,@params)
+                                       (call (top svec) ,@params)
                                        ,(expand-binding-forms type-ex)))))
                      ,@(symbols->typevars params bounds #t))))
            (expand-binding-forms
@@ -1466,7 +1495,7 @@
                       (cons (make-assignment L temp) after)
                       (cons temp elts))))))))
 
-;; convert (lhss...) = x to tuple indexing, handling the general case
+;; convert (lhss...) = x to tuple indexing
 (define (lower-tuple-assignment lhss x)
   (let ((t (make-jlgensym)))
     `(block
@@ -1475,7 +1504,7 @@
                    (i   1))
           (if (null? lhs) '((null))
               (cons `(= ,(car lhs)
-                        (call (top tupleref) ,t ,i))
+                        (call (top getfield) ,t ,i))
                     (loop (cdr lhs)
                           (+ i 1)))))
       ,t)))
@@ -1510,7 +1539,7 @@
                                 `((quote ,(cadr a)) ,(caddr a)))
                               keys))))
      (if (null? restkeys)
-         `(call (top kwcall) call ,(length keys) ,@keyargs
+         `(call (top kwcall) (|.| ,(current-julia-module) 'call) ,(length keys) ,@keyargs
                 ,f (call (top Array) (top Any) ,(* 2 (length keys)))
                 ,@pa)
          (let ((container (make-jlgensym)))
@@ -1530,7 +1559,7 @@
                           `(block (= (tuple ,k ,v) ,rk)
                                   ,push-expr))))
                   restkeys)
-             ,(let ((kw-call `(call (top kwcall) call ,(length keys) ,@keyargs
+             ,(let ((kw-call `(call (top kwcall) (|.| ,(current-julia-module) 'call) ,(length keys) ,@keyargs
                                     ,f ,container ,@pa)))
                 (if (not (null? keys))
                     kw-call
@@ -1660,7 +1689,7 @@
                                (expand-forms
                                 (lower-tuple-assignment
                                  (list lhs st)
-                                 `(call (|.| (top Base) (quote indexed_next))
+                                 `(call (top indexed_next)
                                         ,xx ,(+ i 1) ,st))))
                              (iota (length lhss))
                              lhss)
@@ -1743,8 +1772,7 @@
 
    'curly
    (lambda (e)
-     (expand-forms
-      `(call (top apply_type) ,@(cdr e))))
+     (expand-forms `(call (top apply_type) ,@(cdr e))))
 
    'call
    (lambda (e)
@@ -1782,7 +1810,7 @@
                                            (tuple-wrap (cdr a) '())))
                                 (tuple-wrap (cdr a) (cons x run))))))
                     (expand-forms
-                     `(call (top _apply) call ,f ,@(tuple-wrap argl '())))))
+                     `(call (top _apply) (|.| ,(current-julia-module) 'call) ,f ,@(tuple-wrap argl '())))))
 
                  ((and (eq? (cadr e) '*) (length= e 4))
                   (expand-transposed-op
@@ -1802,16 +1830,12 @@
 
    'tuple
    (lambda (e)
-     `(call (top tuple)
-            ,.(map (lambda (x)
-                     ;; assignment inside tuple looks like a keyword argument
-                     (if (assignment? x)
-                         (error "assignment not allowed inside tuple"))
-                     (expand-forms
-                      (if (vararg? x)
-                          `(curly Vararg ,(cadr x))
-                          x)))
-                   (cdr e))))
+     (for-each (lambda (x)
+		 ;; assignment inside tuple looks like a keyword argument
+		 (if (assignment? x)
+		     (error "assignment not allowed inside tuple")))
+	       (cdr e))
+     (expand-forms `(call (top tuple) ,@(cdr e))))
 
    'dict
    (lambda (e)
@@ -2016,7 +2040,10 @@
            (begin
              (if (not (and (pair? argtypes)
                            (eq? (car argtypes) 'tuple)))
-                 (error "ccall argument types must be a tuple; try \"(T,)\""))
+	       (if (and (pair? RT)
+			(eq? (car RT) 'tuple))
+                 (error "ccall argument types must be a tuple; try \"(T,)\" and check if you specified a correct return type")
+                 (error "ccall argument types must be a tuple; try \"(T,)\"")))
              (expand-forms
               (lower-ccall name RT (cdr argtypes) args))))
          e))
@@ -3016,10 +3043,12 @@ So far only the second case can actually occur.
                  (vinfo:set-sa! vi #f)
                  (if (assq (car vi) captvars)
                      (vinfo:set-iasg! vi #t)))))
-         `(method ,(cadr e)
-                  ,(analyze-vars (caddr  e) env captvars)
-                  ,(analyze-vars (cadddr e) env captvars)
-          ,(caddddr e)))
+	 (if (length= e 2)
+	     `(method ,(cadr e))
+	     `(method ,(cadr e)
+		      ,(analyze-vars (caddr  e) env captvars)
+		      ,(analyze-vars (cadddr e) env captvars)
+		      ,(caddddr e))))
         (else (cons (car e)
                     (map (lambda (x) (analyze-vars x env captvars))
                          (cdr e)))))))
@@ -3203,11 +3232,7 @@ So far only the second case can actually occur.
                     (vinf  (var-info-for vname vi)))
                (if (and vinf
                         (not (and (pair? code)
-                                  (equal? (car code) `(newvar ,vname))))
-                        ;; TODO: remove the following expression to re-null
-                        ;; all variables when they are allocated. see issue #1571
-                        (vinfo:capt vinf)
-                        )
+                                  (equal? (car code) `(newvar ,vname)))))
                    (emit `(newvar ,vname))
                    #f)))
             ((newvar)
@@ -3217,9 +3242,40 @@ So far only the second case can actually occur.
                  #f))
             (else  (emit (goto-form e))))))
     (compile e '())
-    (cons 'body (reverse! code))))
+    (let* ((stmts (reverse! code))
+	   (di    (definitely-initialized-vars stmts vi)))
+      (cons 'body (filter (lambda (e)
+			    (not (and (pair? e) (eq? (car e) 'newvar)
+				      (has? di (cadr e)))))
+			  stmts)))))
 
 (define to-goto-form goto-form)
+
+;; find newvar nodes that are unnecessary because (1) the variable is not
+;; captured, and (2) the variable is assigned before any branches.
+;; this is used to remove newvar nodes that are not needed for re-initializing
+;; variables to undefined (see issue #11065). it doesn't look for variable
+;; *uses*, because any variables used-before-def that also pass this test
+;; are *always* used undefined, and therefore don't need to be *re*-initialized.
+(define (definitely-initialized-vars stmts vi)
+  (let ((vars (table))
+	(di   (table)))
+    (let loop ((stmts stmts))
+      (if (null? stmts)
+	  di
+	  (begin
+	    (let ((e (car stmts)))
+	      (cond ((and (pair? e) (eq? (car e) 'newvar))
+		     (let ((vinf (var-info-for (cadr e) vi)))
+		       (if (not (vinfo:capt vinf))
+			   (put! vars (cadr e) #t))))
+		    ((and (pair? e) (eq? (car e) '=))
+		     (if (has? vars (cadr e))
+			 (begin (del! vars (cadr e))
+				(put! di (cadr e) #t))))
+		    ((and (pair? e) (memq (car e) '(goto gotoifnot)))
+		     (set! vars (table)))))
+	    (loop (cdr stmts)))))))
 
 ;; macro expander
 

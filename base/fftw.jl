@@ -1,3 +1,5 @@
+# This file is a part of Julia. License is MIT: http://julialang.org/license
+
 module FFTW
 
 export fft, bfft, ifft, rfft, brfft, irfft,
@@ -71,7 +73,7 @@ typealias fftwTypeSingle Union(Type{Float32},Type{Complex64})
 # FFTW's api/import-wisdom-from-file.c file].
 
 function export_wisdom(fname::AbstractString)
-    f = ccall(:fopen, Ptr{Void}, (Ptr{UInt8},Ptr{UInt8}), fname, "w")
+    f = ccall(:fopen, Ptr{Void}, (Cstring,Ptr{UInt8}), fname, "w")
     systemerror("could not open wisdom file $fname for writing", f == C_NULL)
     ccall((:fftw_export_wisdom_to_file,libfftw), Void, (Ptr{Void},), f)
     ccall(:fputs, Int32, (Ptr{UInt8},Ptr{Void}), " "^256, f)
@@ -80,7 +82,7 @@ function export_wisdom(fname::AbstractString)
 end
 
 function import_wisdom(fname::AbstractString)
-    f = ccall(:fopen, Ptr{Void}, (Ptr{UInt8},Ptr{UInt8}), fname, "r")
+    f = ccall(:fopen, Ptr{Void}, (Cstring,Ptr{UInt8}), fname, "r")
     systemerror("could not open wisdom file $fname for reading", f == C_NULL)
     if ccall((:fftw_import_wisdom_from_file,libfftw),Int32,(Ptr{Void},),f)==0||
        ccall((:fftwf_import_wisdom_from_file,libfftwf),Int32,(Ptr{Void},),f)==0

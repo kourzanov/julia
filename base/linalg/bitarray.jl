@@ -1,3 +1,5 @@
+# This file is a part of Julia. License is MIT: http://julialang.org/license
+
 function dot(x::BitVector, y::BitVector)
     # simplest way to mimic Array dot behavior
     length(x) == length(y) || throw(DimensionMismatch())
@@ -206,6 +208,6 @@ function findmin(a::BitArray)
     l = Base._mod64(length(a)-1) + 1
     @inbounds k = trailing_ones(ac[end] & Base._msk_end(l))
     ti += k
-    k==l || return (false, ri)
+    k==l || return (false, ti)
     return m, mi
 end

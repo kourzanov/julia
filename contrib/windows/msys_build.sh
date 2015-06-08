@@ -1,4 +1,6 @@
 #!/bin/sh
+# This file is a part of Julia. License is MIT: http://julialang.org/license
+
 # Script to compile Windows Julia, using binary dependencies from nightlies.
 # Should work in MSYS assuming 7zip is installed and on the path,
 # or Cygwin or Linux assuming make, curl, p7zip, and mingw64-$ARCH-gcc-g++
@@ -39,6 +41,7 @@ if [ "$ARCH" = x86_64 ]; then
   bits=64
   archsuffix=64
   echo "override MARCH = x86-64" >> Make.user
+  echo 'USE_BLAS64 = 1' >> Make.user
 else
   bits=32
   archsuffix=86
@@ -92,7 +95,6 @@ done
 for i in share/julia/base/pcre_h.jl; do
   $SEVENZIP e -y julia-installer.exe "\$_OUTDIR/$i" -obase >> get-deps.log
 done
-sed -i 's/int32/Int32/g' base/pcre_h.jl
 # suppress "bash.exe: warning: could not find /tmp, please create!"
 mkdir -p usr/Git/tmp
 # Remove libjulia.dll if it was copied from downloaded binary
@@ -181,12 +183,12 @@ echo 'override LIBLAPACKNAME = $(LIBBLASNAME)' >> Make.user
 # libuv since its static lib is no longer included in the binaries
 # openlibm since we need it as a static library to work properly
 # utf8proc since its headers are not in the binary download
-echo 'override STAGE1_DEPS = uv' >> Make.user
+echo 'override STAGE1_DEPS = libuv' >> Make.user
 echo 'override STAGE2_DEPS = utf8proc' >> Make.user
 echo 'override STAGE3_DEPS = ' >> Make.user
-make -C deps get-uv
 
 if [ -n "$USEMSVC" ]; then
+  make -C deps get-libuv
   # Create a modified version of compile for wrapping link
   sed -e 's/-link//' -e 's/cl/link/g' -e 's/ -Fe/ -OUT:/' \
     -e 's|$dir/$lib|$dir/lib$lib|g' deps/libuv/compile > linkld
@@ -198,13 +200,16 @@ if [ -n "$USEMSVC" ]; then
   echo 'override UNTRUSTED_SYSTEM_LIBM = 0' >> Make.user
 
   # Compile libuv and utf8proc without -TP first, then add -TP
-  make -C deps install-uv install-utf8proc
+  make -C deps install-libuv install-utf8proc
   cp usr/lib/uv.lib usr/lib/libuv.a
   echo 'override CC += -TP' >> Make.user
+  echo 'override STAGE1_DEPS += dsfmt' >> Make.user
 else
   echo 'override STAGE1_DEPS += openlibm' >> Make.user
 fi
 
+make check-whitespace
 cat Make.user
-make VERBOSE=1
+make VERBOSE=1 -C base version_git.jl.phony
+make VERBOSE=1 NO_GIT=1
 #make debug

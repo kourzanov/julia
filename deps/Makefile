@@ -10,11 +10,11 @@ include $(JULIAHOME)/Make.inc
 # additionally all targets should be listed in the getall target for easier off-line compilation
 # if you are adding a new target, it can help to copy an similar, existing target
 #
-# autoconf configure-driven scripts: llvm pcre arpack fftw unwind gmp mpfr patchelf uv
+# autoconf configure-driven scripts: llvm pcre arpack fftw unwind gmp mpfr patchelf libuv
 # custom Makefile rules: openlibm Rmath-julia dsfmt suitesparse-wrapper suitesparse lapack openblas utf8proc objconv
 # CMake libs: libgit2
 #
-# downloaded from git: llvm-svn, uv, libopenlibm, utf8proc, openspecfun
+# downloaded from git: llvm-svn, libuv, libopenlibm, utf8proc, openspecfun
 #
 # there are rules in this file with the . replaced by a %
 # this is some magic Makefile trick that tells make
@@ -61,12 +61,18 @@ MAKE_COMMON = DESTDIR="" prefix=$(build_prefix) bindir=$(build_bindir) libdir=$(
 # prevent installing libs into usr/lib64 on opensuse
 unexport CONFIG_SITE
 
+ifeq ($(USE_GPL_LIBS), 1)
 STAGE1_DEPS =
 STAGE2_DEPS = Rmath-julia
 STAGE3_DEPS = suitesparse-wrapper
+else
+STAGE1_DEPS =
+STAGE2_DEPS =
+STAGE3_DEPS =
+endif
 
 ifeq ($(USE_SYSTEM_LIBUV), 0)
-STAGE1_DEPS += uv
+STAGE1_DEPS += libuv
 endif
 
 ifeq ($(USE_SYSTEM_LIBUNWIND), 0)
@@ -121,8 +127,10 @@ endif
 endif
 endif
 
+ifeq ($(USE_GPL_LIBS), 1)
 ifeq ($(USE_SYSTEM_FFTW), 0)
 STAGE1_DEPS += fftw
+endif
 endif
 
 ifeq ($(USE_SYSTEM_GMP), 0)
@@ -149,8 +157,10 @@ ifeq ($(USE_SYSTEM_ARPACK), 0)
 STAGE2_DEPS += arpack
 endif
 
+ifeq ($(USE_GPL_LIBS), 1)
 ifeq ($(USE_SYSTEM_SUITESPARSE), 0)
 STAGE2_DEPS += suitesparse
+endif
 endif
 
 ifeq ($(USE_SYSTEM_UTF8PROC), 0)
@@ -186,7 +196,7 @@ install: $(addprefix install-, $(DEP_LIBS))
 cleanall: $(addprefix clean-, $(DEP_LIBS))
 distcleanall: $(addprefix distclean-, $(DEP_LIBS))
 	rm -rf $(build_prefix)
-getall: get-llvm get-uv get-pcre get-openlibm get-openspecfun get-dsfmt get-Rmath-julia get-openblas get-lapack get-fftw get-suitesparse get-arpack get-unwind get-osxunwind get-gmp get-mpfr get-patchelf get-utf8proc get-virtualenv get-objconv get-libgit2
+getall: get-llvm get-libuv get-pcre get-openlibm get-openspecfun get-dsfmt get-Rmath-julia get-openblas get-lapack get-fftw get-suitesparse get-arpack get-unwind get-osxunwind get-gmp get-mpfr get-patchelf get-utf8proc get-virtualenv get-objconv get-libgit2
 
 ## PATHS ##
 # sort is used to remove potential duplicates
@@ -205,9 +215,63 @@ $(build_prefix): | $(DIRS)
 MAKE_DESTDIR = DESTDIR="$(build_staging)/$1"
 define make-install
 	rm -rf $(build_staging)/$1
-	$(MAKE) -C $1 install $(MAKE_COMMON) $2 $(call MAKE_DESTDIR,$1)
+	+$(MAKE) -C $1 install $(MAKE_COMMON) $2 $(call MAKE_DESTDIR,$1)
 	mkdir -p $(build_prefix)
 	cp -af $(build_staging)/$1$(build_prefix)/* $(build_prefix)
+endef
+
+
+## A rule for making a git-external dependency ##
+# call syntax:
+#   $(eval $(call git-external,dirname,VARNAME,file_from_download,file_from_compile)
+# dirname is the folder name to create
+# VARNAME is the uppercased variable name prefix
+# file_from_download is the name of a file inside the git repo to indicate when it's cloned (relative to dirname)
+# file_from_compile is the rule to run to compile the dependency (relative to dirname)
+#
+# also, in a file named dirname.version, define variables VARNAME_BRANCH and VARNAME_SHA1
+#
+# also, define a Makefile variable VARNAME_GIT_URL to use as the clone origin
+# and a Makefile variable VARNAME_TAR_URL to use as the clone origin when NO_GIT is set
+# this will pass along the VARNAME_SHA1 target in $1 for its use
+#
+# this defines rules for:
+#   VARNAME_SRC_DIR = source directory for the output
+#   dirname:
+#   dirname/file_from_download:
+#   distclean-dirname:
+#
+define git-external
+include $1.version
+ifneq ($(NO_GIT),1)
+$2_SRC_DIR = $1
+$1:
+	git clone -q --depth=50 --branch $$($2_BRANCH) $$($2_GIT_URL) $1
+	touch -c $1/$3
+$1/$3: $1.version | $1
+	cd $1 && git fetch -q $$($2_GIT_URL) $$($2_BRANCH):remotes/origin/$$($2_BRANCH)
+	cd $1 && git checkout -q --detach $$($2_SHA1)
+	@[ '$$($2_SHA1)' = "$$$$(cd $1 && git show -s --format='%H' HEAD)" ] || echo $$(WARNCOLOR)'==> warning: SHA1 hash did not match $1.version file'$$(ENDCOLOR)
+	touch -c $$@
+# also allow backwards compatibility with an existing git-submodule:
+ifeq (exists, $$(shell [ -d $1/.git ] && echo exists ))
+$1/$4: $1/.git/HEAD
+endif
+ifeq (exists, $$(shell [ -d $$(JULIAHOME)/.git/modules/deps/$1 ] && echo exists ))
+$1/$4: $$(JULIAHOME)/.git/modules/deps/$1/HEAD
+endif
+else # NO_GIT
+$2_SRC_DIR = $1-$$($2_SHA1)
+$$($2_SRC_DIR).tar.gz:
+	$$(JLDOWNLOAD) $$@ $$(call $2_TAR_URL,$$($2_SHA1))
+$$($2_SRC_DIR)/$3: $$($2_SRC_DIR).tar.gz
+	$$(JLCHECKSUM) $$($2_SRC_DIR).tar.gz
+	mkdir -p $$($2_SRC_DIR) && \
+	$(TAR) -C $$($2_SRC_DIR) --strip-components 1 -xf $$<
+	touch -c $$@
+endif
+distclean-$1:
+	-rm -rf $$($2_SRC_DIR) $$($2_SRC_DIR).tar.gz
 endef
 
 
@@ -409,12 +473,7 @@ llvm-$(LLVM_VER)/python2_path:
 	/usr/bin/python2 -c 'import sys; sys.exit(not sys.version_info < (3, 0))' && \
 	ln -sf /usr/bin/python2 "llvm-$(LLVM_VER)/python2_path/python" && \
 	ln -sf /usr/bin/python2-config "llvm-$(LLVM_VER)/python2_path/python-config"
-ifeq ($(LLVM_VER), 3.2)
-## LLVM needs python 2.x, but doesn't check for it, so we have to use an ugly workaround to make it compile
-llvm_python_workaround=llvm-$(LLVM_VER)/python2_path
-else
-  LLVM_FLAGS += --with-python="$(shell ./find_python2)"
-endif
+LLVM_FLAGS += --with-python="$(shell ./find_python2)"
 # LLDB still relies on plenty of python 2.x infrastructure, without checking
 ifeq ($(BUILD_LLDB),1)
 llvm_python_workaround=llvm-$(LLVM_VER)/python2_path
@@ -588,8 +647,7 @@ endif
 	echo 1 > $@
 
 $(LLVM_OBJ_TARGET): $(LLVM_OBJ_SOURCE) | $(llvm_python_workaround)
-	export PATH=$(abspath llvm-$(LLVM_VER)/python2_path):$$PATH && \
-	$(call make-install,llvm-$(LLVM_VER)/build_$(LLVM_BUILDTYPE),$(LLVM_MFLAGS))
+	$(call make-install,llvm-$(LLVM_VER)/build_$(LLVM_BUILDTYPE),$(LLVM_MFLAGS) PATH="$(abspath llvm-$(LLVM_VER)/python2_path):$$PATH")
 	touch -c $@
 
 reinstall-llvm:
@@ -620,9 +678,12 @@ update-llvm:
 	([ -d "llvm-$(LLVM_VER)/tools/lldb" ] || exit 0;            cd llvm-$(LLVM_VER)/tools/lldb; git pull --ff-only)
 
 ## LIBUV ##
+LIBUV_GIT_URL=git://github.com/JuliaLang/libuv.git
+LIBUV_TAR_URL=https://api.github.com/repos/JuliaLang/libuv/tarball/$1
+$(eval $(call git-external,libuv,LIBUV,configure,.libs/libuv.la))
 
-UV_SRC_TARGET = libuv/.libs/libuv.a
-UV_OBJ_TARGET = $(build_libdir)/libuv.a
+UV_SRC_TARGET = $(LIBUV_SRC_DIR)/.libs/libuv.la
+UV_OBJ_TARGET = $(build_libdir)/libuv.la
 
 UV_CFLAGS =
 ifeq ($(USEMSVC), 1)
@@ -642,164 +703,141 @@ else
 UV_FLAGS = --disable-shared $(UV_MFLAGS)
 endif
 
-libuv/configure:
-	(cd .. && git submodule init && git submodule update)
-ifeq (exists, $(shell [ -d libuv/.git ] && echo exists ))
-libuv/config.status: libuv/.git/HEAD
-endif
-ifeq (exists, $(shell [ -d $(JULIAHOME)/.git/modules/deps/libuv ] && echo exists ))
-libuv/config.status: $(JULIAHOME)/.git/modules/deps/libuv/HEAD
-endif
-libuv/config.status: libuv/configure
-	cd libuv && \
+$(LIBUV_SRC_DIR)/config.status: $(LIBUV_SRC_DIR)/configure
+	touch -c $(LIBUV_SRC_DIR)/aclocal.m4 # touch a few files to prevent autogen from getting called
+	touch -c $(LIBUV_SRC_DIR)/Makefile.in
+	touch -c $(LIBUV_SRC_DIR)/configure
+	cd $(LIBUV_SRC_DIR) && \
 	./configure --with-pic $(CONFIGURE_COMMON) $(UV_FLAGS)
 	touch -c $@
-$(UV_SRC_TARGET): libuv/config.status
-	touch -c libuv/aclocal.m4
-	touch -c libuv/Makefile.in
-	touch -c libuv/configure
-	touch -c libuv/config.status
-	$(MAKE) -C libuv $(UV_MFLAGS)
+$(UV_SRC_TARGET): $(LIBUV_SRC_DIR)/config.status
+	$(MAKE) -C $(LIBUV_SRC_DIR) $(UV_MFLAGS)
 	touch -c $@
-libuv/checked: $(UV_SRC_TARGET)
+$(LIBUV_SRC_DIR)/checked: $(UV_SRC_TARGET)
 ifeq ($(OS),$(BUILD_OS))
-	-$(MAKE) -C libuv check
+	-$(MAKE) -C $(LIBUV_SRC_DIR) check
 endif
 	echo 1 > $@
 $(UV_OBJ_TARGET): $(UV_SRC_TARGET)
-	$(call make-install,libuv,)
+	$(call make-install,$(LIBUV_SRC_DIR),)
 	$(INSTALL_NAME_CMD)libuv.$(SHLIB_EXT) $(build_shlibdir)/libuv.$(SHLIB_EXT)
 
-clean-uv:
-	-$(MAKE) -C libuv clean
-	-rm -rf $(build_shlibdir)/libuv.a $(build_includedir)/uv.h $(build_includedir)/uv-private
-distclean-uv: clean-uv
-	-$(MAKE) -C libuv distclean
+clean-libuv:
+	-$(MAKE) -C $(LIBUV_SRC_DIR) clean
+	-rm -rf $(build_libdir)/libuv.a $(build_libdir)/libuv.la $(build_includedir)/libuv.h $(build_includedir)/libuv-private
 
-get-uv: libuv/configure
-configure-uv: libuv/config.status
-compile-uv: $(UV_SRC_TARGET)
-check-uv: libuv/checked
-install-uv: $(UV_OBJ_TARGET)
+get-libuv: $(LIBUV_SRC_DIR)/configure
+configure-libuv: $(LIBUV_SRC_DIR)/config.status
+compile-libuv: $(UV_SRC_TARGET)
+check-libuv: $(LIBUV_SRC_DIR)/checked
+install-libuv: $(UV_OBJ_TARGET)
 
 
 ## PCRE ##
 
-PCRE_SRC_TARGET = pcre-$(PCRE_VER)/.libs/libpcre.$(SHLIB_EXT)
-PCRE_OBJ_TARGET = $(build_shlibdir)/libpcre.$(SHLIB_EXT)
+PCRE_SRC_TARGET = pcre2-$(PCRE_VER)/.libs/libpcre2-8.$(SHLIB_EXT)
+PCRE_OBJ_TARGET = $(build_shlibdir)/libpcre2-8.$(SHLIB_EXT)
 
-pcre-$(PCRE_VER).tar.bz2:
-	$(JLDOWNLOAD) $@ http://sourceforge.net/projects/pcre/files/pcre/$(PCRE_VER)/$@/download
-pcre-$(PCRE_VER)/configure: pcre-$(PCRE_VER).tar.bz2
+pcre2-$(PCRE_VER).tar.bz2:
+	$(JLDOWNLOAD) $@ https://ftp.csx.cam.ac.uk/pub/software/programming/pcre/pcre2-$(PCRE_VER).tar.bz2
+pcre2-$(PCRE_VER)/configure: pcre2-$(PCRE_VER).tar.bz2
 	$(JLCHECKSUM) $<
 	$(TAR) jxf $<
 	touch -c $@
-pcre-$(PCRE_VER)/config.status: pcre-$(PCRE_VER)/configure
-	cd pcre-$(PCRE_VER) && \
-	./configure $(CONFIGURE_COMMON) --enable-utf --enable-unicode-properties --enable-jit --includedir=$(build_includedir)
+pcre2-$(PCRE_VER)/config.status: pcre2-$(PCRE_VER)/configure
+	cd pcre2-$(PCRE_VER) && \
+	./configure $(CONFIGURE_COMMON) --enable-jit --includedir=$(build_includedir)
 	touch -c $@
-$(PCRE_SRC_TARGET): pcre-$(PCRE_VER)/config.status
-	$(MAKE) -C pcre-$(PCRE_VER) $(LIBTOOL_CCLD)
+$(PCRE_SRC_TARGET): pcre2-$(PCRE_VER)/config.status
+	$(MAKE) -C pcre2-$(PCRE_VER) $(LIBTOOL_CCLD)
 	touch -c $@
-pcre-$(PCRE_VER)/checked: $(PCRE_SRC_TARGET)
+pcre2-$(PCRE_VER)/checked: $(PCRE_SRC_TARGET)
 ifeq ($(OS),$(BUILD_OS))
 ifneq ($(OS),WINNT)
-	$(MAKE) -C pcre-$(PCRE_VER) check -j1
+	$(MAKE) -C pcre2-$(PCRE_VER) check -j1
 endif
 endif
 	echo 1 > $@
-$(PCRE_OBJ_TARGET): $(PCRE_SRC_TARGET) pcre-$(PCRE_VER)/checked
-	$(call make-install,pcre-$(PCRE_VER),$(LIBTOOL_CCLD))
-	$(INSTALL_NAME_CMD)libpcre.$(SHLIB_EXT) $@
+$(PCRE_OBJ_TARGET): $(PCRE_SRC_TARGET) pcre2-$(PCRE_VER)/checked
+	$(call make-install,pcre2-$(PCRE_VER),$(LIBTOOL_CCLD))
+	$(INSTALL_NAME_CMD)libpcre2-8.$(SHLIB_EXT) $@
 	touch -c $@
 
 clean-pcre:
-	-$(MAKE) -C pcre-$(PCRE_VER) clean
+	-$(MAKE) -C pcre2-$(PCRE_VER) clean
 	-rm -f $(build_shlibdir)/libpcre*
 distclean-pcre: clean-pcre
-	-rm -rf pcre-$(PCRE_VER).tar.bz2 pcre-$(PCRE_VER)
+	-rm -rf pcre2-$(PCRE_VER).tar.bz2 pcre2-$(PCRE_VER)
 
-get-pcre: pcre-$(PCRE_VER).tar.bz2
-configure-pcre: pcre-$(PCRE_VER)/config.status
+get-pcre: pcre2-$(PCRE_VER).tar.bz2
+configure-pcre: pcre2-$(PCRE_VER)/config.status
 compile-pcre: $(PCRE_SRC_TARGET)
-check-pcre: pcre-$(PCRE_VER)/checked
+check-pcre: pcre2-$(PCRE_VER)/checked
 install-pcre: $(PCRE_OBJ_TARGET)
 
 
 ## openlibm ##
-
-OPENLIBM_FLAGS = ARCH="$(ARCH)" CC="$(CC)" FC="$(FC)" AR="$(AR)" OS="$(OS)" USECLANG=$(USECLANG) USEGCC=$(USEGCC)
+OPENLIBM_GIT_URL = git://github.com/JuliaLang/openlibm.git
+OPENLIBM_TAR_URL = https://api.github.com/repos/JuliaLang/openlibm/tarball/$1
+$(eval $(call git-external,openlibm,OPENLIBM,Makefile,libopenlibm.$(SHLIB_EXT)))
 
 OPENLIBM_OBJ_TARGET = $(build_shlibdir)/libopenlibm.$(SHLIB_EXT) $(build_libdir)/libopenlibm.a
-OPENLIBM_OBJ_SOURCE = openlibm/libopenlibm.$(SHLIB_EXT)
+OPENLIBM_OBJ_SOURCE = $(OPENLIBM_SRC_DIR)/libopenlibm.$(SHLIB_EXT)
+OPENLIBM_FLAGS = ARCH="$(ARCH)" CC="$(CC)" FC="$(FC)" AR="$(AR)" OS="$(OS)" USECLANG=$(USECLANG) USEGCC=$(USEGCC)
 
-openlibm/Makefile:
-	(cd .. && git submodule init && git submodule update)
-ifeq (exists, $(shell [ -d openlibm/.git ] && echo exists ))
-$(OPENLIBM_OBJ_SOURCE): openlibm/.git/HEAD
-endif
-ifeq (exists, $(shell [ -d $(JULIAHOME)/.git/modules/deps/openlibm ] && echo exists ))
-$(OPENLIBM_OBJ_SOURCE): $(JULIAHOME)/.git/modules/deps/openlibm/HEAD
-endif
-$(OPENLIBM_OBJ_SOURCE): openlibm/Makefile
-	$(MAKE) -C openlibm $(OPENLIBM_FLAGS) $(MAKE_COMMON)
+$(OPENLIBM_OBJ_SOURCE): $(OPENLIBM_SRC_DIR)/Makefile
+	$(MAKE) -C $(OPENLIBM_SRC_DIR) $(OPENLIBM_FLAGS) $(MAKE_COMMON)
 	touch -c $@
 $(build_shlibdir)/libopenlibm%$(SHLIB_EXT) $(build_libdir)/libopenlibm%a: $(OPENLIBM_OBJ_SOURCE)
-	$(call make-install,openlibm,$(OPENLIBM_FLAGS))
+	$(call make-install,$(OPENLIBM_SRC_DIR),$(OPENLIBM_FLAGS))
 	$(INSTALL_NAME_CMD)libopenlibm.$(SHLIB_EXT) $(build_shlibdir)/libopenlibm.$(SHLIB_EXT)
-	touch -c $@
+	touch -c $(OPENLIBM_OBJ_TARGET)
 
 clean-openlibm:
-	-$(MAKE) -C openlibm distclean $(OPENLIBM_FLAGS)
+	-$(MAKE) -C $(OPENLIBM_SRC_DIR) distclean $(OPENLIBM_FLAGS)
 	-rm $(OPENLIBM_OBJ_TARGET)
 	-rm $(build_libdir)/libopenlibm.a
 
-distclean-openlibm: clean-openlibm
-	-cd openlibm && git clean -fdx
-
-get-openlibm: openlibm/Makefile
+get-openlibm: $(OPENLIBM_SRC_DIR)/Makefile
 configure-openlibm: get-openlibm
 compile-openlibm: $(OPENLIBM_OBJ_SOURCE)
 check-openlibm: compile-openlibm
 install-openlibm: $(OPENLIBM_OBJ_TARGET)
 
 ## openspecfun ##
+OPENSPECFUN_GIT_URL = git://github.com/JuliaLang/openspecfun.git
+OPENSPECFUN_TAR_URL = https://api.github.com/repos/JuliaLang/openspecfun/tarball/$1
+$(eval $(call git-external,openspecfun,OPENSPECFUN,Makefile,libopenspecfun.$(SHLIB_EXT)))
 
-OPENSPECFUN_FLAGS = ARCH="$(ARCH)" CC="$(CC)" FC="$(FC)" AR="$(AR)" OS="$(OS)" USECLANG=$(USECLANG) USEGCC=$(USEGCC) FFLAGS="$(JFFLAGS)"
-
-ifeq ($(USE_SYSTEM_LIBM),0)
-	OPENSPECFUN_FLAGS += USE_OPENLIBM=1
-	OPENLIBM_FAKE_TARGET = $(OPENLIBM_OBJ_TARGET)
+# issue 8799
+OPENSPECFUN_CFLAGS = -O3 -std=c99
+ifeq ($(USEICC),1)
+  OPENSPECFUN_CFLAGS += -fp-model precise
 endif
 
 OPENSPECFUN_OBJ_TARGET = $(build_shlibdir)/libopenspecfun.$(SHLIB_EXT)
-OPENSPECFUN_OBJ_SOURCE = openspecfun/libopenspecfun.$(SHLIB_EXT)
+OPENSPECFUN_OBJ_SOURCE = $(OPENSPECFUN_SRC_DIR)/libopenspecfun.$(SHLIB_EXT)
+OPENSPECFUN_FLAGS = ARCH="$(ARCH)" CC="$(CC)" FC="$(FC)" AR="$(AR)" OS="$(OS)" USECLANG=$(USECLANG) USEGCC=$(USEGCC) FFLAGS="$(JFFLAGS)" CFLAGS="$(OPENSPECFUN_CFLAGS)"
 
-openspecfun/Makefile openspecfun/Makefile.extras:
-	(cd .. && git submodule init && git submodule update)
-ifeq (exists, $(shell [ -d openspecfun/.git ] && echo exists ))
-$(OPENSPECFUN_OBJ_SOURCE): openspecfun/.git/HEAD
-endif
-ifeq (exists, $(shell [ -d $(JULIAHOME)/.git/modules/deps/openspecfun ] && echo exists ))
-$(OPENSPECFUN_OBJ_SOURCE): $(JULIAHOME)/.git/modules/deps/openspecfun/HEAD
+ifeq ($(USE_SYSTEM_LIBM),0)
+	OPENSPECFUN_FLAGS += USE_OPENLIBM=1
+$(OPENSPECFUN_OBJ_SOURCE): $(OPENLIBM_OBJ_TARGET)
 endif
 
-$(OPENSPECFUN_OBJ_SOURCE): openspecfun/Makefile $(OPENLIBM_FAKE_TARGET)
-	$(MAKE) -C openspecfun $(OPENSPECFUN_FLAGS) $(MAKE_COMMON)
+$(OPENSPECFUN_OBJ_SOURCE): $(OPENSPECFUN_SRC_DIR)/Makefile
+	$(MAKE) -C $(OPENSPECFUN_SRC_DIR) $(OPENSPECFUN_FLAGS) $(MAKE_COMMON)
 	touch -c $@
 $(OPENSPECFUN_OBJ_TARGET): $(OPENSPECFUN_OBJ_SOURCE)
-	$(call make-install,openspecfun,$(OPENSPECFUN_FLAGS))
+	$(call make-install,$(OPENSPECFUN_SRC_DIR),$(OPENSPECFUN_FLAGS))
 	$(INSTALL_NAME_CMD)libopenspecfun.$(SHLIB_EXT) $@
 	touch -c $@
 
 clean-openspecfun:
-	-$(MAKE) -C openspecfun distclean $(OPENSPECFUN_FLAGS)
+	-$(MAKE) -C $(OPENSPECFUN_SRC_DIR) distclean $(OPENSPECFUN_FLAGS)
 	-rm $(OPENSPECFUN_OBJ_TARGET)
 	-rm $(build_libdir)/libopenspecfun.a
-distclean-openspecfun: clean-openspecfun
-	-cd openspecfun && git clean -fdx
 
-get-openspecfun: openspecfun/Makefile
+get-openspecfun: $(OPENSPECFUN_SRC_DIR)/Makefile
 configure-openspecfun: get-openspecfun
 compile-openspecfun: $(OPENSPECFUN_OBJ_SOURCE)
 check-openspecfun: compile-openspecfun
@@ -815,7 +853,7 @@ ifneq ($(USEMSVC), 1)
 DSFMT_CFLAGS += -O3 -finline-functions -fomit-frame-pointer -fno-strict-aliasing \
 		--param max-inline-insns-single=1800 -Wmissing-prototypes -Wall  -std=c99 -shared
 else
-DSFMT_CFLAGS += -Wl,-dll
+DSFMT_CFLAGS += -Wl,-dll,-def:../libdSFMT.def
 endif
 ifeq ($(ARCH), x86_64)
 DSFMT_CFLAGS += -msse2 -DHAVE_SSE2
@@ -835,12 +873,12 @@ $(DSFMT_OBJ_SOURCE): dsfmt-$(DSFMT_VER)/config.status
 	$(CC) $(CPPFLAGS) $(DSFMT_CFLAGS) $(LDFLAGS) dSFMT.c -o libdSFMT.$(SHLIB_EXT)
 $(build_shlibdir)/libdSFMT%$(SHLIB_EXT) $(build_includedir)/dSFMT%h: $(DSFMT_OBJ_SOURCE) | $(build_includedir) $(build_shlibdir)
 	cp dsfmt-$(DSFMT_VER)/dSFMT.h $(build_includedir)
-	cp $< $@ && \
-	$(INSTALL_NAME_CMD)libdSFMT.$(SHLIB_EXT) $(build_shlibdir)/libDSFMT.$(SHLIB_EXT)
+	cp $< $(build_shlibdir)/libdSFMT.$(SHLIB_EXT) && \
+	$(INSTALL_NAME_CMD)libdSFMT.$(SHLIB_EXT) $(build_shlibdir)/libdSFMT.$(SHLIB_EXT)
 
 clean-dsfmt:
 	-rm -f dsfmt-$(DSFMT_VER)/libdSFMT.$(SHLIB_EXT)
-distclean-dsfmt: clean-dsfmt
+distclean-dsfmt:
 	-rm -rf dsfmt*.tar.gz dsfmt-$(DSFMT_VER)
 
 get-dsfmt: dsfmt-$(DSFMT_VER).tar.gz
@@ -852,12 +890,12 @@ install-dsfmt: $(DSFMT_OBJ_TARGET)
 
 ## Rmath-julia ##
 
-ifeq ($(USE_SYSTEM_DSFMT),0)
-DSFMT_FAKE_TARGET = $(DSFMT_OBJ_TARGET)
-endif
-
 RMATH_JULIA_OBJ_TARGET = $(build_shlibdir)/libRmath-julia.$(SHLIB_EXT)
 RMATH_JULIA_OBJ_SOURCE = Rmath-julia-$(RMATH_JULIA_VER)/src/libRmath-julia.$(SHLIB_EXT)
+
+ifeq ($(USE_SYSTEM_DSFMT),0)
+$(RMATH_JULIA_OBJ_SOURCE): $(DSFMT_OBJ_TARGET)
+endif
 
 RMATH_JULIA_FLAGS += CC="$(CC)" USECLANG=$(USECLANG) USEGCC=$(USEGCC) \
 			   OS="$(OS)" ARCH="$(ARCH)" \
@@ -865,8 +903,8 @@ RMATH_JULIA_FLAGS += CC="$(CC)" USECLANG=$(USECLANG) USEGCC=$(USEGCC) \
 			   DSFMT_includedir="$(build_includedir)"
 
 Rmath-julia-$(RMATH_JULIA_VER).tar.gz:
-	$(JLDOWNLOAD) $@ https://github.com/JuliaLang/Rmath-julia/archive/v$(RMATH_JULIA_VER).tar.gz
-$(RMATH_JULIA_OBJ_SOURCE): Rmath-julia-$(RMATH_JULIA_VER).tar.gz $(DSFMT_FAKE_TARGET)
+	$(JLDOWNLOAD) $@ https://api.github.com/repos/JuliaLang/Rmath-julia/tarball/v$(RMATH_JULIA_VER)
+$(RMATH_JULIA_OBJ_SOURCE): Rmath-julia-$(RMATH_JULIA_VER).tar.gz
 	$(JLCHECKSUM) Rmath-julia-$(RMATH_JULIA_VER).tar.gz && \
 	mkdir -p Rmath-julia-$(RMATH_JULIA_VER) && \
 	$(TAR) -C Rmath-julia-$(RMATH_JULIA_VER) --strip-components 1 -xf $< && \
@@ -878,7 +916,6 @@ $(RMATH_JULIA_OBJ_TARGET): $(RMATH_JULIA_OBJ_SOURCE) | $(build_shlibdir)
 
 clean-Rmath-julia:
 	-$(MAKE) -C Rmath-julia-$(RMATH_JULIA_VER) clean
-	-rm $(RMATH_JULIA_OBJ_TARGET)
 distclean-Rmath-julia: clean-Rmath-julia
 	-rm -rf Rmath-julia-$(RMATH_JULIA_VER).tar.gz Rmath-julia-$(RMATH_JULIA_VER)
 
@@ -919,10 +956,12 @@ install-objconv: $(OBJCONV_TARGET)
 
 ## OpenBLAS ##
 # LAPACK is built into OpenBLAS by default
+OPENBLAS_GIT_URL = git://github.com/xianyi/OpenBLAS.git
+OPENBLAS_TAR_URL = https://api.github.com/repos/xianyi/OpenBLAS/tarball/$1
+$(eval $(call git-external,openblas,OPENBLAS,Makefile,libopenblas.$(SHLIB_EXT)))
 
-OPENBLAS_OBJ_SOURCE = openblas-$(OPENBLAS_VER)/libopenblas.$(SHLIB_EXT)
+OPENBLAS_OBJ_SOURCE = $(OPENBLAS_SRC_DIR)/libopenblas.$(SHLIB_EXT)
 OPENBLAS_OBJ_TARGET = $(build_shlibdir)/libopenblas.$(SHLIB_EXT)
-
 OPENBLAS_BUILD_OPTS = CC="$(CC)" FC="$(FC)" RANLIB="$(RANLIB)" FFLAGS="$(FFLAGS) $(JFFLAGS)" LDFLAGS="$(LDFLAGS)" TARGET=$(OPENBLAS_TARGET_ARCH) BINARY=$(BINARY)
 
 # Thread support
@@ -988,21 +1027,15 @@ else ifeq ($(OPENBLAS_NO_AVX2), 1)
 OPENBLAS_BUILD_OPTS += NO_AVX2=1
 endif
 
-openblas-$(OPENBLAS_VER).tar.gz:
-	$(JLDOWNLOAD) $@ https://github.com/xianyi/OpenBLAS/archive/$(OPENBLAS_VER).tar.gz
-openblas-$(OPENBLAS_VER)/config.status: openblas-$(OPENBLAS_VER).tar.gz
-ifneq ($(OPENBLAS_VER),develop)
-	$(JLCHECKSUM) $<
-endif
-	mkdir -p openblas-$(OPENBLAS_VER) && \
-	$(TAR) -C openblas-$(OPENBLAS_VER) --strip-components 1 -xf $<
-	perl -i -ple 's/^\s*(EXTRALIB\s*\+=\s*-lSystemStubs)\s*$$/# $$1/g' openblas-$(OPENBLAS_VER)/Makefile.system
-	echo 1 > $@
-$(OPENBLAS_OBJ_SOURCE): openblas-$(OPENBLAS_VER)/config.status
-	$(MAKE) -C openblas-$(OPENBLAS_VER) $(OPENBLAS_BUILD_OPTS) || (echo "*** Clean the OpenBLAS build with 'make -C deps clean-openblas'. Rebuild with 'make OPENBLAS_USE_THREAD=0 if OpenBLAS had trouble linking libpthread.so, and with 'make OPENBLAS_TARGET_ARCH=NEHALEM' if there were errors building SandyBridge support. Both these options can also be used simultaneously. ***" && false)
+$(OPENBLAS_SRC_DIR)/config.status: $(OPENBLAS_SRC_DIR)/Makefile
+	perl -i -ple 's/^\s*(EXTRALIB\s*\+=\s*-lSystemStubs)\s*$$/# $$1/g' $(OPENBLAS_SRC_DIR)/Makefile.system
+	touch $@
+$(OPENBLAS_OBJ_SOURCE): $(OPENBLAS_SRC_DIR)/config.status
+	echo $(MAKE) -C $(OPENBLAS_SRC_DIR) $(OPENBLAS_BUILD_OPTS) # echo first, so we only print the error message below in a failure case
+	@$(MAKE) -C $(OPENBLAS_SRC_DIR) $(OPENBLAS_BUILD_OPTS) || (echo $(WARNCOLOR)"*** Clean the OpenBLAS build with 'make -C deps clean-openblas'. Rebuild with 'make OPENBLAS_USE_THREAD=0 if OpenBLAS had trouble linking libpthread.so, and with 'make OPENBLAS_TARGET_ARCH=NEHALEM' if there were errors building SandyBridge support. Both these options can also be used simultaneously. ***"$(ENDCOLOR) && false)
 	touch -c $@
 $(OPENBLAS_OBJ_TARGET): $(OPENBLAS_OBJ_SOURCE) | $(build_shlibdir)
-	cp -f openblas-$(OPENBLAS_VER)/libopenblas.$(SHLIB_EXT) $(build_shlibdir)
+	cp -f $(OPENBLAS_SRC_DIR)/libopenblas.$(SHLIB_EXT) $(build_shlibdir)
 ifeq ($(OS), Linux)
 	cd $(build_shlibdir) && \
 	ln -sf libopenblas.$(SHLIB_EXT) libopenblas.$(SHLIB_EXT).0
@@ -1010,12 +1043,10 @@ endif
 	$(INSTALL_NAME_CMD)libopenblas.$(SHLIB_EXT) $(build_shlibdir)/libopenblas.$(SHLIB_EXT)
 
 clean-openblas:
-	-$(MAKE) -C openblas-$(OPENBLAS_VER) clean
-distclean-openblas:
-	-rm -rf openblas-$(OPENBLAS_VER).tar.gz openblas-$(OPENBLAS_VER)
+	-$(MAKE) -C $(OPENBLAS_SRC_DIR) clean
 
-get-openblas: openblas-$(OPENBLAS_VER).tar.gz
-configure-openblas: openblas-$(OPENBLAS_VER)/config.status
+get-openblas: $(OPENBLAS_SRC_DIR)/Makefile
+configure-openblas: $(OPENBLAS_SRC_DIR)/config.status
 compile-openblas: $(OPENBLAS_OBJ_SOURCE)
 check-openblas: compile-openblas
 install-openblas: $(OPENBLAS_OBJ_TARGET)
@@ -1065,7 +1096,7 @@ $(ATLAS_OBJ_TARGET): $(ATLAS_OBJ_SOURCE)
 
 clean-atlas:
 	rm -rf atlas/build
-distclean-atlas: clean-atlas
+distclean-atlas:
 	rm -rf atlas
 
 get-atlas: atlas/configure
@@ -1096,7 +1127,7 @@ endif
 
 libgfortblas.$(SHLIB_EXT): gfortblas.c gfortblas.alias
 	$(CC) -Wall -O3 $(CPPFLAGS) $(CFLAGS) $(fPIC) -shared $< -o $@ -pipe \
-				-Wl,-reexport_framework,vecLib -Wl,-alias_list,gfortblas.alias
+				-Wl,-reexport_framework,Accelerate -Wl,-alias_list,gfortblas.alias
 $(build_shlibdir)/libgfortblas.$(SHLIB_EXT): libgfortblas.$(SHLIB_EXT)
 	cp -f $< $@
 	$(INSTALL_NAME_CMD)libgfortblas.$(SHLIB_EXT) $@
@@ -1355,6 +1386,11 @@ else ifeq ($(OS), Linux)
 endif
 	touch -c $@
 
+ifneq ($(PATCHELF),patchelf)
+$(FFTW_DOUBLE_OBJ_TARGET): $(PATCHELF)
+$(FFTW_SINGLE_OBJ_TARGET): $(PATCHELF)
+endif
+
 clean-fftw: clean-fftw-single clean-fftw-double
 clean-fftw-single:
 	-$(MAKE) -C fftw-$(FFTW_VER)-single clean
@@ -1389,45 +1425,36 @@ check-fftw-double: fftw-$(FFTW_VER)-double/checked
 install-fftw-double: $(FFTW_DOUBLE_OBJ_TARGET)
 
 ## UTF8PROC ##
+UTF8PROC_GIT_URL = git://github.com/JuliaLang/utf8proc.git
+UTF8PROC_TAR_URL = https://api.github.com/repos/JuliaLang/utf8proc/tarball/$1
+$(eval $(call git-external,utf8proc,UTF8PROC,Makefile,libutf8proc.a))
 
-UTF8PROC_SRC_TARGET = utf8proc/libutf8proc.a
+UTF8PROC_SRC_TARGET = $(UTF8PROC_SRC_DIR)/libutf8proc.a
 UTF8PROC_OBJ_LIB    = $(build_libdir)/libutf8proc.a
 UTF8PROC_OBJ_HEADER = $(build_includedir)/utf8proc.h
 UTF8PROC_OBJ_TARGET = $(UTF8PROC_OBJ_LIB) $(UTF8PROC_OBJ_HEADER)
 
-
-utf8proc/Makefile:
-	(cd .. && git submodule init && git submodule update)
-ifeq (exists, $(shell [ -d utf8proc/.git ] && echo exists ))
-$(UTF8PROC_SRC_TARGET): utf8proc/.git/HEAD
-endif
-ifeq (exists, $(shell [ -d $(JULIAHOME)/.git/modules/deps/utf8proc ] && echo exists ))
-$(UTF8PROC_SRC_TARGET): $(JULIAHOME)/.git/modules/deps/utf8proc/HEAD
-endif
-$(UTF8PROC_SRC_TARGET): utf8proc/Makefile
-	$(MAKE) -C utf8proc cc="$(CC) -O2 -std=c99 $(fPIC) -DUTF8PROC_EXPORTS $(DEPS_CFLAGS)" AR="$(AR)" libutf8proc.a
+$(UTF8PROC_SRC_TARGET): $(UTF8PROC_SRC_DIR)/Makefile
+	$(MAKE) -C $(UTF8PROC_SRC_DIR) CC="$(CC)" CFLAGS="-O2 -std=c99 $(fPIC) -DUTF8PROC_EXPORTS $(DEPS_CFLAGS)" AR="$(AR)" libutf8proc.a
 	touch -c $@
-utf8proc/checked: $(UTF8PROC_SRC_TARGET)
+$(UTF8PROC_SRC_DIR)/checked: $(UTF8PROC_SRC_TARGET)
 ifeq ($(OS),$(BUILD_OS))
-	-$(MAKE) -C utf8proc check
+	-$(MAKE) -C $(UTF8PROC_SRC_DIR) check
 endif
 	echo 1 > $@
-
 $(UTF8PROC_OBJ_LIB): $(UTF8PROC_SRC_TARGET)
 	cp -f $< $@
-
-$(UTF8PROC_OBJ_HEADER): utf8proc/Makefile
-	cp -f utf8proc/utf8proc.h $@
+$(UTF8PROC_OBJ_HEADER): $(UTF8PROC_SRC_TARGET)
+	cp -f $(UTF8PROC_SRC_DIR)/utf8proc.h $@
 
 clean-utf8proc:
-	-$(MAKE) -C utf8proc clean
+	-$(MAKE) -C $(UTF8PROC_SRC_DIR) clean
 	-rm -rf $(build_libdir)/libutf8proc.a $(build_includedir)/utf8proc.h
-distclean-utf8proc: clean-utf8proc
 
-get-utf8proc: utf8proc/Makefile
+get-utf8proc: $(UTF8PROC_SRC_DIR)/Makefile
 configure-utf8proc: get-utf8proc
 compile-utf8proc: $(UTF8PROC_SRC_TARGET)
-check-utf8proc: utf8proc/checked
+check-utf8proc: $(UTF8PROC_SRC_DIR)/checked
 install-utf8proc: $(UTF8PROC_OBJ_TARGET)
 
 ## SUITESPARSE ##
@@ -1512,7 +1539,7 @@ $(SUITESPARSE_OBJ_TARGET): $(SUITESPARSE_OBJ_SOURCE)
 clean-suitesparse:
 	-$(MAKE) -C SuiteSparse-$(SUITESPARSE_VER) clean
 	-rm -fr SuiteSparse-$(SUITESPARSE_VER)/lib
-distclean-suitesparse: clean-suitesparse
+distclean-suitesparse:
 	-rm -rf SuiteSparse-$(SUITESPARSE_VER).tar.gz SuiteSparse-$(SUITESPARSE_VER)
 
 get-suitesparse: SuiteSparse-$(SUITESPARSE_VER).tar.gz
@@ -1622,7 +1649,8 @@ $(OSXUNWIND_OBJ_TARGET): $(OSXUNWIND_OBJ_SOURCE) | $(build_shlibdir)
 clean-osxunwind:
 	-$(MAKE) -C libosxunwind-$(OSXUNWIND_VER) distclean $(OSXUNWIND_FLAGS)
 	-rm $(OSXUNWIND_OBJ_TARGET)
-distclean-osxunwind: clean-osxunwind
+distclean-osxunwind:
+	-rm -rf libosxunwind-$(OSXUNWIND_VER)
 
 get-osxunwind: libosxunwind-$(OSXUNWIND_VER)/Makefile
 configure-osxunwind: get-osxunwind
@@ -1840,7 +1868,11 @@ install-virtualenv: $(VIRTUALENV_TARGET)
 
 ## libgit2
 
-LIBGIT2_OBJ_SOURCE = libgit2-$(LIBGIT2_VER)/build/libgit2.$(SHLIB_EXT)
+LIBGIT2_GIT_URL = git://github.com/libgit2/libgit2.git
+LIBGIT2_TAR_URL = https://api.github.com/repos/libgit2/libgit2/tarball/$1
+$(eval $(call git-external,libgit2,LIBGIT2,CMakeLists.txt,build/libgit2.$(SHLIB_EXT)))
+
+LIBGIT2_OBJ_SOURCE = $(LIBGIT2_SRC_DIR)/build/libgit2.$(SHLIB_EXT)
 LIBGIT2_OBJ_TARGET = $(build_shlibdir)/libgit2.$(SHLIB_EXT)
 
 LIBGIT2_OPTS = $(CMAKE_COMMON) -DTHREADSAFE=ON
@@ -1854,28 +1886,22 @@ LIBGIT2_OPTS += -DCMAKE_FIND_ROOT_PATH=/usr/$(XC_HOST) -DCMAKE_FIND_ROOT_PATH_MO
 endif
 endif
 
-libgit2-$(LIBGIT2_VER).tar.gz:
-	$(JLDOWNLOAD) $@ https://github.com/libgit2/libgit2/archive/v$(LIBGIT2_VER).tar.gz
-libgit2-$(LIBGIT2_VER)/CMakeLists.txt: libgit2-$(LIBGIT2_VER).tar.gz
-	$(JLCHECKSUM) $<
-	$(TAR) zxf $<
-	touch -c $@
-libgit2-$(LIBGIT2_VER)/build/Makefile: libgit2-$(LIBGIT2_VER)/CMakeLists.txt
-	mkdir -p libgit2-$(LIBGIT2_VER)/build
-	cd libgit2-$(LIBGIT2_VER)/build/ && \
+$(LIBGIT2_SRC_DIR)/build/Makefile: $(LIBGIT2_SRC_DIR)/CMakeLists.txt
+	mkdir -p $(LIBGIT2_SRC_DIR)/build
+	cd $(LIBGIT2_SRC_DIR)/build/ && \
 	$(CMAKE) .. $(LIBGIT2_OPTS)
 	touch -c $@
-$(LIBGIT2_OBJ_SOURCE): libgit2-$(LIBGIT2_VER)/build/Makefile
-	$(MAKE) -C libgit2-$(LIBGIT2_VER)/build
+$(LIBGIT2_OBJ_SOURCE): $(LIBGIT2_SRC_DIR)/build/Makefile
+	$(MAKE) -C $(LIBGIT2_SRC_DIR)/build
 	touch -c $@
-libgit2-$(LIBGIT2_VER)/build/checked: $(LIBGIT2_OBJ_SOURCE)
+$(LIBGIT2_SRC_DIR)/build/checked: $(LIBGIT2_OBJ_SOURCE)
 ifeq ($(OS),$(BUILD_OS))
-	$(MAKE) -C libgit2-$(LIBGIT2_VER)/build test
+	$(MAKE) -C $(LIBGIT2_SRC_DIR)/build test
 endif
 	echo 1 > $@
 $(LIBGIT2_OBJ_TARGET): $(LIBGIT2_OBJ_SOURCE) | $(build_shlibdir)
 	cp $< $@
-	#$(call make-install,libgit2-$(LIBGIT2_VER)/build,)
+	#$$(call make-install,$(LIBGIT2_SRC_DIR)/build,)
 ifeq ($(OS),Linux)
 	# If we're on linux, copy over libssl and libcrypto for libgit2
 	-LIBGIT_LIBS=$$(ldd "$@" | tail -n +2 | awk '{print $$(NF-1)}'); \
@@ -1888,15 +1914,13 @@ endif
 	touch -c $@
 
 clean-libgit2:
-	-rm -rf libgit2-$(LIBGIT2_VER)/build/
+	-rm -rf $(LIBGIT2_SRC_DIR)/build/
 	-rm -f $(LIBGIT2_OBJ_TARGET)
-distclean-libgit2:
-	-rm -rf libgit2-$(LIBGIT2_VER).tar.gz libgit2-$(LIBGIT2_VER).zip libgit2-$(LIBGIT2_VER)
 
-get-libgit2: libgit2-$(LIBGIT2_VER).tar.gz
-configure-libgit2: libgit2-$(LIBGIT2_VER)/build/Makefile
+get-libgit2: $(LIBGIT2_SRC_DIR)/CMakeLists.txt
+configure-libgit2: $(LIBGIT2_SRC_DIR)/build/Makefile
 compile-libgit2: $(LIBGIT2_OBJ_SOURCE)
-check-libgit2: libgit2-$(LIBGIT2_VER)/build/checked
+check-libgit2: $(LIBGIT2_SRC_DIR)/build/checked
 install-libgit2: $(LIBGIT2_OBJ_TARGET)
 
 ## phony targets ##

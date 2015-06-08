@@ -1,18 +1,23 @@
+# This file is a part of Julia. License is MIT: http://julialang.org/license
+
 # Various Unicode functionality from the utf8proc library
 module UTF8proc
 
-import Base: show, showcompact, ==, hash, string, symbol, isless, length, eltype, start, next, done, convert
+import Base: show, showcompact, ==, hash, string, symbol, isless, length, eltype, start, next, done, convert, isvalid, lowercase, uppercase
 
 export isgraphemebreak
 
 # also exported by Base:
-export normalize_string, graphemes, is_valid_char, is_assigned_char, charwidth,
+export normalize_string, graphemes, is_assigned_char, charwidth, isvalid,
    islower, isupper, isalpha, isdigit, isnumber, isalnum,
    iscntrl, ispunct, isspace, isprint, isgraph, isblank
 
-# whether codepoints are valid Unicode
-is_valid_char(c::Union(UInt8,UInt16,UInt32,Char)) = Bool(ccall(:utf8proc_codepoint_valid, Cuchar, (UInt32,), c))
-is_valid_char(c::Integer) = (0x0 <= c <= 0x110000) && is_valid_char(UInt32(c))
+# whether codepoints are valid Unicode scalar values, i.e. 0-0xd7ff, 0xe000-0x10ffff
+isvalid(::Type{Char}, ch::Unsigned) = !((ch - 0xd800 < 0x800) | (ch > 0x10ffff))
+isvalid(::Type{Char}, ch::Integer) = isvalid(Char, Unsigned(ch))
+isvalid(::Type{Char}, ch::Char) = isvalid(Char, UInt32(ch))
+
+isvalid(ch::Char) = isvalid(Char, ch)
 
 # utf8 category constants
 const UTF8PROC_CATEGORY_CN = 0
@@ -46,7 +51,6 @@ const UTF8PROC_CATEGORY_CF = 27
 const UTF8PROC_CATEGORY_CS = 28
 const UTF8PROC_CATEGORY_CO = 29
 
-const UTF8PROC_NULLTERM  = (1<<0)
 const UTF8PROC_STABLE    = (1<<1)
 const UTF8PROC_COMPAT    = (1<<2)
 const UTF8PROC_COMPOSE   = (1<<3)
@@ -64,21 +68,20 @@ const UTF8PROC_STRIPMARK = (1<<13)
 
 ############################################################################
 
-let
-    const p = Array(Ptr{UInt8}, 1)
-    global utf8proc_map
-    function utf8proc_map(s::AbstractString, flags::Integer)
-        result = ccall(:utf8proc_map, Cssize_t,
-                       (Ptr{UInt8}, Cssize_t, Ptr{Ptr{UInt8}}, Cint),
-                       s, 0, p, flags | UTF8PROC_NULLTERM)
-        result < 0 && error(bytestring(ccall(:utf8proc_errmsg, Ptr{UInt8},
-                                             (Cssize_t,), result)))
-        a = ccall(:jl_ptr_to_array_1d, Vector{UInt8},
-                  (Any, Ptr{UInt8}, Csize_t, Cint),
-                  Vector{UInt8}, p[1], result, true)
-        ccall(:jl_array_to_string, Any, (Any,), a)::ByteString
-    end
+function utf8proc_map(s::ByteString, flags::Integer)
+    p = Ref{Ptr{UInt8}}()
+    result = ccall(:utf8proc_map, Cssize_t,
+                   (Ptr{UInt8}, Cssize_t, Ref{Ptr{UInt8}}, Cint),
+                   s, sizeof(s), p, flags)
+    result < 0 && error(bytestring(ccall(:utf8proc_errmsg, Ptr{UInt8},
+                                         (Cssize_t,), result)))
+    a = ccall(:jl_ptr_to_array_1d, Vector{UInt8},
+              (Any, Ptr{UInt8}, Csize_t, Cint),
+              Vector{UInt8}, p[], result, true)
+    ccall(:jl_array_to_string, Any, (Any,), a)::ByteString
 end
+
+utf8proc_map(s::AbstractString, flags::Integer) = utf8proc_map(bytestring(s), flags)
 
 function normalize_string(s::AbstractString; stable::Bool=false, compat::Bool=false, compose::Bool=true, decompose::Bool=false, stripignore::Bool=false, rejectna::Bool=false, newline2ls::Bool=false, newline2ps::Bool=false, newline2lf::Bool=false, stripcc::Bool=false, casefold::Bool=false, lump::Bool=false, stripmark::Bool=false)
     flags = 0
@@ -118,6 +121,12 @@ end
 
 charwidth(c::Char) = Int(ccall(:utf8proc_charwidth, Cint, (UInt32,), c))
 
+# faster x+y that does no overflow checking
+fastplus(x::Char, y::UInt32) = reinterpret(Char, reinterpret(UInt32, x) + y)
+
+lowercase(c::Char) = isascii(c) ? ('A' <= c <= 'Z' ? fastplus(c,0x00000020) : c) : ccall(:utf8proc_tolower, Char, (UInt32,), c)
+uppercase(c::Char) = isascii(c) ? ('a' <= c <= 'z' ? fastplus(c,0xffffffe0) : c) : ccall(:utf8proc_toupper, Char, (UInt32,), c)
+
 ############################################################################
 
 # returns UTF8PROC_CATEGORY code in 0:30 giving Unicode category
@@ -152,8 +161,9 @@ iscntrl(c::Char) = (c <= Char(0x1f) || Char(0x7f) <= c <= Char(0x9f))
 
 ispunct(c::Char) = (UTF8PROC_CATEGORY_PC <= category_code(c) <= UTF8PROC_CATEGORY_PO)
 
-# 0x85 is the Unicode Next Line (NEL) character
-isspace(c::Char) = c == ' ' || '\t' <= c <='\r' || c == Char(0x85) || category_code(c)==UTF8PROC_CATEGORY_ZS
+# \u85 is the Unicode Next Line (NEL) character
+# the check for \ufffd allows for branch removal on ASCIIStrings
+@inline isspace(c::Char) = c == ' ' || '\t' <= c <='\r' || c == '\u85' || '\ua0' <= c && c != '\ufffd' && category_code(c)==UTF8PROC_CATEGORY_ZS
 
 isprint(c::Char) = (UTF8PROC_CATEGORY_LU <= category_code(c) <= UTF8PROC_CATEGORY_ZS)
 

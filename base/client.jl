@@ -1,3 +1,5 @@
+# This file is a part of Julia. License is MIT: http://julialang.org/license
+
 ## client.jl - frontend handling command line options, environment setup,
 ##             and REPL
 
@@ -130,29 +132,30 @@ function eval_user_input(ast::ANY, show_value)
     isa(STDIN,TTY) && println()
 end
 
-function repl_callback(ast::ANY, show_value)
-    global _repl_enough_stdin = true
-    stop_reading(STDIN)
-    put!(repl_channel, (ast, show_value))
+syntax_deprecation_warnings(warn::Bool) =
+    ccall(:jl_parse_depwarn, Cint, (Cint,), warn)!=0
+
+function syntax_deprecation_warnings(f::Function, warn::Bool)
+    prev = syntax_deprecation_warnings(warn)
+    try
+        f()
+    finally
+        syntax_deprecation_warnings(prev)
+    end
 end
 
-_repl_start = Condition()
-
-syntax_deprecation_warnings(warn::Bool) =
-    Bool(ccall(:jl_parse_depwarn, Cint, (Cint,), warn))
-
-function parse_input_line(s::AbstractString)
-    # s = bytestring(s)
+function parse_input_line(s::ByteString)
     # (expr, pos) = parse(s, 1)
     # (ex, pos) = ccall(:jl_parse_string, Any,
-    #                   (Ptr{UInt8},Int32,Int32),
-    #                   s, pos-1, 1)
+    #                   (Ptr{UInt8},Csize_t,Int32,Int32),
+    #                   s, sizeof(s), pos-1, 1)
     # if !is(ex,())
     #     throw(ParseError("extra input after end of expression"))
     # end
     # expr
-    ccall(:jl_parse_input_line, Any, (Ptr{UInt8},), s)
+    ccall(:jl_parse_input_line, Any, (Ptr{UInt8}, Csize_t), s, sizeof(s))
 end
+parse_input_line(s::AbstractString) = parse_input_line(bytestring(s))
 
 function parse_input_line(io::IO)
     s = ""
@@ -246,23 +249,17 @@ let reqarg = Set(UTF8String["--home",          "-H",
         end
         repl                  = true
         startup               = (opts.startupfile != 2)
-        history_file          = Bool(opts.historyfile)
-        quiet                 = Bool(opts.quiet)
+        history_file          = (opts.historyfile != 0)
+        quiet                 = (opts.quiet != 0)
         color_set             = (opts.color != 0)
         global have_color     = (opts.color == 1)
-        global is_interactive = Bool(opts.isinteractive)
+        global is_interactive = (opts.isinteractive != 0)
         while true
-            # show julia VERSION and quit
-            if Bool(opts.version)
-                println(STDOUT, "julia version ", VERSION)
-                exit(0)
-            end
-
             # load ~/.juliarc file
             startup && load_juliarc()
 
             # startup worker
-            if Bool(opts.worker)
+            if opts.worker != 0
                 start_worker() # does not return
             end
             # add processors
@@ -301,7 +298,9 @@ let reqarg = Set(UTF8String["--home",          "-H",
                     repl = false
                     # remove filename from ARGS
                     shift!(ARGS)
-                    ccall(:jl_exit_on_sigint, Void, (Cint,), 1)
+                    if !is_interactive
+                        ccall(:jl_exit_on_sigint, Void, (Cint,), 1)
+                    end
                     include(args[1])
                 else
                     println(STDERR, "julia: unknown option `$(args[1])`")
@@ -310,6 +309,7 @@ let reqarg = Set(UTF8String["--home",          "-H",
             end
             break
         end
+        repl |= is_interactive
         return (quiet,repl,startup,color_set,history_file)
     end
 end
@@ -383,6 +383,21 @@ end
 import .Terminals
 import .REPL
 
+const repl_hooks = []
+
+atreplinit(f::Function) = (unshift!(repl_hooks, f); nothing)
+
+function _atreplinit(repl)
+    for f in repl_hooks
+        try
+            f(repl)
+        catch err
+            show(STDERR, err)
+            println(STDERR)
+        end
+    end
+end
+
 function _start()
     opts = JLOptions()
     try
@@ -427,6 +442,7 @@ function _start()
                     end
                 end
             else
+                _atreplinit(active_repl)
                 active_repl_backend = REPL.run_repl(active_repl)
             end
         end

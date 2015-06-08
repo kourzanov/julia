@@ -1,3 +1,5 @@
+# This file is a part of Julia. License is MIT: http://julialang.org/license
+
 replstr(x) = sprint((io,x) -> writemime(io,MIME("text/plain"),x), x)
 
 @test replstr(cell(2)) == "2-element Array{Any,1}:\n #undef\n #undef"
@@ -13,6 +15,16 @@ end
 @test replstr(parse("immutable X end")) == ":(immutable X\n    end)"
 s = "ccall(:f,Int,(Ptr{Void},),&x)"
 @test replstr(parse(s)) == ":($s)"
+
+# recursive array printing
+# issue #10353
+let
+    a = Any[]
+    push!(a,a)
+    show(IOBuffer(), a)
+    push!(a,a)
+    show(IOBuffer(), a)
+end
 
 # expression printing
 
@@ -221,3 +233,31 @@ end
 
 # issue #9865
 @test ismatch(r"^Set\(\[.+….+\]\)$", replstr(Set(1:100)))
+
+# issue #11413
+@test string(:(*{1,2})) == "*{1,2}"
+@test string(:(*{1,x})) == "*{1,x}"
+@test string(:(-{x}))   == "-{x}"
+
+# issue #11393
+@test_repr "@m(x,y) + z"
+@test_repr "(@m(x,y),z)"
+@test_repr "[@m(x,y),z]"
+@test_repr "A[@m(x,y),z]"
+@test_repr "T{@m(x,y),z}"
+@test_repr "@m x @n(y) z"
+@test_repr "f(@m(x,y);z=@n(a))"
+@test_repr "@m(x,y).z"
+@test_repr "::@m(x,y)+z"
+@test_repr "[@m(x) y z]"
+@test_repr "[@m(x) y; z]"
+@test_repr "let @m(x), y=z; end"
+
+@test repr(:(@m x y))    == ":(@m x y)"
+@test string(:(@m x y))  ==   "@m x y"
+@test string(:(@m x y;)) == "begin \n    @m x y\nend"
+
+# issue #11436
+@test_repr "1 => 2 => 3"
+@test_repr "1 => (2 => 3)"
+@test_repr "(1 => 2) => 3"

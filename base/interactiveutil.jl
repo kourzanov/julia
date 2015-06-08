@@ -1,3 +1,5 @@
+# This file is a part of Julia. License is MIT: http://julialang.org/license
+
 # editing files
 
 function edit(file::AbstractString, line::Integer)
@@ -52,8 +54,8 @@ function edit( m::Method )
 end
 
 edit(file::AbstractString) = edit(file, 1)
-edit(f::Callable)               = edit(functionloc(f)...)
-edit(f::Callable, t::(Type...)) = edit(functionloc(f,t)...)
+edit(f::Callable)          = edit(functionloc(f)...)
+edit(f::Callable, t::ANY)  = edit(functionloc(f,t)...)
 
 # terminal pager
 
@@ -63,8 +65,8 @@ function less(file::AbstractString, line::Integer)
 end
 
 less(file::AbstractString) = less(file, 1)
-less(f::Callable)               = less(functionloc(f)...)
-less(f::Callable, t::(Type...)) = less(functionloc(f,t)...)
+less(f::Callable)          = less(functionloc(f)...)
+less(f::Callable, t::ANY)  = less(functionloc(f,t)...)
 
 # clipboard copy and paste
 
@@ -107,6 +109,9 @@ end
 
 @windows_only begin # TODO: these functions leak memory and memory locks if they throw an error
     function clipboard(x::AbstractString)
+        if containsnul(x)
+            throw(ArgumentError("Windows clipboard strings cannot contain NUL character"))
+        end
         systemerror(:OpenClipboard, 0==ccall((:OpenClipboard, "user32"), stdcall, Cint, (Ptr{Void},), C_NULL))
         systemerror(:EmptyClipboard, 0==ccall((:EmptyClipboard, "user32"), stdcall, Cint, ()))
         x_u16 = utf16(x)
@@ -197,11 +202,12 @@ versioninfo(verbose::Bool) = versioninfo(STDOUT,verbose)
 
 # displaying type-ambiguity warnings
 
-function code_warntype(io::IO, f, t::(Type...))
+function code_warntype(io::IO, f, t::ANY)
     global show_expr_type_emphasize
+    global may_show_expr_type_emphasize
     state = show_expr_type_emphasize::Bool
     ct = code_typed(f, t)
-    show_expr_type_emphasize::Bool = true
+    show_expr_type_emphasize::Bool = may_show_expr_type_emphasize::Bool = true
     for ast in ct
         println(io, "Variables:")
         vars = ast.args[2][2]
@@ -214,13 +220,14 @@ function code_warntype(io::IO, f, t::(Type...))
         show_unquoted(io, ast.args[3], 2)
         print(io, '\n')
     end
-    show_expr_type_emphasize::Bool = false
+    show_expr_type_emphasize::Bool = may_show_expr_type_emphasize::Bool = false
     nothing
 end
-code_warntype(f, t::(Type...)) = code_warntype(STDOUT, f, t)
+code_warntype(f, t::ANY) = code_warntype(STDOUT, f, t)
 
-typesof(args...) = map(a->(isa(a,Type) ? Type{a} : typeof(a)), args)
+typesof(args...) = Tuple{map(a->(isa(a,Type) ? Type{a} : typeof(a)), args)...}
 
+gen_call_with_extracted_types(fcn, ex0::Symbol) = Expr(:call, fcn, Meta.quot(ex0))
 function gen_call_with_extracted_types(fcn, ex0)
     if isa(ex0, Expr) &&
         any(a->(Meta.isexpr(a, :kw) || Meta.isexpr(a, :parameters)), ex0.args)
@@ -234,7 +241,7 @@ function gen_call_with_extracted_types(fcn, ex0)
                     Expr(:call, :typesof, map(esc, ex0.args[2:end])...))
     end
     ex = expand(ex0)
-    exret = Expr(:call, :error, "expression is not a function call")
+    exret = Expr(:call, :error, "expression is not a function call or symbol")
     if !isa(ex, Expr)
         # do nothing -> error
     elseif ex.head == :call
@@ -286,12 +293,12 @@ function methodswith(t::Type, f::Function, showparents::Bool=false, meths = Meth
         return meths
     end
     d = f.env.defs
-    while !is(d,())
+    while d != nothing
         if any(x -> (type_close_enough(x, t) ||
                      (showparents ? (t <: x && (!isa(x,TypeVar) || x.ub != Any)) :
                       (isa(x,TypeVar) && x.ub != Any && t == x.ub)) &&
                      x != Any && x != ANY),
-               d.sig)
+               d.sig.parameters)
             push!(meths, d)
         end
         d = d.next
@@ -303,7 +310,7 @@ function methodswith(t::Type, m::Module, showparents::Bool=false)
     meths = Method[]
     for nm in names(m)
         if isdefined(m, nm)
-            f = eval(m, nm)
+            f = getfield(m, nm)
             if isa(f, Function)
                 methodswith(t, f, showparents, meths)
             end
@@ -318,7 +325,7 @@ function methodswith(t::Type, showparents::Bool=false)
     # find modules in Main
     for nm in names(mainmod)
         if isdefined(mainmod,nm)
-            mod = eval(mainmod, nm)
+            mod = getfield(mainmod, nm)
             if isa(mod, Module)
                 append!(meths, methodswith(t, mod, showparents))
             end
@@ -354,7 +361,7 @@ end
 
 @windows_only function download(url::AbstractString, filename::AbstractString)
     res = ccall((:URLDownloadToFileW,:urlmon),stdcall,Cuint,
-                (Ptr{Void},Ptr{UInt16},Ptr{UInt16},Cint,Ptr{Void}),0,utf16(url),utf16(filename),0,0)
+                (Ptr{Void},Cwstring,Cwstring,Cint,Ptr{Void}),C_NULL,url,filename,0,0)
     if res != 0
         error("automatic download failed (error: $res): $url")
     end

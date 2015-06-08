@@ -11,9 +11,9 @@ Tasks
 
    Create a ``Task`` (i.e. thread, or coroutine) to execute the given function (which must be callable with no arguments). The task exits when this function returns.
 
-.. function:: yieldto(task, args...)
+.. function:: yieldto(task, arg = nothing)
 
-   Switch to the given task. The first time a task is switched to, the task's function is called with no arguments. On subsequent switches, ``args`` are returned from the task's last call to ``yieldto``. This is a low-level call that only switches tasks, not considering states or scheduling in any way.
+   Switch to the given task. The first time a task is switched to, the task's function is called with no arguments. On subsequent switches, ``arg`` is returned from the task's last call to ``yieldto``. This is a low-level call that only switches tasks, not considering states or scheduling in any way. Its use is discouraged.
 
 .. function:: current_task()
 
@@ -90,7 +90,7 @@ Tasks
 
 .. function:: @task
 
-   Wrap an expression in a Task executing it, and return the Task. This
+   Wrap an expression in a Task without executing it, and return the Task. This
    only creates a task, and does not run it.
 
 .. function:: sleep(seconds)
@@ -158,6 +158,13 @@ General Parallel Computing Support
 
    ``exeflags`` :  additional flags passed to the worker processes.
 
+   Environment variables :
+
+   If the master process fails to establish a connection with a newly launched worker within 60.0 seconds,
+   the worker treats it a fatal situation and terminates. This timeout can be controlled via environment
+   variable ``JULIA_WORKER_TIMEOUT``. The value of ``JULIA_WORKER_TIMEOUT`` on the master process, specifies
+   the number of seconds a newly launched worker waits for connection establishment.
+
 
 .. function:: addprocs(manager::ClusterManager; kwargs...) -> List of process identifiers
 
@@ -165,6 +172,10 @@ General Parallel Computing Support
 
    For example Beowulf clusters are  supported via a custom cluster manager implemented
    in  package ``ClusterManagers``.
+
+   The number of seconds a newly launched worker waits for connection establishment from the master can be
+   specified via variable ``JULIA_WORKER_TIMEOUT`` in the worker process's environment. Relevant only when
+   using TCP/IP as transport.
 
 
 .. function:: nprocs()

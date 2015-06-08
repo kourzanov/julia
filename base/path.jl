@@ -1,3 +1,5 @@
+# This file is a part of Julia. License is MIT: http://julialang.org/license
+
 @unix_only begin
     const path_separator    = "/"
     const path_separator_re = r"/+"
@@ -113,7 +115,7 @@ abspath(a::AbstractString, b::AbstractString...) = abspath(joinpath(a,b...))
         buflength = p
         buf = zeros(UInt16,buflength)
         p = ccall((:GetFullPathNameW, "Kernel32"), stdcall,
-            UInt32, (Ptr{UInt16}, UInt32, Ptr{UInt16}, Ptr{Void}),
+            UInt32, (Cwstring, UInt32, Ptr{UInt16}, Ptr{Void}),
             path, buflength, buf, C_NULL)
         systemerror(:realpath, p == 0)
         if (p < buflength)
@@ -124,7 +126,7 @@ abspath(a::AbstractString, b::AbstractString...) = abspath(joinpath(a,b...))
 end
 
 @unix_only function realpath(path::AbstractString)
-    p = ccall(:realpath, Ptr{UInt8}, (Ptr{UInt8}, Ptr{UInt8}), path, C_NULL)
+    p = ccall(:realpath, Ptr{UInt8}, (Cstring, Ptr{UInt8}), path, C_NULL)
     systemerror(:realpath, p == C_NULL)
     s = bytestring(p)
     Libc.free(p)
@@ -140,4 +142,33 @@ end
     c, j = next(path,i)
     if c == '/' return homedir()*path[i:end] end
     throw(ArgumentError("~user tilde expansion not yet implemented"))
+end
+
+function relpath(path::AbstractString, startpath::AbstractString = ".")
+    isempty(path) && throw(ArgumentError("`path` must be specified"))
+    isempty(startpath) && throw(ArgumentError("`startpath` must be specified"))
+    curdir = "."
+    pardir = ".."
+    path == startpath && return curdir
+    path_arr  = split(abspath(path),      path_separator_re)
+    start_arr = split(abspath(startpath), path_separator_re)
+    i = 0
+    while i < min(length(path_arr), length(start_arr))
+        i += 1
+        if path_arr[i] != start_arr[i]
+            i -= 1
+            break
+        end
+    end
+    pathpart = join(path_arr[i+1:findlast(x -> !isempty(x), path_arr)], path_separator)
+    prefix_num = findlast(x -> !isempty(x), start_arr) - i - 1
+    if prefix_num >= 0
+        prefix = pardir * path_separator
+        relpath_ = isempty(pathpart)     ?
+            (prefix^prefix_num) * pardir :
+            (prefix^prefix_num) * pardir * path_separator * pathpart
+    else
+        relpath_ = pathpart
+    end
+    return isempty(relpath_) ? curdir :  relpath_
 end

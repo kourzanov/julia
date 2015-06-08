@@ -1,3 +1,5 @@
+# This file is a part of Julia. License is MIT: http://julialang.org/license
+
 ## core text I/O ##
 
 print(io::IO, x) = show(io, x)
@@ -33,23 +35,24 @@ string(s::AbstractString) = s
 string(xs...) = print_to_string(xs...)
 
 bytestring() = ""
-bytestring(s::Array{UInt8,1}) = bytestring(pointer(s),length(s))
+bytestring(s::Vector{UInt8}) = bytestring(pointer(s),length(s))
 bytestring(s::AbstractString...) = print_to_string(s...)
 
 function bytestring(p::Union(Ptr{UInt8},Ptr{Int8}))
     p == C_NULL ? throw(ArgumentError("cannot convert NULL to string")) :
     ccall(:jl_cstr_to_string, ByteString, (Ptr{UInt8},), p)
 end
+bytestring(s::Cstring) = bytestring(box(Ptr{Cchar}, unbox(Cstring,s)))
 
 function bytestring(p::Union(Ptr{UInt8},Ptr{Int8}),len::Integer)
     p == C_NULL ? throw(ArgumentError("cannot convert NULL to string")) :
     ccall(:jl_pchar_to_string, ByteString, (Ptr{UInt8},Int), p, len)
 end
 
-convert(::Type{Array{UInt8,1}}, s::AbstractString) = bytestring(s).data
+convert(::Type{Vector{UInt8}}, s::AbstractString) = bytestring(s).data
 convert(::Type{Array{UInt8}}, s::AbstractString) = bytestring(s).data
 convert(::Type{ByteString}, s::AbstractString) = bytestring(s)
-convert(::Type{Array{Char,1}}, s::AbstractString) = collect(s)
+convert(::Type{Vector{Char}}, s::AbstractString) = collect(s)
 convert(::Type{Symbol}, s::AbstractString) = symbol(s)
 
 ## generic supplied functions ##
@@ -74,7 +77,7 @@ sizeof(s::AbstractString) = error("type $(typeof(s)) has no canonical binary rep
 
 eltype{T<:AbstractString}(::Type{T}) = Char
 
-(*)(s::AbstractString...) = string(s...)
+(*)(s1::AbstractString, ss::AbstractString...) = string(s1, ss...)
 (^)(s::AbstractString, r::Integer) = repeat(s,r)
 
 length(s::DirectIndexString) = endof(s)
@@ -298,19 +301,25 @@ function _searchindex(s::Array, t::Array, i)
     0
 end
 
-searchindex(s::Union(Array{UInt8,1},Array{Int8,1}),t::Union(Array{UInt8,1},Array{Int8,1}),i) = _searchindex(s,t,i)
+typealias ByteArray Union(Vector{UInt8},Vector{Int8})
+
+searchindex(s::ByteArray, t::ByteArray, i) = _searchindex(s,t,i)
 searchindex(s::AbstractString, t::AbstractString, i::Integer) = _searchindex(s,t,i)
 searchindex(s::AbstractString, t::AbstractString) = searchindex(s,t,start(s))
+searchindex(s::AbstractString, c::Char, i::Integer) = _searchindex(s,c,i)
+searchindex(s::AbstractString, c::Char) = searchindex(s,c,start(s))
 
 function searchindex(s::ByteString, t::ByteString, i::Integer=1)
-    if length(t) == 1
+    # Check for fast case of a single byte
+    # (for multi-byte UTF-8 sequences, use searchindex on byte arrays instead)
+    if endof(t) == 1
         search(s, t[1], i)
     else
         searchindex(s.data, t.data, i)
     end
 end
 
-function search(s::Union(Array{UInt8,1},Array{Int8,1}),t::Union(Array{UInt8,1},Array{Int8,1}),i)
+function search(s::ByteArray, t::ByteArray, i)
     idx = searchindex(s,t,i)
     if isempty(t)
         idx:idx-1
@@ -328,7 +337,13 @@ function search(s::AbstractString, t::AbstractString, i::Integer=start(s))
     end
 end
 
-function rsearch(s::AbstractString, c::Chars, i::Integer=endof(s))
+function rsearch(s::AbstractString, c::Chars)
+    j = search(RevString(s), c)
+    j == 0 && return 0
+    endof(s)-j+1
+end
+
+function rsearch(s::AbstractString, c::Chars, i::Integer)
     e = endof(s)
     j = search(RevString(s), c, e-i+1)
     j == 0 && return 0
@@ -430,27 +445,37 @@ function _rsearchindex(s::Array, t::Array, k)
     0
 end
 
-rsearchindex(s::Union(Array{UInt8,1},Array{Int8,1}),t::Union(Array{UInt8,1},Array{Int8,1}),i) = _rsearchindex(s,t,i)
+rsearchindex(s::ByteArray,t::ByteArray,i) = _rsearchindex(s,t,i)
 rsearchindex(s::AbstractString, t::AbstractString, i::Integer) = _rsearchindex(s,t,i)
 rsearchindex(s::AbstractString, t::AbstractString) = (isempty(s) && isempty(t)) ? 1 : rsearchindex(s,t,endof(s))
 
 function rsearchindex(s::ByteString, t::ByteString)
-    if length(t) == 1
+    # Check for fast case of a single byte
+    # (for multi-byte UTF-8 sequences, use rsearchindex instead)
+    if endof(t) == 1
         rsearch(s, t[1])
     else
-        rsearchindex(s.data, t.data, length(s.data))
+        _rsearchindex(s.data, t.data, length(s.data))
     end
 end
 
 function rsearchindex(s::ByteString, t::ByteString, i::Integer)
-    if length(t) == 1
+    # Check for fast case of a single byte
+    # (for multi-byte UTF-8 sequences, use rsearchindex instead)
+    if endof(t) == 1
         rsearch(s, t[1], i)
+    elseif endof(t) != 0
+        _rsearchindex(s.data, t.data, nextind(s, i)-1)
+    elseif i > sizeof(s)
+        return 0
+    elseif i == 0
+        return 1
     else
-        rsearchindex(s.data, t.data, i)
+        return i
     end
 end
 
-function rsearch(s::Union(Array{UInt8,1},Array{Int8,1}),t::Union(Array{UInt8,1},Array{Int8,1}),i)
+function rsearch(s::ByteArray, t::ByteArray, i::Integer)
     idx = rsearchindex(s,t,i)
     if isempty(t)
         idx:idx-1
@@ -525,13 +550,13 @@ endswith(str::AbstractString, chars::Chars) = !isempty(str) && str[end] in chars
 # faster comparisons for byte strings and symbols
 
 cmp(a::ByteString, b::ByteString) = lexcmp(a.data, b.data)
-cmp(a::Symbol, b::Symbol) = Int(sign(ccall(:strcmp, Int32, (Ptr{UInt8}, Ptr{UInt8}), a, b)))
+cmp(a::Symbol, b::Symbol) = Int(sign(ccall(:strcmp, Int32, (Cstring, Cstring), a, b)))
 
 ==(a::ByteString, b::ByteString) = endof(a) == endof(b) && cmp(a,b) == 0
 isless(a::Symbol, b::Symbol) = cmp(a,b) < 0
 
 startswith(a::ByteString, b::ByteString) = startswith(a.data, b.data)
-startswith(a::Array{UInt8,1}, b::Array{UInt8,1}) =
+startswith(a::Vector{UInt8}, b::Vector{UInt8}) =
     (length(a) >= length(b) && ccall(:strncmp, Int32, (Ptr{UInt8}, Ptr{UInt8}, UInt), a, b, length(b)) == 0)
 
 # TODO: fast endswith
@@ -539,8 +564,6 @@ startswith(a::Array{UInt8,1}, b::Array{UInt8,1}) =
 ## character column width function ##
 
 strwidth(s::AbstractString) = (w=0; for c in s; w += charwidth(c); end; w)
-strwidth(s::ByteString) = Int(ccall(:u8_strwidth, Csize_t, (Ptr{UInt8},), s.data))
-# TODO: implement and use u8_strnwidth that takes a length argument
 
 isascii(c::Char) = c < Char(0x80)
 isascii(s::AbstractString) = all(isascii, s)
@@ -584,11 +607,11 @@ SubString(s::SubString, i::Int, j::Int) = SubString(s.string, s.offset+i, s.offs
 SubString(s::AbstractString, i::Integer, j::Integer) = SubString(s, Int(i), Int(j))
 SubString(s::AbstractString, i::Integer) = SubString(s, i, endof(s))
 
-write{T<:ByteString}(to::IOBuffer, s::SubString{T}) =
-    s.endof==0 ? 0 : write_sub(to, s.string.data, s.offset+1, next(s,s.endof)[2]-1)
+write{T<:ByteString}(to::AbstractIOBuffer, s::SubString{T}) =
+    s.endof==0 ? 0 : write_sub(to, s.string.data, s.offset + 1, nextind(s, s.endof) - 1)
 
 sizeof(s::SubString{ASCIIString}) = s.endof
-sizeof(s::SubString{UTF8String}) = s.endof == 0 ? 0 : next(s,s.endof)[2]-1
+sizeof(s::SubString{UTF8String}) = s.endof == 0 ? 0 : nextind(s, s.endof) - 1
 
 # TODO: length(s::SubString) = ??
 # default implementation will work but it's slow
@@ -598,7 +621,7 @@ length{T<:DirectIndexString}(s::SubString{T}) = endof(s)
 
 function length(s::SubString{UTF8String})
     return s.endof==0 ? 0 : Int(ccall(:u8_charnum, Csize_t, (Ptr{UInt8}, Csize_t),
-                                      pointer(s), next(s,s.endof)[2]-1))
+                                      pointer(s), nextind(s, s.endof) - 1))
 end
 
 function next(s::SubString, i::Int)
@@ -634,23 +657,11 @@ convert{T<:AbstractString}(::Type{SubString{T}}, s::T) = SubString(s, 1, endof(s
 
 bytestring{T <: ByteString}(p::SubString{T}) = bytestring(pointer(p.string.data)+p.offset, nextind(p, p.endof)-1)
 
-function serialize{T}(s, ss::SubString{T})
-    # avoid saving a copy of the parent string, keeping the type of ss
-    invoke(serialize, (Any,Any), s, convert(SubString{T}, convert(T,ss)))
-end
-
 function getindex(s::AbstractString, r::UnitRange{Int})
     if first(r) < 1 || endof(s) < last(r)
         throw(BoundsError(s, r))
     end
     SubString(s, first(r), last(r))
-end
-
-function unsafe_convert{P<:Union(Int8,UInt8),T<:ByteString}(::Type{Ptr{P}}, s::SubString{T})
-    if s.offset+s.endof < endof(s.string)
-        throw(ArgumentError("a SubString must coincide with the end of the original string to be convertible to pointer"))
-    end
-    convert(Ptr{P}, s.string.data) + s.offset
 end
 
 isascii(s::SubString{ASCIIString}) = true
@@ -802,10 +813,6 @@ write(io::IO, s::RopeString) = (write(io, s.head); write(io, s.tail))
 sizeof(s::RopeString) = sizeof(s.head) + sizeof(s.tail)
 
 ## uppercase and lowercase transformations ##
-
-uppercase(c::Char) = convert(Char, ccall(:towupper, Cwchar_t, (Cwchar_t,), c))
-lowercase(c::Char) = convert(Char, ccall(:towlower, Cwchar_t, (Cwchar_t,), c))
-
 uppercase(s::AbstractString) = map(uppercase, s)
 lowercase(s::AbstractString) = map(lowercase, s)
 
@@ -970,15 +977,15 @@ unescape_string(s::AbstractString) = sprint(endof(s), print_unescaped, s)
 
 ## checking UTF-8 & ACSII validity ##
 
-byte_string_classify(data::Array{UInt8,1}) =
+byte_string_classify(data::Vector{UInt8}) =
     ccall(:u8_isvalid, Int32, (Ptr{UInt8}, Int), data, length(data))
 byte_string_classify(s::ByteString) = byte_string_classify(s.data)
     # 0: neither valid ASCII nor UTF-8
     # 1: valid ASCII
     # 2: valid UTF-8
 
-is_valid_ascii(s::Union(Array{UInt8,1},ByteString)) = byte_string_classify(s) == 1
-is_valid_utf8 (s::Union(Array{UInt8,1},ByteString)) = byte_string_classify(s) != 0
+isvalid(::Type{ASCIIString}, s::Union(Vector{UInt8},ByteString)) = byte_string_classify(s) == 1
+isvalid(::Type{UTF8String}, s::Union(Vector{UInt8},ByteString)) = byte_string_classify(s) != 0
 
 ## multiline strings ##
 
@@ -1248,9 +1255,10 @@ shell_escape(args::AbstractString...) = sprint(print_shell_escaped, args...)
 
 function parse(str::AbstractString, pos::Int; greedy::Bool=true, raise::Bool=true)
     # returns (expr, end_pos). expr is () in case of parse error.
+    bstr = bytestring(str)
     ex, pos = ccall(:jl_parse_string, Any,
-                    (Ptr{UInt8}, Int32, Int32),
-                    str, pos-1, greedy ? 1:0)
+                    (Ptr{UInt8}, Csize_t, Int32, Int32),
+                    bstr, sizeof(bstr), pos-1, greedy ? 1:0)
     if raise && isa(ex,Expr) && is(ex.head,:error)
         throw(ParseError(ex.args[1]))
     end
@@ -1605,7 +1613,7 @@ function tryparse_internal{T<:Integer}(::Type{T}, s::AbstractString, startpos::I
     return Nullable{T}(n)
 end
 tryparse_internal{T<:Integer}(::Type{T}, s::AbstractString, base::Int, raise::Bool) =
-    tryparse_internal(T,s,start(s),length(s),base,raise)
+    tryparse_internal(T,s,start(s),endof(s),base,raise)
 tryparse_internal{T<:Integer}(::Type{T}, s::AbstractString, startpos::Int, endpos::Int, base::Int, raise::Bool) =
     tryparse_internal(T, s, startpos, endpos, base, base <= 36 ? 10 : 36, raise)
 tryparse{T<:Integer}(::Type{T}, s::AbstractString, base::Int) =
@@ -1624,13 +1632,15 @@ string(x::Union(Int8,Int16,Int32,Int64,Int128)) = dec(x)
 
 ## string to float functions ##
 
-tryparse(::Type{Float64}, s::AbstractString) = ccall(:jl_try_strtod, Nullable{Float64}, (Ptr{UInt8},), s)
-tryparse(::Type{Float64}, s::SubString) = ccall(:jl_try_substrtod, Nullable{Float64}, (Ptr{UInt8},Csize_t,Cint), s.string, s.offset, s.endof)
+tryparse(::Type{Float64}, s::ByteString) = ccall(:jl_try_substrtod, Nullable{Float64}, (Ptr{UInt8},Csize_t,Csize_t), s, 0, sizeof(s))
+tryparse{T<:ByteString}(::Type{Float64}, s::SubString{T}) = ccall(:jl_try_substrtod, Nullable{Float64}, (Ptr{UInt8},Csize_t,Csize_t), s.string, s.offset, s.endof)
 
-tryparse(::Type{Float32}, s::AbstractString) = ccall(:jl_try_strtof, Nullable{Float32}, (Ptr{UInt8},), s)
-tryparse(::Type{Float32}, s::SubString) = ccall(:jl_try_substrtof, Nullable{Float32}, (Ptr{UInt8},Csize_t,Cint), s.string, s.offset, s.endof)
+tryparse(::Type{Float32}, s::ByteString) = ccall(:jl_try_substrtof, Nullable{Float32}, (Ptr{UInt8},Csize_t,Csize_t), s, 0, sizeof(s))
+tryparse{T<:ByteString}(::Type{Float32}, s::SubString{T}) = ccall(:jl_try_substrtof, Nullable{Float32}, (Ptr{UInt8},Csize_t,Csize_t), s.string, s.offset, s.endof)
 
-function parse{T<:Union(Float32,Float64)}(::Type{T}, s::AbstractString)
+tryparse{T<:Union(Float32,Float64)}(::Type{T}, s::AbstractString) = tryparse(T, bytestring(s))
+
+function parse{T<:FloatingPoint}(::Type{T}, s::AbstractString)
     nf = tryparse(T, s)
     isnull(nf) ? throw(ArgumentError("invalid number format $(repr(s)) for $T")) : get(nf)
 end
@@ -1640,8 +1650,6 @@ float(x::AbstractString) = parse(Float64,x)
 float{S<:AbstractString}(a::AbstractArray{S}) = map!(float, similar(a,typeof(float(0))), a)
 
 # find the index of the first occurrence of a value in a byte array
-
-typealias ByteArray Union(Array{UInt8,1},Array{Int8,1})
 
 function search(a::ByteArray, b::Union(Int8,UInt8), i::Integer)
     if i < 1
@@ -1664,7 +1672,7 @@ function search(a::ByteArray, b::Char, i::Integer)
 end
 search(a::ByteArray, b::Union(Int8,UInt8,Char)) = search(a,b,1)
 
-function rsearch(a::Union(Array{UInt8,1},Array{Int8,1}), b::Union(Int8,UInt8), i::Integer)
+function rsearch(a::ByteArray, b::Union(Int8,UInt8), i::Integer)
     if i < 1
         return i == 0 ? 0 : throw(BoundsError(a, i))
     end
@@ -1707,7 +1715,7 @@ function hex2bytes(s::ASCIIString)
     return arr
 end
 
-bytes2hex{T<:UInt8}(arr::Array{T,1}) = join([hex(i,2) for i in arr])
+bytes2hex{T<:UInt8}(arr::Vector{T}) = join([hex(i,2) for i in arr])
 
 function repr(x)
     s = IOBuffer()
@@ -1715,12 +1723,26 @@ function repr(x)
     takebuf_string(s)
 end
 
+containsnul(s::AbstractString) = '\0' in s
+containsnul(s::ByteString) = containsnul(unsafe_convert(Ptr{Cchar}, s), sizeof(s))
+containsnul(s::Union(UTF16String,UTF32String)) = findfirst(s.data, 0) != length(s.data)
+
 if sizeof(Cwchar_t) == 2
-    const WString = UTF16String # const, not typealias, to get constructor
+    const WString = UTF16String
     const wstring = utf16
 elseif sizeof(Cwchar_t) == 4
-    const WString = UTF32String # const, not typealias, to get constructor
+    const WString = UTF32String
     const wstring = utf32
+end
+wstring(s::Cwstring) = wstring(box(Ptr{Cwchar_t}, unbox(Cwstring,s)))
+
+# Cwstring is defined in c.jl, but conversion needs to be defined here
+# to have WString
+function unsafe_convert(::Type{Cwstring}, s::WString)
+    if containsnul(s)
+        throw(ArgumentError("embedded NUL chars are not allowed in C strings: $(repr(s))"))
+    end
+    return Cwstring(unsafe_convert(Ptr{Cwchar_t}, s))
 end
 
 # pointer conversions of ASCII/UTF8/UTF16/UTF32 strings:
@@ -1731,3 +1753,7 @@ pointer{T<:ByteString}(x::SubString{T}, i::Integer) = pointer(x.string.data) + x
 pointer(x::Union(UTF16String,UTF32String), i::Integer) = pointer(x)+(i-1)*sizeof(eltype(x.data))
 pointer{T<:Union(UTF16String,UTF32String)}(x::SubString{T}) = pointer(x.string.data) + x.offset*sizeof(eltype(x.data))
 pointer{T<:Union(UTF16String,UTF32String)}(x::SubString{T}, i::Integer) = pointer(x.string.data) + (x.offset + (i-1))*sizeof(eltype(x.data))
+
+# IOBuffer views of a (byte)string:
+IOBuffer(str::ByteString) = IOBuffer(str.data)
+IOBuffer{T<:ByteString}(s::SubString{T}) = IOBuffer(sub(s.string.data, s.offset + 1 : s.offset + sizeof(s)))

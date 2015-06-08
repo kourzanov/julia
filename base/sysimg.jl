@@ -1,15 +1,18 @@
+# This file is a part of Julia. License is MIT: http://julialang.org/license
+
 import Core.Intrinsics.ccall
 ccall(:jl_new_main_module, Any, ())
 
 baremodule Base
 
-eval(x) = Core.eval(Base,x)
-eval(m,x) = Core.eval(m,x)
+using Core: Intrinsics, arraylen, arrayref, arrayset, arraysize, _expr,
+            kwcall, _apply, typeassert, apply_type, svec
+ccall(:jl_set_istopmod, Void, (Bool,), true)
 
 include = Core.include
 
-using Core: Intrinsics, arraylen, arrayref, arrayset, arraysize, _expr,
-            tuplelen, tupleref, kwcall, _apply, typeassert, apply_type
+eval(x) = Core.eval(Base,x)
+eval(m,x) = Core.eval(m,x)
 
 include("exports.jl")
 
@@ -25,7 +28,7 @@ end
 
 
 ## Load essential files and libraries
-
+include("essentials.jl")
 include("base.jl")
 include("reflection.jl")
 include("build_h.jl")
@@ -48,40 +51,42 @@ include("operators.jl")
 include("pointer.jl")
 include("refpointer.jl")
 
-# rounding utilities
-include("rounding.jl")
-importall .Rounding
-
-include("float.jl")
-include("complex.jl")
-include("rational.jl")
-
-# core data structures (used by type inference)
+# array structures
 include("abstractarray.jl")
 include("subarray.jl")
 include("array.jl")
-include("subarray2.jl")
-include("functors.jl")
-include("bitarray.jl")
-include("intset.jl")
-include("dict.jl")
-include("set.jl")
+
+# numeric operations
 include("hashing.jl")
-include("iterator.jl")
+include("rounding.jl")
+importall .Rounding
+include("float.jl")
+include("complex.jl")
+include("rational.jl")
+include("abstractarraymath.jl")
+include("arraymath.jl")
 
 # SIMD loops
 include("simdloop.jl")
 importall .SimdLoop
 
+# map-reduce operators
+include("functors.jl")
 include("reduce.jl")
 
-# compiler
-include("inference.jl")
+## core structures
+include("bitarray.jl")
+include("intset.jl")
+include("dict.jl")
+include("set.jl")
+include("iterator.jl")
 
 # For OS specific stuff in I/O
 include("osutils.jl")
 
 # strings & printing
+include("utferror.jl")
+include("utftypes.jl")
 include("char.jl")
 include("ascii.jl")
 include("utf8.jl")
@@ -202,6 +207,7 @@ importall .Enums
 
 # concurrency and parallelism
 include("serialize.jl")
+importall .Serializer
 include("multi.jl")
 include("managers.jl")
 
@@ -261,9 +267,11 @@ include("sparse.jl")
 importall .SparseMatrix
 
 # signal processing
-include("fftw.jl")
-include("dsp.jl")
-importall .DSP
+if USE_GPL_LIBS
+    include("fftw.jl")
+    include("dsp.jl")
+    importall .DSP
+end
 
 # system information
 include("sysinfo.jl")

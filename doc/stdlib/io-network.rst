@@ -200,7 +200,7 @@ General I/O
 
 .. function:: print_shortest(io, x)
 
-   Print the shortest possible representation of number ``x`` as a floating point number, ensuring that it would parse to the exact same number.
+   Print the shortest possible representation, with the minimum number of consecutive non-zero digits, of number ``x``, ensuring that it would parse to the exact same number.
 
 .. function:: fd(stream)
 
@@ -436,8 +436,8 @@ Text I/O
 
 .. function:: base64decode(string)
 
-   Decodes the base64-encoded ``string`` and returns the obtained bytes.
-
+   Decodes the base64-encoded ``string`` and returns a ``Vector{UInt8}``
+   of the decoded bytes.
 
 Multimedia I/O
 --------------

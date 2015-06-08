@@ -23,7 +23,7 @@ notifications:
 before_install:
     - if [ `uname` = "Linux" ]; then
         BUILDOPTS="USEGCC=1 LLVM_CONFIG=llvm-config-3.3 LLVM_LLC=llc-3.3 VERBOSE=1 USE_BLAS64=0";
-        for lib in LLVM ZLIB SUITESPARSE ARPACK BLAS FFTW LAPACK GMP MPFR PCRE LIBUNWIND OPENLIBM RMATH; do
+        for lib in LLVM ZLIB SUITESPARSE ARPACK BLAS FFTW LAPACK GMP MPFR LIBUNWIND OPENLIBM RMATH; do
             export BUILDOPTS="$BUILDOPTS USE_SYSTEM_$lib=1";
         done;
         sudo add-apt-repository ppa:staticfloat/julia-deps -y;
@@ -39,12 +39,10 @@ before_install:
         brew tap staticfloat/julia;
         brew rm --force $(brew deps --HEAD julia);
         brew update;
-        sed -i '' -e "s@https://downloads.sf.net/project/machomebrew/Bottles@https://cache.e.ip.saba.us/https://downloads.sf.net/project/machomebrew/Bottles@" /usr/local/Library/Homebrew/software_spec.rb;
-        sed -i '' -e "s@https://homebrew.bintray.com@https://cache.e.ip.saba.us/https://homebrew.bintray.com@" /usr/local/Library/Homebrew/software_spec.rb;
         brew install -v --only-dependencies --HEAD julia;
         BUILDOPTS="USECLANG=1 LLVM_CONFIG=$(brew --prefix llvm33-julia)/bin/llvm-config-3.3 VERBOSE=1 USE_BLAS64=0 SUITESPARSE_INC=-I$(brew --prefix suite-sparse-julia)/include";
         BUILDOPTS="$BUILDOPTS LIBBLAS=-lopenblas LIBBLASNAME=libopenblas LIBLAPACK=-lopenblas LIBLAPACKNAME=libopenblas";
-        for lib in LLVM ZLIB SUITESPARSE ARPACK BLAS FFTW LAPACK GMP MPFR PCRE LIBUNWIND LIBGIT2; do
+        for lib in LLVM ZLIB SUITESPARSE ARPACK BLAS FFTW LAPACK GMP MPFR LIBUNWIND LIBGIT2; do
             export BUILDOPTS="$BUILDOPTS USE_SYSTEM_$lib=1";
         done;
         export LDFLAGS="-L$(brew --prefix openblas-julia)/lib -L$(brew --prefix suite-sparse-julia)/lib";
@@ -53,7 +51,8 @@ before_install:
       fi
 script:
     - make check-whitespace || exit 1
-    - make $BUILDOPTS prefix=/tmp/julia install
+    - make $BUILDOPTS -C base version_git.jl.phony
+    - make $BUILDOPTS NO_GIT=1 prefix=/tmp/julia install
     - if [ `uname` = "Darwin" ]; then
         for name in spqr umfpack colamd cholmod amd suitesparse_wrapper; do
             install -pm755 usr/lib/lib${name}*.dylib* /tmp/julia/lib/julia/;
@@ -64,4 +63,5 @@ script:
     - /tmp/julia/bin/julia-debug -e 'versioninfo()'
     - cd /tmp/julia/share/julia/test && /tmp/julia/bin/julia-debug --check-bounds=yes runtests.jl all && /tmp/julia/bin/julia-debug --check-bounds=yes runtests.jl pkg
     - cd - && mv julia2 julia
+    - dmesg
     - echo "Ready for packaging..."
