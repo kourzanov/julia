@@ -130,7 +130,7 @@ static void create_PRUNTIME_FUNCTION(uint8_t *Code, size_t Size, StringRef fnnam
 #endif
             static int warned = 0;
             if (!warned) {
-                jl_printf(JL_STDERR, "WARNING: failed to insert module info for backtrace: %d\n", GetLastError());
+                jl_printf(JL_STDERR, "WARNING: failed to insert module info for backtrace: %lu\n", GetLastError());
                 warned = 1;
             }
         }
@@ -143,7 +143,7 @@ static void create_PRUNTIME_FUNCTION(uint8_t *Code, size_t Size, StringRef fnnam
             name[len-1] = 0;
             if (!SymAddSymbol(GetCurrentProcess(), (ULONG64)Section, name,
                         (DWORD64)Code, (DWORD)Size, 0)) {
-                jl_printf(JL_STDERR, "WARNING: failed to insert function name %s into debug info: %d\n", name, GetLastError());
+                jl_printf(JL_STDERR, "WARNING: failed to insert function name %s into debug info: %lu\n", name, GetLastError());
             }
         }
         jl_in_stackwalk = 0;
@@ -152,7 +152,7 @@ static void create_PRUNTIME_FUNCTION(uint8_t *Code, size_t Size, StringRef fnnam
     if (!RtlAddFunctionTable(tbl, 1, (DWORD64)Section)) {
         static int warned = 0;
         if (!warned) {
-            jl_printf(JL_STDERR, "WARNING: failed to insert function stack unwind info: %d\n", GetLastError());
+            jl_printf(JL_STDERR, "WARNING: failed to insert function stack unwind info: %lu\n", GetLastError());
             warned = 1;
         }
     }
@@ -356,7 +356,7 @@ public:
 #endif
             ObjectInfo tmp = {objfile, (size_t)Size
 #ifdef LLVM37
-                ,L.clone()
+                ,L.clone().release()
 #elif defined(LLVM36)
                 ,(size_t)SectionAddr
 #endif
@@ -474,30 +474,38 @@ static obfiletype objfilemap;
 #ifdef _OS_DARWIN_
 bool getObjUUID(llvm::object::MachOObjectFile *obj, uint8_t uuid[16])
 {
-#ifdef LLVM35
+
+# ifdef LLVM37
+    for (auto Load : obj->load_commands ()) {
+# else
+#  ifdef LLVM35
     uint32_t LoadCommandCount = obj->getHeader().ncmds;
-#else
+#  else
     uint32_t LoadCommandCount = obj->getHeader().NumLoadCommands;
-#endif
+#  endif
     llvm::object::MachOObjectFile::LoadCommandInfo Load = obj->getFirstLoadCommandInfo();
     for (unsigned I = 0; ; ++I) {
+# endif
         if (
-#ifdef LLVM35
+# ifdef LLVM35
             Load.C.cmd == LC_UUID
-#else
+# else
             Load.C.Type == LC_UUID
-#endif
+# endif
             ) {
             memcpy(uuid,((MachO::uuid_command*)Load.Ptr)->uuid,16);
             return true;
         }
+# ifndef LLVM37
         else if (I == LoadCommandCount - 1) {
             return false;
         }
         else {
             Load = obj->getNextLoadCommandInfo(Load);
         }
+# endif
     }
+    return false;
 }
 #endif
 
@@ -732,7 +740,6 @@ void jl_getFunctionInfo(const char **name, size_t *line, const char **filename, 
 #endif
 #else
         DIContext *context = DIContext::getDWARFContext(const_cast<object::ObjectFile*>(it->second.object));
-        pointer -= (*it).second.slide;
 #endif
 #endif
         lookup_pointer(context, name, line, filename, pointer, 1, fromC);
@@ -834,6 +841,77 @@ int jl_get_llvmf_info(uint64_t fptr, uint64_t *symsize, uint64_t *slide,
 #endif
 }
 
+
+#if defined(_OS_DARWIN_) && defined(LLVM37) && defined(LLVM_SHLIB)
+
+/*
+ * We use a custom unwinder, so we need to make sure that when registering dynamic
+ * frames, we do so with our unwinder rather than with the system one. If LLVM is
+ * statically linked everything works out fine, but if it's dynamically linked
+ * it would usually pick up the system one, so we need to do the registration
+ * ourselves to ensure the right one gets picked.
+ */
+
+#include "llvm/ExecutionEngine/SectionMemoryManager.h"
+class RTDyldMemoryManagerOSX : public SectionMemoryManager
+{
+  RTDyldMemoryManagerOSX(const RTDyldMemoryManagerOSX&) = delete;
+  void operator=(const RTDyldMemoryManagerOSX&) = delete;
+
+public:
+    RTDyldMemoryManagerOSX() {};
+    ~RTDyldMemoryManagerOSX() override {};
+    void registerEHFrames(uint8_t *Addr, uint64_t LoadAddr, size_t Size) override;
+    void deregisterEHFrames(uint8_t *Addr, uint64_t LoadAddr, size_t Size);
+};
+
+extern "C" void __register_frame(void*);
+extern "C" void __deregister_frame(void*);
+
+static const char *processFDE(const char *Entry, bool isDeregister) {
+  const char *P = Entry;
+  uint32_t Length = *((const uint32_t *)P);
+  P += 4;
+  uint32_t Offset = *((const uint32_t *)P);
+  if (Offset != 0) {
+    if (isDeregister)
+      __deregister_frame(const_cast<char *>(Entry));
+    else
+      __register_frame(const_cast<char *>(Entry));
+  }
+  return P + Length;
+}
+
+// This implementation handles frame registration for local targets.
+// Memory managers for remote targets should re-implement this function
+// and use the LoadAddr parameter.
+void RTDyldMemoryManagerOSX::registerEHFrames(uint8_t *Addr,
+                                           uint64_t LoadAddr,
+                                           size_t Size) {
+  // On OS X OS X __register_frame takes a single FDE as an argument.
+  // See http://lists.cs.uiuc.edu/pipermail/llvmdev/2013-April/061768.html
+  const char *P = (const char *)Addr;
+  const char *End = P + Size;
+  do  {
+    P = processFDE(P, false);
+  } while(P != End);
+}
+
+void RTDyldMemoryManagerOSX::deregisterEHFrames(uint8_t *Addr,
+                                           uint64_t LoadAddr,
+                                           size_t Size) {
+  const char *P = (const char *)Addr;
+  const char *End = P + Size;
+  do  {
+    P = processFDE(P, true);
+  } while(P != End);
+}
+
+RTDyldMemoryManager* createRTDyldMemoryManagerOSX() {
+    return new RTDyldMemoryManagerOSX();
+}
+
+#endif
 
 #if defined(_OS_WINDOWS_)
 #ifdef USE_MCJIT

@@ -717,7 +717,7 @@ end
 
 const _default_bit_splice = BitVector(0)
 
-function splice!(B::BitVector, r::Union(UnitRange{Int}, Integer), ins::AbstractArray = _default_bit_splice)
+function splice!(B::BitVector, r::Union{UnitRange{Int}, Integer}, ins::AbstractArray = _default_bit_splice)
     n = length(B)
     i_f = first(r)
     i_l = last(r)
@@ -758,7 +758,7 @@ function splice!(B::BitVector, r::Union(UnitRange{Int}, Integer), ins::AbstractA
     return v
 end
 
-function splice!(B::BitVector, r::Union(UnitRange{Int}, Integer), ins)
+function splice!(B::BitVector, r::Union{UnitRange{Int}, Integer}, ins)
     Bins = BitArray(length(ins))
     i = 1
     for x in ins
@@ -1146,59 +1146,80 @@ function reverse_bits(src::UInt64)
 end
 
 function reverse!(B::BitVector)
+    # Basic idea: each chunk is divided into two blocks of size k = n % 64, and
+    # h = 64 - k. Walk from either end (with indexes i and j) reversing chunks
+    # and seperately ORing their two blocks into place.
+    #
+    #           chunk 3                  chunk 2                  chunk 1
+    # ┌───────────────┬───────┐┌───────────────┬───────┐┌───────────────┬───────┐
+    # │000000000000000│   E   ││       D       │   C   ││       B       │   A   │
+    # └───────────────┴───────┘└───────────────┴───────┘└───────────────┴───────┘
+    #                     k            h           k            h            k
+    # yielding;
+    # ┌───────────────┬───────┐┌───────────────┬───────┐┌───────────────┬───────┐
+    # │000000000000000│  A'   ││      B'       │  C'   ││      D'       │  E'   │
+    # └───────────────┴───────┘└───────────────┴───────┘└───────────────┴───────┘
+
     n = length(B)
-    n == 0 && return B
-
-    pnc = length(B.chunks) & 1
-    hnc = (length(B.chunks) >>> 1)
-
-    aux_chunks = Array(UInt64, 1)
-
-    for i = 1:hnc
-        j = ((i - 1) << 6)
-        aux_chunks[1] = reverse_bits(B.chunks[i])
-        copy_chunks!(B.chunks, j+1, B.chunks, n-63-j, 64)
-        B.chunks[i] = reverse_bits(B.chunks[i])
-        copy_chunks!(B.chunks, n-63-j, aux_chunks, 1, 64)
+    if n == 0
+        return B
     end
 
-    pnc == 0 && return B
+    k = _mod64(n+63) + 1
+    h = 64 - k
 
-    i = hnc + 1
-    j = hnc << 6
-    l = _mod64(n+63) + 1
+    i, j = 0, length(B.chunks)
+    u = UInt64(0)
+    v = reverse_bits(B.chunks[j])
+    B.chunks[j] = 0
+    @inbounds while true
+        i += 1
+        if i == j
+            break
+        end
+        u = reverse_bits(B.chunks[i])
+        B.chunks[i] = 0
+        B.chunks[j] |= u >>> h
+        B.chunks[i] |= v >>> h
 
-    aux_chunks[1] = reverse_bits(B.chunks[i] & _msk_end(l))
-    aux_chunks[1] >>>= (64 - l)
-    copy_chunks!(B.chunks, j+1, aux_chunks, 1, l)
+        j -= 1
+        if i == j
+            break
+        end
+        v = reverse_bits(B.chunks[j])
+        B.chunks[j] = 0
+        B.chunks[i] |= v << k
+        B.chunks[j] |= u << k
+    end
+
+    if isodd(length(B.chunks))
+        B.chunks[i] |= v >>> h
+    else
+        B.chunks[i] |= u << k
+    end
 
     return B
 end
 
 reverse(v::BitVector) = reverse!(copy(v))
 
-function (<<)(B::BitVector, i::Int64)
+function (<<)(B::BitVector, i::Int)
     n = length(B)
     i == 0 && return copy(B)
     A = falses(n)
     i < n && copy_chunks!(A.chunks, 1, B.chunks, i+1, n-i)
     return A
 end
-(<<)(B::BitVector, i::Int32) = B << Int64(i)
-(<<)(B::BitVector, i::Integer) = B << Int64(i)
 
-function (>>>)(B::BitVector, i::Int64)
+function (>>>)(B::BitVector, i::Int)
     n = length(B)
     i == 0 && return copy(B)
     A = falses(n)
     i < n && copy_chunks!(A.chunks, i+1, B.chunks, 1, n-i)
     return A
 end
-(>>>)(B::BitVector, i::Int32) = B >>> Int64(i)
-(>>>)(B::BitVector, i::Integer) = B >>> Int64(i)
 
-(>>)(B::BitVector, i::Int32) = B >>> i
-(>>)(B::BitVector, i::Integer) = B >>> i
+(>>)(B::BitVector, i::Int) = B >>> i
 
 function rol!(dest::BitVector, src::BitVector, i::Integer)
     length(dest) == length(src) || throw(ArgumentError("destination and source should be of same size"))
@@ -1623,7 +1644,7 @@ ctranspose(B::BitArray) = transpose(B)
 
 ## Permute array dims ##
 
-function permutedims(B::Union(BitArray,StridedArray), perm)
+function permutedims(B::Union{BitArray,StridedArray}, perm)
     dimsB = size(B)
     ndimsB = length(dimsB)
     (ndimsB == length(perm) && isperm(perm)) || throw(ArgumentError("no valid permutation of dimensions"))
@@ -1663,7 +1684,7 @@ function vcat(V::BitVector...)
     return B
 end
 
-function hcat(A::Union(BitMatrix,BitVector)...)
+function hcat(A::Union{BitMatrix,BitVector}...)
     nargs = length(A)
     nrows = size(A[1], 1)
     ncols = 0
@@ -1713,7 +1734,7 @@ function vcat(A::BitMatrix...)
 end
 
 # general case, specialized for BitArrays and Integers
-function cat(catdim::Integer, X::Union(BitArray, Integer)...)
+function cat(catdim::Integer, X::Union{BitArray, Integer}...)
     nargs = length(X)
     # using integers results in conversion to Array{Int}
     # (except in the all-Bool case)

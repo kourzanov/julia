@@ -697,6 +697,9 @@ UV_MFLAGS += LDFLAGS="$(LDFLAGS) $(CLDFLAGS) -v"
 ifneq ($(UV_CFLAGS),)
 UV_MFLAGS += CFLAGS="$(UV_CFLAGS)"
 endif
+ifneq ($(VERBOSE), 0)
+UV_MFLAGS += V=1
+endif
 ifneq ($(USEMSVC), 1)
 UV_FLAGS = $(UV_MFLAGS)
 else
@@ -738,6 +741,9 @@ install-libuv: $(UV_OBJ_TARGET)
 PCRE_SRC_TARGET = pcre2-$(PCRE_VER)/.libs/libpcre2-8.$(SHLIB_EXT)
 PCRE_OBJ_TARGET = $(build_shlibdir)/libpcre2-8.$(SHLIB_EXT)
 
+# Force optimization for PCRE flags (Issue #11668)
+PCRE_CFLAGS = -O3
+
 pcre2-$(PCRE_VER).tar.bz2:
 	$(JLDOWNLOAD) $@ https://ftp.csx.cam.ac.uk/pub/software/programming/pcre/pcre2-$(PCRE_VER).tar.bz2
 pcre2-$(PCRE_VER)/configure: pcre2-$(PCRE_VER).tar.bz2
@@ -749,7 +755,7 @@ pcre2-$(PCRE_VER)/config.status: pcre2-$(PCRE_VER)/configure
 	./configure $(CONFIGURE_COMMON) --enable-jit --includedir=$(build_includedir)
 	touch -c $@
 $(PCRE_SRC_TARGET): pcre2-$(PCRE_VER)/config.status
-	$(MAKE) -C pcre2-$(PCRE_VER) $(LIBTOOL_CCLD)
+	$(MAKE) -C pcre2-$(PCRE_VER) $(LIBTOOL_CCLD) CFLAGS="$(PCRE_CFLAGS)"
 	touch -c $@
 pcre2-$(PCRE_VER)/checked: $(PCRE_SRC_TARGET)
 ifeq ($(OS),$(BUILD_OS))
@@ -784,6 +790,9 @@ $(eval $(call git-external,openlibm,OPENLIBM,Makefile,libopenlibm.$(SHLIB_EXT)))
 OPENLIBM_OBJ_TARGET = $(build_shlibdir)/libopenlibm.$(SHLIB_EXT) $(build_libdir)/libopenlibm.a
 OPENLIBM_OBJ_SOURCE = $(OPENLIBM_SRC_DIR)/libopenlibm.$(SHLIB_EXT)
 OPENLIBM_FLAGS = ARCH="$(ARCH)" CC="$(CC)" FC="$(FC)" AR="$(AR)" OS="$(OS)" USECLANG=$(USECLANG) USEGCC=$(USEGCC)
+ifeq (CYGWIN,$(findstring CYGWIN,$(BUILD_OS)))
+OPENLIBM_FLAGS += OPENLIBM_HOME="$(call cygpath_w,$(abspath $(OPENLIBM_SRC_DIR)))"
+endif
 
 $(OPENLIBM_OBJ_SOURCE): $(OPENLIBM_SRC_DIR)/Makefile
 	$(MAKE) -C $(OPENLIBM_SRC_DIR) $(OPENLIBM_FLAGS) $(MAKE_COMMON)
@@ -1850,7 +1859,7 @@ $(VIRTUALENV_SOURCE): virtualenv-$(VIRTUALENV_VER).tar.gz
 $(VIRTUALENV_TARGET): $(VIRTUALENV_SOURCE)
 	"$(shell ./find_python2)" $< $@
 ifeq ($(BUILD_OS), WINNT)
-	[ -e $@/Scripts ] && ! [ -e $@/bin ] && cmd //C mklink //J $@\\bin $@\\Scripts
+	-[ -e $@/Scripts ] && ! [ -e $@/bin ] && cmd //C mklink //J $@\\bin $@\\Scripts
 endif
 	touch -c $@
 

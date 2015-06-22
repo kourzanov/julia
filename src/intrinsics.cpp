@@ -221,22 +221,24 @@ static Constant *julia_const_to_llvm(jl_value_t *e)
         }
         JL_GC_POP();
         Type *t = julia_struct_to_llvm(jt);
-        if (t == T_void || t->isEmptyTy())
+        if (type_is_ghost(t))
             return UndefValue::get(NoopType);
+        if (t->isVectorTy())
+            return ConstantVector::get(ArrayRef<Constant*>(fields,llvm_nf));
+
+        Constant *init;
         if (t->isStructTy()) {
             StructType *st = dyn_cast<StructType>(t);
             assert(st);
-            return ConstantStruct::get(st, ArrayRef<Constant*>(fields,llvm_nf));
-        }
-        else if (t->isVectorTy()) {
-            return ConstantVector::get(ArrayRef<Constant*>(fields,llvm_nf));
+            init = ConstantStruct::get(st, ArrayRef<Constant*>(fields,llvm_nf));
         }
         else {
             assert(t->isArrayTy());
             ArrayType *at = dyn_cast<ArrayType>(t);
             assert(at);
-            return ConstantArray::get(at, ArrayRef<Constant*>(fields,llvm_nf));
+            init = ConstantArray::get(at, ArrayRef<Constant*>(fields,llvm_nf));
         }
+        return new GlobalVariable(*jl_Module, t, true, GlobalVariable::ExternalLinkage, init);
     }
     return NULL;
 }
@@ -263,13 +265,19 @@ static Value *emit_unbox(Type *to, Value *x, jl_value_t *jt)
         return UndefValue::get(to);
     }
     if (ty != jl_pvalue_llvmt) {
-        // bools are stored internally as int8 (for now)
-        if (ty == T_int1 && to == T_int8)
-            return builder.CreateZExt(x, T_int8);
-        if (ty->isPointerTy() && !to->isPointerTy())
-            return builder.CreatePtrToInt(x, to);
-        if (!ty->isPointerTy() && to->isPointerTy())
-            return builder.CreateIntToPtr(x, to);
+        if (to->isAggregateType()) {
+            x = builder.CreateLoad(x); // something stack allocated
+            ty = x->getType();
+        }
+        else {
+            // bools are stored internally as int8 (for now)
+            if (ty == T_int1 && to == T_int8)
+                return builder.CreateZExt(x, T_int8);
+            if (ty->isPointerTy() && !to->isPointerTy())
+                return builder.CreatePtrToInt(x, to);
+            if (!ty->isPointerTy() && to->isPointerTy())
+                return builder.CreateIntToPtr(x, to);
+        }
         if (ty != to) {
             // this can happen when a branch yielding a different type ends
             // up being dead code, and type inference knows that the other
@@ -279,12 +287,12 @@ static Value *emit_unbox(Type *to, Value *x, jl_value_t *jt)
         }
         return x;
     }
-    Value *p = data_pointer(x);
+    Value *p = x;
     if (to == T_int1) {
         // bools stored as int8, so an extra Trunc is needed to get an int1
         return builder.CreateTrunc(builder.
                                    CreateLoad(builder.
-                                              CreateBitCast(p, T_pint8), false),
+                                              CreateBitCast(p, T_pint8)),
                                    T_int1);
     }
     if (to->isStructTy() && !to->isSized()) {
@@ -292,8 +300,7 @@ static Value *emit_unbox(Type *to, Value *x, jl_value_t *jt)
         assert(to != T_void);
         return UndefValue::get(to);
     }
-    // TODO: stricter alignment if possible
-    return builder.CreateAlignedLoad(builder.CreateBitCast(p, to->getPointerTo()), sizeof(void*), false);
+    return builder.CreateAlignedLoad(builder.CreateBitCast(p, to->getPointerTo()), 16); // julia's gc gives 16-byte aligned addresses
 }
 
 // unbox trying to determine type automatically
@@ -327,7 +334,9 @@ static Value *auto_unbox(jl_value_t *x, jl_codectx_t *ctx)
     if (to == T_void) {
         return NULL;
     }
-    return emit_unbox(to, v, bt);
+    if (to->isAggregateType() && jl_is_immutable_datatype(bt)) // can lazy load on demand, no copy needed
+        return builder.CreateBitCast(v, to->getPointerTo());
+    return emit_reg2mem(emit_unbox(to, v, bt), ctx);
 }
 
 // figure out how many bits a bitstype has at compile time, or -1
@@ -357,7 +366,10 @@ static Value *generic_unbox(jl_value_t *targ, jl_value_t *x, jl_codectx_t *ctx)
         jl_value_t *p = jl_tparam0(et);
         if (jl_is_leaf_type(p)) {
             Type *to = julia_type_to_llvm(p);
-            return emit_unbox(to, emit_unboxed(x,ctx), p);
+            Value *lx = emit_unboxed(x,ctx);
+            if (to->isAggregateType() && lx->getType() == PointerType::get(to,0) && jl_is_immutable(p)) // can lazy load on demand, no copy needed
+                return lx;
+            return emit_reg2mem(emit_unbox(to, lx, p), ctx);
         }
     }
     int nb = try_to_determine_bitstype_nbits(targ, ctx);
@@ -429,6 +441,9 @@ static Value *generic_box(jl_value_t *targ, jl_value_t *x, jl_codectx_t *ctx)
 
     Value *vx = auto_unbox(x, ctx);
     Type *vxt = vx->getType();
+    if (llvmt->isAggregateType() && vxt->isPointerTy()) {
+        vxt = vxt->getContainedType(0);
+    }
     //if (vx->getType()->getPrimitiveSizeInBits() != (unsigned)nb)
     //    jl_errorf("box: expected argument with %d bits, got %d", nb,
     //              vx->getType()->getPrimitiveSizeInBits());
@@ -472,7 +487,10 @@ static Value *generic_box(jl_value_t *targ, jl_value_t *x, jl_codectx_t *ctx)
     }
 
     // dynamically-determined type; evaluate.
-    return allocate_box_dynamic(emit_expr(targ, ctx), ConstantInt::get(T_size,(nb+7)/8), vx);
+    if (llvmt->isAggregateType()) {
+        vx = builder.CreateLoad(vx); // something stack allocated
+    }
+    return allocate_box_dynamic(emit_expr(targ, ctx), ConstantInt::get(T_size,nb), vx);
 }
 
 static Type *staticeval_bitstype(jl_value_t *targ, const char *fname, jl_codectx_t *ctx)
@@ -601,7 +619,7 @@ static Value *emit_runtime_pointerref(jl_value_t *e, jl_value_t *i, jl_codectx_t
     Value *preffunc =
         jl_Module->getOrInsertFunction("jl_pointerref",
                                        FunctionType::get(jl_pvalue_llvmt, two_pvalue_llvmt, false));
-    int ldepth = ctx->argDepth;
+    int ldepth = ctx->gc.argDepth;
     Value *parg = emit_boxed_rooted(e, ctx);
     Value *iarg = boxed(emit_expr(i, ctx), ctx);
 #ifdef LLVM37
@@ -609,7 +627,7 @@ static Value *emit_runtime_pointerref(jl_value_t *e, jl_value_t *i, jl_codectx_t
 #else
     Value *ret = builder.CreateCall2(prepare_call(preffunc), parg, iarg);
 #endif
-    ctx->argDepth = ldepth;
+    ctx->gc.argDepth = ldepth;
     return ret;
 }
 
@@ -661,7 +679,7 @@ static Value *emit_runtime_pointerset(jl_value_t *e, jl_value_t *x, jl_value_t *
     Value *psetfunc =
         jl_Module->getOrInsertFunction("jl_pointerset",
                                        FunctionType::get(T_void, three_pvalue_llvmt, false));
-    int ldepth = ctx->argDepth;
+    int ldepth = ctx->gc.argDepth;
     Value *parg = emit_boxed_rooted(e, ctx);
     Value *iarg = emit_boxed_rooted(i, ctx);
     Value *xarg = boxed(emit_expr(x, ctx), ctx);
@@ -670,7 +688,7 @@ static Value *emit_runtime_pointerset(jl_value_t *e, jl_value_t *x, jl_value_t *
 #else
     builder.CreateCall3(prepare_call(psetfunc), parg, xarg, iarg);
 #endif
-    ctx->argDepth = ldepth;
+    ctx->gc.argDepth = ldepth;
     return parg;
 }
 
@@ -880,7 +898,7 @@ static Value *emit_intrinsic(intrinsic f, jl_value_t **args, size_t nargs,
         Type *llt1 = julia_type_to_llvm(t1);
         jl_value_t *t2 = expr_type(args[3], ctx);
         Type *llt2 = julia_type_to_llvm(t2);
-        int argStart = ctx->argDepth;
+        int argStart = ctx->gc.argDepth;
         Value *ifelse_result;
         if (llt1 == jl_pvalue_llvmt && llt2 == jl_pvalue_llvmt) {
             Value *arg1 = emit_expr(args[3], ctx, false);
@@ -903,7 +921,7 @@ static Value *emit_intrinsic(intrinsic f, jl_value_t **args, size_t nargs,
                                                  arg1,
                                                  boxed(emit_expr(args[2],ctx,false), ctx, expr_type(args[2],ctx)));
         }
-        ctx->argDepth = argStart;
+        ctx->gc.argDepth = argStart;
         return ifelse_result;
     }
     default: ;

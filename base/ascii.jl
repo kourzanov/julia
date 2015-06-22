@@ -10,7 +10,7 @@
 ## required core functionality ##
 
 endof(s::ASCIIString) = length(s.data)
-getindex(s::ASCIIString, i::Int) = (x=s.data[i]; x < 0x80 ? Char(x) : '\ufffd')
+getindex(s::ASCIIString, i::Int) = (x=s.data[i]; ifelse(x < 0x80, Char(x), '\ufffd'))
 
 ## overload methods for efficiency ##
 
@@ -19,7 +19,11 @@ sizeof(s::ASCIIString) = sizeof(s.data)
 getindex(s::ASCIIString, r::Vector) = ASCIIString(getindex(s.data,r))
 getindex(s::ASCIIString, r::UnitRange{Int}) = ASCIIString(getindex(s.data,r))
 getindex(s::ASCIIString, indx::AbstractVector{Int}) = ASCIIString(s.data[indx])
-search(s::ASCIIString, c::Char, i::Integer) = c < Char(0x80) ? search(s.data,c%UInt8,i) : 0
+function search(s::ASCIIString, c::Char, i::Integer)
+    i == sizeof(s) + 1 && return 0
+    (i < 1 || i > sizeof(s)) && throw(BoundsError(s, i))
+    return c < Char(0x80) ? search(s.data,c%UInt8,i) : 0
+end
 rsearch(s::ASCIIString, c::Char, i::Integer) = c < Char(0x80) ? rsearch(s.data,c%UInt8,i) : 0
 
 function string(c::ASCIIString...)

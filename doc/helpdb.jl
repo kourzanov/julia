@@ -37,7 +37,7 @@ Any[
 
 "),
 
-("Base","eachindex","eachindex(A)
+("Base","eachindex","eachindex(A...)
 
    Creates an iterable object for visiting each index of an
    AbstractArray \"A\" in an efficient manner. For array types that
@@ -336,15 +336,18 @@ Any[
 ("Base","getindex","getindex(A, inds...)
 
    Returns a subset of array \"A\" as specified by \"inds\", where
-   each \"ind\" may be an \"Int\", a \"Range\", or a \"Vector\".
+   each \"ind\" may be an \"Int\", a \"Range\", or a \"Vector\". See
+   the manual section on *array indexing* for details.
 
 "),
 
 ("Base","sub","sub(A, inds...)
 
-   Returns a SubArray, which stores the input \"A\" and \"inds\"
-   rather than computing the result immediately. Calling \"getindex\"
-   on a SubArray computes the indices on the fly.
+   Like \"getindex()\", but returns a view into the parent array \"A\"
+   with the given indices instead of making a copy.  Calling
+   \"getindex()\" or \"setindex!()\" on the returned \"SubArray\"
+   computes the indices to the parent array on the fly without
+   checking bounds.
 
 "),
 
@@ -372,8 +375,8 @@ Any[
 
 ("Base","slice","slice(A, inds...)
 
-   Create a view of the given indexes of array \"A\", dropping
-   dimensions indexed with scalars.
+   Returns a view of array \"A\" with the given indices like
+   \"sub()\", but drops all dimensions indexed with scalars.
 
 "),
 
@@ -1529,7 +1532,7 @@ Any[
 
 "),
 
-("Base","ntuple","ntuple(n, f::Function)
+("Base","ntuple","ntuple(f::Function, n)
 
    Create a tuple of length \"n\", computing each element as \"f(i)\",
    where \"i\" is the index of the element.
@@ -1877,13 +1880,6 @@ Any[
 
 "),
 
-("Base","Union","Union(Ts...)
-
-   Construct a special abstract type that behaves as though all of the
-   types in \"Ts\" are its subtypes.
-
-"),
-
 ("Base","Val{c}","Val{c}()
 
    Create a \"value type\" out of \"c\", which must be an \"isbits\"
@@ -1909,6 +1905,13 @@ Any[
 
       julia> f(apple)
       \"I'm a FRUIT with value: 1\"
+
+"),
+
+("Base","instances","instances(T::Type)
+
+   Return a collection of all instances of the given type, if
+   applicable. Mostly used for enumerated types (see \"@enum\").
 
 "),
 
@@ -2534,6 +2537,12 @@ Any[
 
 "),
 
+("Base","ReadOnlyMemoryError","ReadOnlyMemoryError()
+
+   An operation tried to write to memory that is read-only.
+
+"),
+
 ("Base","OverflowError","OverflowError()
 
    The result of an expression is too large for the specified type and
@@ -2588,26 +2597,21 @@ Any[
 
 "),
 
-("Base","Timer","Timer(f::Function)
+("Base","Timer","Timer(callback::Function, delay, repeat=0)
 
    Create a timer to call the given callback function. The callback is
-   passed one argument, the timer object itself. The timer can be
-   started and stopped with \"start_timer\" and \"stop_timer\".
+   passed one argument, the timer object itself. The callback will be
+   invoked after the specified initial delay, and then repeating with
+   the given \"repeat\" interval. If \"repeat\" is \"0\", the timer is
+   only triggered once. Times are in seconds. A timer is stopped and
+   has its resources freed by calling \"close\" on it.
 
 "),
 
-("Base","start_timer","start_timer(t::Timer, delay, repeat)
+("Base","Timer","Timer(delay, repeat=0)
 
-   Start invoking the callback for a \"Timer\" after the specified
-   initial delay, and then repeating with the given interval. Times
-   are in seconds. If \"repeat\" is \"0\", the timer is only triggered
-   once.
-
-"),
-
-("Base","stop_timer","stop_timer(t::Timer)
-
-   Stop invoking the callback for a timer.
+   Create a timer that wakes up tasks waiting for it (by calling
+   \"wait\" on the timer object) at a specified interval.
 
 "),
 
@@ -2704,18 +2708,12 @@ Any[
 
 "),
 
-("Base","gc_disable","gc_disable()
+("Base","gc_enable","gc_enable(on::Bool)
 
-   Disable garbage collection. This should be used only with extreme
-   caution, as it can cause memory use to grow without bound. Returns
-   previous GC state.
-
-"),
-
-("Base","gc_enable","gc_enable()
-
-   Re-enable garbage collection after calling \"gc_disable()\".
-   Returns previous GC state.
+   Control whether garbage collection is enabled using a boolean
+   argument (true for enabled, false for disabled). Returns previous
+   GC state. Disabling garbage collection should be used only with
+   extreme caution, as it can cause memory use to grow without bound.
 
 "),
 
@@ -6557,7 +6555,7 @@ popdisplay(d::Display)
 
 "),
 
-("Base","bind","bind(socket::Union(UDPSocket, TCPSocket), host::IPv4, port::Integer)
+("Base","bind","bind(socket::Union{UDPSocket, TCPSocket}, host::IPv4, port::Integer)
 
    Bind \"socket\" to the given \"host:port\". Note that *0.0.0.0*
    will listen on all devices.
@@ -7070,17 +7068,26 @@ popdisplay(d::Display)
 ("Base","cholfact","cholfact(A; shift=0, perm=Int[]) -> CHOLMOD.Factor
 
    Compute the Cholesky factorization of a sparse positive definite
-   matrix \"A\". A fill-reducing permutation is used.  The main
-   application of this type is to solve systems of equations with
-   \"\\\", but also the methods \"diag\", \"det\", \"logdet\" are
-   defined. The function calls the C library CHOLMOD and many other
-   functions from the library are wrapped but not exported.
+   matrix \"A\". A fill-reducing permutation is used.  \"F =
+   cholfact(A)\" is most frequently used to solve systems of equations
+   with \"F\\b\", but also the methods \"diag\", \"det\", \"logdet\"
+   are defined for \"F\".  You can also extract individual factors
+   from \"F\", using \"F[:L]\".  However, since pivoting is on by
+   default, the factorization is internally represented as \"A ==
+   P'*L*L'*P\" with a permutation matrix \"P\"; using just \"L\"
+   without accounting for \"P\" will give incorrect answers.  To
+   include the effects of permutation, it's typically preferable to
+   extact \"combined\" factors like \"PtL = F[:PtL]\" (the equivalent
+   of \"P'*L\") and \"LtP = F[:UP]\" (the equivalent of \"L'*P\").
 
    Setting optional \"shift\" keyword argument computes the
    factorization of \"A+shift*I\" instead of \"A\".  If the \"perm\"
    argument is nonempty, it should be a permutation of *1:size(A,1)*
    giving the ordering to use (instead of CHOLMOD's default AMD
    ordering).
+
+   The function calls the C library CHOLMOD and many other functions
+   from the library are wrapped but not exported.
 
 "),
 
@@ -7105,17 +7112,28 @@ popdisplay(d::Display)
 ("Base","ldltfact","ldltfact(A; shift=0, perm=Int[]) -> CHOLMOD.Factor
 
    Compute the LDLt factorization of a sparse symmetric or Hermitian
-   matrix \"A\". A fill-reducing permutation is used.  The main
-   application of this type is to solve systems of equations with
-   \"\\\", but also the methods \"diag\", \"det\", \"logdet\" are
-   defined. The function calls the C library CHOLMOD and many other
-   functions from the library are wrapped but not exported.
+   matrix \"A\". A fill-reducing permutation is used.  \"F =
+   ldltfact(A)\" is most frequently used to solve systems of equations
+   with \"F\\b\", but also the methods \"diag\", \"det\", \"logdet\"
+   are defined for \"F\". You can also extract individual factors from
+   \"F\", using \"F[:L]\".  However, since pivoting is on by default,
+   the factorization is internally represented as \"A == P'*L*D*L'*P\"
+   with a permutation matrix \"P\"; using just \"L\" without
+   accounting for \"P\" will give incorrect answers.  To include the
+   effects of permutation, it's typically preferable to extact
+   \"combined\" factors like \"PtL = F[:PtL]\" (the equivalent of
+   \"P'*L\") and \"LtP = F[:UP]\" (the equivalent of \"L'*P\").  The
+   complete list of supported factors is \":L, :PtL, :D, :UP, :U, :LD,
+   :DU, :PtLD, :DUP\".
 
    Setting optional \"shift\" keyword argument computes the
    factorization of \"A+shift*I\" instead of \"A\".  If the \"perm\"
    argument is nonempty, it should be a permutation of *1:size(A,1)*
    giving the ordering to use (instead of CHOLMOD's default AMD
    ordering).
+
+   The function calls the C library CHOLMOD and many other functions
+   from the library are wrapped but not exported.
 
 "),
 
@@ -8193,6 +8211,21 @@ popdisplay(d::Display)
 
 "),
 
+("Base.LinAlg.BLAS","ger!","ger!(alpha, x, y, A)
+
+   Rank-1 update of the matrix \"A\" with vectors \"x\" and \"y\" as
+   \"alpha*x*y' + A\".
+
+"),
+
+("Base.LinAlg.BLAS","syr!","syr!(uplo, alpha, x, A)
+
+   Rank-1 update of the symmetric matrix \"A\" with vector \"x\" as
+   \"alpha*x*x.' + A\".  When \"uplo\" is 'U' the upper triangle of
+   \"A\" is updated ('L' for lower triangle). Returns \"A\".
+
+"),
+
 ("Base.LinAlg.BLAS","syrk!","syrk!(uplo, trans, alpha, A, beta, C)
 
    Rank-k update of the symmetric matrix \"C\" as \"alpha*A*A.' +
@@ -8207,6 +8240,15 @@ popdisplay(d::Display)
    Returns either the upper triangle or the lower triangle, according
    to \"uplo\" ('U' or 'L'), of \"alpha*A*A.'\" or \"alpha*A.'*A\",
    according to \"trans\" ('N' or 'T').
+
+"),
+
+("Base.LinAlg.BLAS","her!","her!(uplo, alpha, x, A)
+
+   Methods for complex arrays only.  Rank-1 update of the Hermitian
+   matrix \"A\" with vector \"x\" as \"alpha*x*x' + A\".  When
+   \"uplo\" is 'U' the upper triangle of \"A\" is updated ('L' for
+   lower triangle). Returns \"A\".
 
 "),
 
@@ -11672,6 +11714,16 @@ golden
 
    \"exeflags\" :  additional flags passed to the worker processes.
 
+   Environment variables :
+
+   If the master process fails to establish a connection with a newly
+   launched worker within 60.0 seconds, the worker treats it a fatal
+   situation and terminates. This timeout can be controlled via
+   environment variable \"JULIA_WORKER_TIMEOUT\". The value of
+   \"JULIA_WORKER_TIMEOUT\" on the master process, specifies the
+   number of seconds a newly launched worker waits for connection
+   establishment.
+
 "),
 
 ("Base","addprocs","addprocs(manager::ClusterManager; kwargs...) -> List of process identifiers
@@ -11680,6 +11732,11 @@ golden
 
    For example Beowulf clusters are  supported via a custom cluster
    manager implemented in  package \"ClusterManagers\".
+
+   The number of seconds a newly launched worker waits for connection
+   establishment from the master can be specified via variable
+   \"JULIA_WORKER_TIMEOUT\" in the worker process's environment.
+   Relevant only when using TCP/IP as transport.
 
 "),
 
@@ -12941,7 +12998,7 @@ golden
 
 "),
 
-("Base","isalnum","isalnum(c::Union(Char, AbstractString)) -> Bool
+("Base","isalnum","isalnum(c::Union{Char, AbstractString}) -> Bool
 
    Tests whether a character is alphanumeric, or whether this is true
    for all elements of a string.  A character is classified as
@@ -12951,7 +13008,7 @@ golden
 
 "),
 
-("Base","isalpha","isalpha(c::Union(Char, AbstractString)) -> Bool
+("Base","isalpha","isalpha(c::Union{Char, AbstractString}) -> Bool
 
    Tests whether a character is alphabetic, or whether this is true
    for all elements of a string. A character is classified as
@@ -12960,14 +13017,14 @@ golden
 
 "),
 
-("Base","isascii","isascii(c::Union(Char, AbstractString)) -> Bool
+("Base","isascii","isascii(c::Union{Char, AbstractString}) -> Bool
 
    Tests whether a character belongs to the ASCII character set, or
    whether this is true for all elements of a string.
 
 "),
 
-("Base","iscntrl","iscntrl(c::Union(Char, AbstractString)) -> Bool
+("Base","iscntrl","iscntrl(c::Union{Char, AbstractString}) -> Bool
 
    Tests whether a character is a control character, or whether this
    is true for all elements of a string.  Control characters are the
@@ -12975,14 +13032,14 @@ golden
 
 "),
 
-("Base","isdigit","isdigit(c::Union(Char, AbstractString)) -> Bool
+("Base","isdigit","isdigit(c::Union{Char, AbstractString}) -> Bool
 
    Tests whether a character is a numeric digit (0-9), or whether this
    is true for all elements of a string.
 
 "),
 
-("Base","isgraph","isgraph(c::Union(Char, AbstractString)) -> Bool
+("Base","isgraph","isgraph(c::Union{Char, AbstractString}) -> Bool
 
    Tests whether a character is printable, and not a space, or whether
    this is true for all elements of a string.  Any character that
@@ -12991,7 +13048,7 @@ golden
 
 "),
 
-("Base","islower","islower(c::Union(Char, AbstractString)) -> Bool
+("Base","islower","islower(c::Union{Char, AbstractString}) -> Bool
 
    Tests whether a character is a lowercase letter, or whether this is
    true for all elements of a string.  A character is classified as
@@ -12999,7 +13056,7 @@ golden
 
 "),
 
-("Base","isnumber","isnumber(c::Union(Char, AbstractString)) -> Bool
+("Base","isnumber","isnumber(c::Union{Char, AbstractString}) -> Bool
 
    Tests whether a character is numeric, or whether this is true for
    all elements of a string.   A character is classified as numeric if
@@ -13008,7 +13065,7 @@ golden
 
 "),
 
-("Base","isprint","isprint(c::Union(Char, AbstractString)) -> Bool
+("Base","isprint","isprint(c::Union{Char, AbstractString}) -> Bool
 
    Tests whether a character is printable, including spaces, but not a
    control character. For strings, tests whether this is true for all
@@ -13016,7 +13073,7 @@ golden
 
 "),
 
-("Base","ispunct","ispunct(c::Union(Char, AbstractString)) -> Bool
+("Base","ispunct","ispunct(c::Union{Char, AbstractString}) -> Bool
 
    Tests whether a character belongs to the Unicode general category
    Punctuation, i.e. a character whose category code begins with 'P'.
@@ -13025,7 +13082,7 @@ golden
 
 "),
 
-("Base","isspace","isspace(c::Union(Char, AbstractString)) -> Bool
+("Base","isspace","isspace(c::Union{Char, AbstractString}) -> Bool
 
    Tests whether a character is any whitespace character.  Includes
    ASCII characters '\\t', '\\n', '\\v', '\\f', '\\r', and ' ',
@@ -13035,7 +13092,7 @@ golden
 
 "),
 
-("Base","isupper","isupper(c::Union(Char, AbstractString)) -> Bool
+("Base","isupper","isupper(c::Union{Char, AbstractString}) -> Bool
 
    Tests whether a character is an uppercase letter, or whether this
    is true for all elements of a string.    A character is classified
@@ -13044,7 +13101,7 @@ golden
 
 "),
 
-("Base","isxdigit","isxdigit(c::Union(Char, AbstractString)) -> Bool
+("Base","isxdigit","isxdigit(c::Union{Char, AbstractString}) -> Bool
 
    Tests whether a character is a valid hexadecimal digit, or whether
    this is true for all elements of a string.
@@ -13092,7 +13149,7 @@ golden
 
 "),
 
-("Base","utf16","utf16(::Union(Ptr{UInt16}, Ptr{Int16})[, length])
+("Base","utf16","utf16(::Union{Ptr{UInt16}, Ptr{Int16}}[, length])
 
    Create a string from the address of a NUL-terminated UTF-16 string.
    A copy is made; the pointer can be safely freed. If \"length\" is
@@ -13120,7 +13177,7 @@ golden
 
 "),
 
-("Base","utf32","utf32(::Union(Ptr{Char}, Ptr{UInt32}, Ptr{Int32})[, length])
+("Base","utf32","utf32(::Union{Ptr{Char}, Ptr{UInt32}, Ptr{Int32}}[, length])
 
    Create a string from the address of a NUL-terminated UTF-32 string.
    A copy is made; the pointer can be safely freed. If \"length\" is

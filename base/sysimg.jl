@@ -50,6 +50,7 @@ include("int.jl")
 include("operators.jl")
 include("pointer.jl")
 include("refpointer.jl")
+include("functors.jl")
 
 # array structures
 include("abstractarray.jl")
@@ -71,7 +72,6 @@ include("simdloop.jl")
 importall .SimdLoop
 
 # map-reduce operators
-include("functors.jl")
 include("reduce.jl")
 
 ## core structures
@@ -87,6 +87,7 @@ include("osutils.jl")
 # strings & printing
 include("utferror.jl")
 include("utftypes.jl")
+include("utfcheck.jl")
 include("char.jl")
 include("ascii.jl")
 include("utf8.jl")
@@ -128,7 +129,6 @@ importall .FS
 include("process.jl")
 include("multimedia.jl")
 importall .Multimedia
-ccall(:jl_get_uv_hooks, Void, ()) # TODO: should put this in _init
 include("grisu.jl")
 import .Grisu.print_shortest
 include("file.jl")
@@ -149,9 +149,8 @@ include("multidimensional.jl")
 
 include("primes.jl")
 
-begin
-    SOURCE_PATH = ""
-    include = function(path)
+let SOURCE_PATH = ""
+    global include = function(path)
         prev = SOURCE_PATH
         path = joinpath(dirname(prev),path)
         SOURCE_PATH = path

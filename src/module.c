@@ -19,7 +19,7 @@ jl_module_t *jl_current_module=NULL;
 
 jl_module_t *jl_new_module(jl_sym_t *name)
 {
-    jl_module_t *m = (jl_module_t*)allocobj(sizeof(jl_module_t));
+    jl_module_t *m = (jl_module_t*)jl_gc_allocobj(sizeof(jl_module_t));
     jl_set_typeof(m, jl_module_type);
     JL_GC_PUSH1(&m);
     assert(jl_is_symbol(name));
@@ -46,7 +46,7 @@ DLLEXPORT jl_value_t *jl_f_new_module(jl_sym_t *name, uint8_t std_imports)
     jl_module_t *m = jl_new_module(name);
     JL_GC_PUSH1(&m);
     m->parent = jl_main_module;
-    gc_wb(m, m->parent);
+    jl_gc_wb(m, m->parent);
     if (std_imports) jl_add_standard_imports(m);
     JL_GC_POP();
     return (jl_value_t*)m;
@@ -79,7 +79,7 @@ static jl_binding_t *new_binding(jl_sym_t *name)
 }
 
 // get binding for assignment
-jl_binding_t *jl_get_binding_wr(jl_module_t *m, jl_sym_t *var)
+DLLEXPORT jl_binding_t *jl_get_binding_wr(jl_module_t *m, jl_sym_t *var)
 {
     jl_binding_t **bp = (jl_binding_t**)ptrhash_bp(&m->bindings, var);
     jl_binding_t *b;
@@ -102,7 +102,7 @@ jl_binding_t *jl_get_binding_wr(jl_module_t *m, jl_sym_t *var)
     b = new_binding(var);
     b->owner = m;
     *bp = b;
-    gc_wb_buf(m, b);
+    jl_gc_wb_buf(m, b);
     return *bp;
 }
 
@@ -118,7 +118,7 @@ DLLEXPORT jl_module_t *jl_get_module_of_binding(jl_module_t *m, jl_sym_t *var)
 // get binding for adding a method
 // like jl_get_binding_wr, but uses existing imports instead of warning
 // and overwriting.
-jl_binding_t *jl_get_binding_for_method_def(jl_module_t *m, jl_sym_t *var)
+DLLEXPORT jl_binding_t *jl_get_binding_for_method_def(jl_module_t *m, jl_sym_t *var)
 {
     jl_binding_t **bp = (jl_binding_t**)ptrhash_bp(&m->bindings, var);
     jl_binding_t *b = *bp;
@@ -145,7 +145,7 @@ jl_binding_t *jl_get_binding_for_method_def(jl_module_t *m, jl_sym_t *var)
     b = new_binding(var);
     b->owner = m;
     *bp = b;
-    gc_wb_buf(m, b);
+    jl_gc_wb_buf(m, b);
     return *bp;
 }
 
@@ -207,9 +207,17 @@ static jl_binding_t *jl_get_binding_(jl_module_t *m, jl_sym_t *var, modstack_t *
     return b;
 }
 
-jl_binding_t *jl_get_binding(jl_module_t *m, jl_sym_t *var)
+DLLEXPORT jl_binding_t *jl_get_binding(jl_module_t *m, jl_sym_t *var)
 {
     return jl_get_binding_(m, var, NULL);
+}
+
+DLLEXPORT jl_binding_t *jl_get_binding_or_error(jl_module_t *m, jl_sym_t *var)
+{
+    jl_binding_t *b = jl_get_binding_(m, var, NULL);
+    if (b == NULL)
+        jl_undefined_var_error(var);
+    return b;
 }
 
 static int eq_bindings(jl_binding_t *a, jl_binding_t *b)
@@ -284,7 +292,7 @@ static void module_import_(jl_module_t *to, jl_module_t *from, jl_sym_t *s,
             nb->owner = b->owner;
             nb->imported = (explici!=0);
             *bp = nb;
-            gc_wb_buf(to, nb);
+            jl_gc_wb_buf(to, nb);
         }
     }
 }
@@ -353,7 +361,7 @@ void jl_module_export(jl_module_t *from, jl_sym_t *s)
         // don't yet know who the owner is
         b->owner = NULL;
         *bp = b;
-        gc_wb_buf(from, b);
+        jl_gc_wb_buf(from, b);
     }
     assert(*bp != HT_NOTFOUND);
     (*bp)->exportp = 1;
@@ -391,7 +399,7 @@ void jl_set_global(jl_module_t *m, jl_sym_t *var, jl_value_t *val)
     jl_binding_t *bp = jl_get_binding_wr(m, var);
     if (!bp->constp) {
         bp->value = val;
-        gc_wb(m, val);
+        jl_gc_wb(m, val);
     }
 }
 
@@ -401,7 +409,7 @@ void jl_set_const(jl_module_t *m, jl_sym_t *var, jl_value_t *val)
     if (!bp->constp) {
         bp->value = val;
         bp->constp = 1;
-        gc_wb(m, val);
+        jl_gc_wb(m, val);
     }
 }
 
@@ -424,7 +432,7 @@ DLLEXPORT void jl_checked_assignment(jl_binding_t *b, jl_value_t *rhs)
         }
     }
     b->value = rhs;
-    gc_wb_binding(b, rhs);
+    jl_gc_wb_binding(b, rhs);
 }
 
 DLLEXPORT void jl_declare_constant(jl_binding_t *b)

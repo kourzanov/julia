@@ -30,7 +30,7 @@
 #    pointerfree::Bool
 #end
 
-#type UnionType <: Type
+#type Union <: Type
 #    types::Tuple
 #end
 
@@ -106,6 +106,11 @@
 #    name::Symbol
 #end
 
+#immutable GlobalRef
+#    mod::Module
+#    name::Symbol
+#end
+
 # type Task
 #     parent::Task
 #     last::Task
@@ -121,7 +126,7 @@ import Core.Intrinsics.ccall
 export
     # key types
     Any, DataType, Vararg, ANY, NTuple,
-    Tuple, Type, TypeConstructor, TypeName, TypeVar, Union, UnionType, Void,
+    Tuple, Type, TypeConstructor, TypeName, TypeVar, Union, Void,
     SimpleVector, AbstractArray, DenseArray,
     # special objects
     Box, Function, IntrinsicFunction, LambdaStaticData, Method, MethodTable,
@@ -134,8 +139,8 @@ export
     # string types
     Char, ASCIIString, ByteString, DirectIndexString, AbstractString, UTF8String,
     # errors
-    BoundsError, DivideError, DomainError, Exception,
-    InexactError, InterruptException, OutOfMemoryError, OverflowError,
+    BoundsError, DivideError, DomainError, Exception, InexactError,
+    InterruptException, OutOfMemoryError, ReadOnlyMemoryError, OverflowError,
     StackOverflowError, SegmentationFault, UndefRefError, UndefVarError,
     # AST representation
     Expr, GotoNode, LabelNode, LineNumberNode, QuoteNode, SymbolNode, TopNode,
@@ -218,6 +223,7 @@ immutable DomainError        <: Exception end
 immutable OverflowError      <: Exception end
 immutable InexactError       <: Exception end
 immutable OutOfMemoryError   <: Exception end
+immutable ReadOnlyMemoryError<: Exception end
 immutable SegmentationFault  <: Exception end
 immutable StackOverflowError <: Exception end
 immutable UndefRefError      <: Exception end
@@ -235,11 +241,6 @@ type SymbolNode
     SymbolNode(name::Symbol, t::ANY) = new(name, t)
 end
 
-immutable GlobalRef
-    mod::Module
-    name::Symbol
-end
-
 immutable ASCIIString <: DirectIndexString
     data::Array{UInt8,1}
 end
@@ -248,7 +249,7 @@ immutable UTF8String <: AbstractString
     data::Array{UInt8,1}
 end
 
-typealias ByteString Union(ASCIIString,UTF8String)
+typealias ByteString Union{ASCIIString,UTF8String}
 
 include(fname::ByteString) = ccall(:jl_load_, Any, (Any,), fname)
 
@@ -261,14 +262,14 @@ type WeakRef
 end
 
 TypeVar(n::Symbol) =
-    ccall(:jl_new_typevar, Any, (Any, Any, Any), n, Union(), Any)::TypeVar
+    ccall(:jl_new_typevar, Any, (Any, Any, Any), n, Union{}, Any)::TypeVar
 TypeVar(n::Symbol, ub::ANY) =
     (isa(ub,Bool) ?
-     ccall(:jl_new_typevar_, Any, (Any, Any, Any, Any), n, Union(), Any, ub)::TypeVar :
-     ccall(:jl_new_typevar, Any, (Any, Any, Any), n, Union(), ub::Type)::TypeVar)
+     ccall(:jl_new_typevar_, Any, (Any, Any, Any, Any), n, Union{}, Any, ub)::TypeVar :
+     ccall(:jl_new_typevar, Any, (Any, Any, Any), n, Union{}, ub::Type)::TypeVar)
 TypeVar(n::Symbol, lb::ANY, ub::ANY) =
     (isa(ub,Bool) ?
-     ccall(:jl_new_typevar_, Any, (Any, Any, Any, Any), n, Union(), lb::Type, ub)::TypeVar :
+     ccall(:jl_new_typevar_, Any, (Any, Any, Any, Any), n, Union{}, lb::Type, ub)::TypeVar :
      ccall(:jl_new_typevar, Any, (Any, Any, Any), n, lb::Type, ub::Type)::TypeVar)
 TypeVar(n::Symbol, lb::ANY, ub::ANY, b::Bool) =
     ccall(:jl_new_typevar_, Any, (Any, Any, Any, Any), n, lb::Type, ub::Type, b)::TypeVar
@@ -285,6 +286,7 @@ _new(:TopNode, :Symbol)
 _new(:NewvarNode, :Symbol)
 _new(:QuoteNode, :ANY)
 _new(:GenSym, :Int)
+eval(:(Core.call(::Type{GlobalRef}, m::Module, s::Symbol) = $(Expr(:new, :GlobalRef, :m, :s))))
 
 Module(name::Symbol=:anonymous, std_imports::Bool=true) = ccall(:jl_f_new_module, Any, (Any, Bool), name, std_imports)::Module
 

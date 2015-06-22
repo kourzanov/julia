@@ -2,7 +2,7 @@
 
 # test core language features
 
-const Bottom = Union()
+const Bottom = Union{}
 
 function testintersect(a, b, result, cmp=is)
     @test cmp(typeintersect(a, b), result)
@@ -28,8 +28,8 @@ isnot(x,y) = !is(x,y)
 @test !(Array{Any,1} <: Array{Int8,1})
 @test Array{Int8,1} <: Array{Int8,1}
 @test !(Type{Bottom} <: Type{Int32})
-@test !(Vector{Float64} <: Vector{Union(Float64,Float32)})
-testintersect(Vector{Float64}, Vector{Union(Float64,Float32)}, Bottom)
+@test !(Vector{Float64} <: Vector{Union{Float64,Float32}})
+testintersect(Vector{Float64}, Vector{Union{Float64,Float32}}, Bottom)
 
 @test !isa(Array,Type{Any})
 @test Type{Complex} <: DataType
@@ -57,8 +57,8 @@ let T = TypeVar(:T,true)
     f47{T}(x::Vector{Vector{T}}) = 0
     @test_throws MethodError f47(Array(Vector,0))
     @test f47(Array(Vector{Int},0)) == 0
-    testintersect(Tuple{T,T}, Tuple{Union(Float64,Int64),Int64}, Tuple{Int64,Int64})
-    testintersect(Tuple{T,T}, Tuple{Int64,Union(Float64,Int64)}, Tuple{Int64,Int64})
+    testintersect(Tuple{T,T}, Tuple{Union{Float64,Int64},Int64}, Tuple{Int64,Int64})
+    testintersect(Tuple{T,T}, Tuple{Int64,Union{Float64,Int64}}, Tuple{Int64,Int64})
 
     TT = TypeVar(:T)
     S = TypeVar(:S,true); N = TypeVar(:N,true); SN = TypeVar(:S,Number,true)
@@ -114,10 +114,10 @@ testintersect(Tuple{Vararg{Int}}, Tuple{Vararg{Bool}}, Tuple{})
 testintersect(Type{Tuple{Vararg{Int}}}, Type{Tuple{Vararg{Bool}}}, Bottom)
 testintersect(Tuple{Bool,Vararg{Int}}, Tuple{Vararg{Bool}}, Tuple{Bool,})
 
-let T = TypeVar(:T,Union(Float32,Float64))
+let T = TypeVar(:T,Union{Float32,Float64})
     testintersect(AbstractArray, Matrix{T}, Matrix{T})
 end
-let T = TypeVar(:T,Union(Float32,Float64),true)
+let T = TypeVar(:T,Union{Float32,Float64},true)
     testintersect(AbstractArray, Matrix{T}, Matrix{T})
 end
 
@@ -143,13 +143,13 @@ end
 @test !issubtype(Type{Tuple{Void}}, Tuple{Type{Void}})
 
 # this is fancy: know that any type T<:Number must be either a DataType or a UnionType
-@test Type{TypeVar(:T,Number)} <: Union(DataType,UnionType)
+@test Type{TypeVar(:T,Number)} <: Union{DataType,UnionType}
 @test !(Type{TypeVar(:T,Number)} <: DataType)
-@test !(Type{TypeVar(:T,Tuple)} <: Union(Tuple,UnionType))
-@test Type{TypeVar(:T,Tuple)} <: Union(DataType,UnionType)
+@test !(Type{TypeVar(:T,Tuple)} <: Union{Tuple,UnionType})
+@test Type{TypeVar(:T,Tuple)} <: Union{DataType,UnionType}
 
 # issue #2997
-let T = TypeVar(:T,Union(Float64,Array{Float64,1}),true)
+let T = TypeVar(:T,Union{Float64,Array{Float64,1}},true)
     testintersect(T,Real,Float64)
 end
 
@@ -189,8 +189,8 @@ end
                    Tuple{Int8,Vararg{Signed}})
 @test Base.typeseq(typejoin(Tuple{Int8,UInt8,Vararg{Int}},Tuple{Int8,Vararg{Int8}}),
                    Tuple{Int8,Vararg{Integer}})
-@test Base.typeseq(typejoin(Union(Int,AbstractString),Int), Union(Int,AbstractString))
-@test Base.typeseq(typejoin(Union(Int,AbstractString),Int8), Any)
+@test Base.typeseq(typejoin(Union{Int,AbstractString},Int), Union{Int,AbstractString})
+@test Base.typeseq(typejoin(Union{Int,AbstractString},Int8), Any)
 
 # typejoin associativity
 abstract Foo____{K}
@@ -268,8 +268,9 @@ type FooFoo{A,B} y::FooFoo{A} end
 @test FooFoo{Int} <: FooFoo{Int,AbstractString}.types[1]
 
 
-x = (2,3)
-@test +(x...) == 5
+let x = (2,3)
+    @test +(x...) == 5
+end
 
 # bits types
 if WORD_SIZE == 64
@@ -397,6 +398,30 @@ glotest()
 @test glob_x == 88
 @test loc_x == 10
 
+# issue #7234
+begin
+    glob_x2 = 24
+    f7234() = (glob_x2 += 1)
+end
+@test_throws UndefVarError f7234()
+begin
+    global glob_x2 = 24
+    f7234() = (glob_x2 += 1)
+end
+@test_throws UndefVarError f7234()
+# existing globals can be inherited by non-function blocks
+for i = 1:2
+    glob_x2 += 1
+end
+@test glob_x2 == 26
+# globals declared as such in a non-global scope are inherited
+let
+    global glob_x3 = 11
+    f7234_2() = (glob_x3 += 1)
+    f7234_2()
+end
+@test glob_x3 == 12
+
 # issue #7272
 @test expand(parse("let
               global x = 2
@@ -443,7 +468,7 @@ end
 @test (true ? 1 : false ? 2 : 3) == 1
 
 # issue #7252
-begin
+let
     local a
     1 > 0 ? a=2 : a=3
     @test a == 2
@@ -460,7 +485,7 @@ type UndefField
     UndefField() = new()
 end
 
-begin
+let
     local a
     a = cell(2)
     @test !isdefined(a,1) && !isdefined(a,2)
@@ -483,7 +508,7 @@ begin
     @test_throws TypeError isdefined(2)
 end
 
-begin
+let
     local a
     a = cell(2)
     @test !isassigned(a,1) && !isassigned(a,2)
@@ -506,7 +531,7 @@ Type11167{Float32,5}
 @test !isassigned(Type11167.name.cache, 3)
 
 # dispatch
-begin
+let
     local foo, bar, baz
     foo(x::Tuple{Vararg{Any}})=0
     foo(x::Tuple{Vararg{Integer}})=1
@@ -525,7 +550,7 @@ begin
     @test baz(Rational{Int}) == 2
 end
 
-begin
+let
     local mytype
     function mytype(vec)
         convert(Vector{Tuple{ASCIIString, DataType}}, vec)
@@ -536,7 +561,7 @@ end
 
 type MyArray{N} <: AbstractArray{Int, N}
 end
-begin
+let
     local x
     x = MyArray{1}()
     foob(x::AbstractArray)=0
@@ -544,7 +569,7 @@ begin
     @test foob(x) == 1
 end
 
-begin
+let
     local f, g, a
     f{T}(a::Vector{Vector{T}}) = a
     g{T}(a::Vector{Vector{T}}) = a
@@ -555,7 +580,7 @@ end
 
 type _AA{T}; a::T; end
 typealias _AoA{T} _AA{_AA{T}}
-begin
+let
     local g, a
     g{T}(a::_AA{_AA{T}}) = a
     a = _AA(_AA(1))
@@ -563,7 +588,7 @@ begin
 end
 
 # dispatch using Val{T}. See discussion in #9452 for instances vs types
-begin
+let
     local firstlast
     firstlast(::Type{Val{true}}) = "First"
     firstlast(::Type{Val{false}}) = "Last"
@@ -573,7 +598,7 @@ begin
 end
 
 # x::Vararg{Any} declarations
-begin
+let
     local f1, f2, f3
     f1(x...) = [x...]
     f2(x::Vararg{Any}) = [x...]
@@ -623,7 +648,7 @@ begin
         try
             return 5
         finally
-            glo = 18
+            global glo = 18
         end
     end
     @test retfinally() == 5
@@ -633,9 +658,8 @@ begin
 end
 
 # finalizers
-let
-    A = [1]
-    x = 0
+let A = [1]
+    local x = 0
     finalizer(A, a->(x+=1))
     finalize(A)
     @test x == 1
@@ -684,7 +708,7 @@ let a = []
 end
 
 # chained and multiple assignment behavior (issue #2913)
-begin
+let
     local x, a, b, c, d, e
     x = (a,b,b,b,e) = (1,2,3,4,5)
     @test x === (1,2,3,4,5)
@@ -710,7 +734,7 @@ begin
 end
 
 # accessing fields by index
-begin
+let
     local z = complex(3, 4)
     v = Int[0,0]
     for i=1:2
@@ -736,15 +760,15 @@ end
 # allow typevar in Union to match as long as the arguments contain
 # sufficient information
 # issue #814
-begin
+let
     local MatOrNot, my_func, M
-    typealias MatOrNot{T} Union(AbstractMatrix{T}, Vector{Union()})
+    typealias MatOrNot{T} Union{AbstractMatrix{T}, Vector{Union{}}}
     my_func{T<:Real}(A::MatOrNot{T}, B::MatOrNot{T}, C::MatOrNot{T}) = 0
     M = [ 2. 1. ; 1. 1. ]
-    @test my_func(Union()[], M, M) == 0
+    @test my_func(Union{}[], M, M) == 0
 end
 
-begin
+let
     local my_func, a, c
     my_func{T}(P::Vector{T}, Q::Vector{T}) = 0
     my_func{T}(x::T, P::Vector{T}) = 1
@@ -757,7 +781,7 @@ begin
     @test my_func(a,c)==1
 end
 
-begin
+let
     local baar, foor, boor
     # issue #1131
     baar(x::DataType) = 0
@@ -789,7 +813,7 @@ import Base.*
 
 *{m1, m2, s1, s2, kg1, kg2}(x::SI{m1, s1, kg1}, y::SI{m2, s2, kg2}) = SI{m1 + m2, s1 + s2, kg1 + kg2}(x.value * y.value)
 
-begin
+let
     local a,b
     a = SI{0,0,1}(1.0) * SI{1,2,0}(2.0)
     b = SI{0,0,1}(1.0) * SI{1,-2,0}(2.0)
@@ -798,7 +822,7 @@ begin
 end
 
 # pointer arithmetic
-begin
+let
    local a,b,c
    a = C_NULL
    b = C_NULL + 1
@@ -816,7 +840,7 @@ begin
 end
 
 # pull request 1270
-begin
+let
     local a,p, a2,p2
     a = [11,12,13]
     p = pointer(a)
@@ -834,7 +858,7 @@ end
                                      x -> x+1, 314158)) == 314159
 @test unsafe_pointer_to_objref(pointer_from_objref(e+pi)) == e+pi
 
-begin
+let
     local a, aa
     a = [1,2,3]
     aa = pointer_to_array(pointer(a), length(a))
@@ -852,7 +876,7 @@ immutable FooBar
     foo::Int
     bar::Int
 end
-begin
+let
     local X, p
     X = FooBar[ FooBar(3,1), FooBar(4,4) ]
     p = pointer(X)
@@ -862,7 +886,7 @@ begin
 end
 
 # issue #1287, combinations of try, catch, return
-begin
+let
     local f, g
 
     function f()
@@ -886,7 +910,7 @@ end
 type S1442{T}
 end
 
-begin
+let
     local f1442
     f1442(::DataType) = 1
     f1442{T}(::Type{S1442{T}}) = 2
@@ -1010,13 +1034,13 @@ end
 
 # issue #2365
 type B2365{T}
-     v::Union(T, Void)
+     v::Union{T, Void}
 end
 @test B2365{Int}(nothing).v === nothing
 @test B2365{Int}(0).v === 0
 
 # issue #2352
-begin
+let
     local Sum, n
     Sum=0.0; for n=1:2:10000
         Sum += -1/n + 1/(n+1)
@@ -1039,7 +1063,7 @@ immutable Foo2517; end
 
 # issue #1474
 type X1474{a,b} end
-begin
+let
     local Y
     Y{A,B}(::Type{X1474{A,B}}) = 1
     Y{A}(::Type{X1474{A}}) = 2
@@ -1180,7 +1204,7 @@ function foo(x)
     end
     return ret
 end
-let x = Array(Union(Dict{Int64,AbstractString},Array{Int64,3},Number,AbstractString,Void), 3)
+let x = Array(Union{Dict{Int64,AbstractString},Array{Int64,3},Number,AbstractString,Void}, 3)
     x[1] = 1.0
     x[2] = 2.0
     x[3] = 3.0
@@ -1191,7 +1215,7 @@ end
 # issue #4115
 #type Foo4115
 #end
-#typealias Foo4115s NTuple{3,Union(Foo4115,Type{Foo4115})}
+#typealias Foo4115s NTuple{3,Union{Foo4115,Type{Foo4115}}}
 #baz4115(x::Foo4115s) = x
 #@test baz4115(convert(Tuple{Type{Foo4115},Type{Foo4115},Foo4115},
 #                      (Foo4115,Foo4115,Foo4115()))) == (Foo4115,Foo4115,Foo4115())
@@ -1273,10 +1297,10 @@ end
 type A4413 end
 type B4413 end
 type C4413 end
-f4413(::Union(A4413, B4413, C4413)) = "ABC"
-f4413(::Union(A4413, B4413)) = "AB"
-g4413(::Union(A4413, C4413)) = "AC"
-g4413(::Union(A4413, B4413, C4413)) = "ABC"
+f4413(::Union{A4413, B4413, C4413}) = "ABC"
+f4413(::Union{A4413, B4413}) = "AB"
+g4413(::Union{A4413, C4413}) = "AC"
+g4413(::Union{A4413, B4413, C4413}) = "ABC"
 
 @test f4413(A4413()) == "AB" && f4413(B4413()) == "AB"
 @test g4413(A4413()) == "AC" && g4413(C4413()) == "AC"
@@ -1314,8 +1338,8 @@ end
 @test_throws ErrorException f4528(true, Int32(12))
 
 # issue #4518
-f4518(x, y::Union(Int32,Int64)) = 0
-f4518(x::ASCIIString, y::Union(Int32,Int64)) = 1
+f4518(x, y::Union{Int32,Int64}) = 0
+f4518(x::ASCIIString, y::Union{Int32,Int64}) = 1
 @test f4518("",1) == 1
 
 # issue #4581
@@ -1490,11 +1514,9 @@ f5254(a, b) = 1
 @test f5254(Bottom, 1) == 1
 
 # evaluate arguments left-to-right, including assignments. issue #4990
-let
-    i = 0
+let i = 0, x = 65
     @test (i, i+=1, i+=1) === (0, 1, 2)
     @test i == 2
-    x = 65
     @test [x, x|=0x20] == [65, 97]
 end
 
@@ -1696,8 +1718,8 @@ x6074 = 6074
 @test @X6074() == 6074
 
 # issue #5536
-test5536(a::Union(Real, AbstractArray)...) = "Splatting"
-test5536(a::Union(Real, AbstractArray)) = "Non-splatting"
+test5536(a::Union{Real, AbstractArray}...) = "Splatting"
+test5536(a::Union{Real, AbstractArray}) = "Non-splatting"
 @test test5536(5) == "Non-splatting"
 
 # multiline comments (#6139 and others raised in #6128) and embedded NUL chars (#10994)
@@ -1886,19 +1908,19 @@ end
 # issue #6980
 abstract A6980
 type B6980 <: A6980 end
-f6980(::Union(Int, Float64), ::A6980) = false
-f6980(::Union(Int, Float64), ::B6980) = true
+f6980(::Union{Int, Float64}, ::A6980) = false
+f6980(::Union{Int, Float64}, ::B6980) = true
 @test f6980(1, B6980())
 
 # issue #7049
-typealias Maybe7049{T} Union(T,Void)
-function ttt7049(;init::Maybe7049{Union(AbstractString,Tuple{Int,Char})} = nothing)
+typealias Maybe7049{T} Union{T,Void}
+function ttt7049(;init::Maybe7049{Union{AbstractString,Tuple{Int,Char}}} = nothing)
     string("init=", init)
 end
 @test ttt7049(init="a") == "init=a"
 
 # issue #7074
-let z{T<:Union(Float64,Complex{Float64},Float32,Complex{Float32})}(A::StridedMatrix{T}) = T,
+let z{T<:Union{Float64,Complex{Float64},Float32,Complex{Float32}}}(A::StridedMatrix{T}) = T,
     S = zeros(Complex,2,2)
     @test_throws MethodError z(S)
 end
@@ -2311,7 +2333,7 @@ f7221(::AbstractVecOrMat) = 3
 arithtype9232{T<:Real}(::Type{T},::Type{T}) = arithtype9232(T)
 result_type9232{T1<:Number,T2<:Number}(::Type{T1}, ::Type{T2}) = arithtype9232(T1, T2)
 # this gave a "type too large", but not reliably
-@test length(code_typed(result_type9232, Tuple{Type{TypeVar(:_, Union(Float32,Float64))}, Type{TypeVar(:T2, Number)}})) == 1
+@test length(code_typed(result_type9232, Tuple{Type{TypeVar(:_, Union{Float32,Float64})}, Type{TypeVar(:T2, Number)}})) == 1
 
 # test functionality of non-power-of-2 bitstype constants
 bitstype 24 Int24
@@ -2939,3 +2961,39 @@ function f11295(x...)
     call = Expr(x...)
 end
 @test isa(f11295(:a,:b), Expr)
+
+# issue #11675
+immutable T11675{T}
+    x::T
+    T11675() = new()
+end
+let x = T11675{Union{}}()
+    function f11675(x)
+        x.x + 1
+    end
+    @test_throws UndefRefError f11675(x)
+end
+
+# issue #7864
+module M7864
+export x7864
+x7864 = 1
+end
+
+@test_throws UndefVarError x7864
+using M7864
+@test x7864 == 1
+
+# issue #11715
+f11715(x) = (x === Tuple{Any})
+@test f11715(Tuple{Any})
+
+# part of #11597
+# make sure invalid, partly-constructed types don't end up in the cache
+abstract C11597{T<:Union(Void, Int)}
+type D11597{T} <: C11597{T} d::T end
+@test_throws TypeError D11597(1.0)
+@test_throws TypeError repr(D11597(1.0))
+
+# issue #11772
+@test_throws UndefRefError (cell(5)...)

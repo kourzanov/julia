@@ -2,9 +2,11 @@
 
 abstract IO
 
-typealias Callable Union(Function,DataType)
+typealias Callable Union{Function,DataType}
 
-const Bottom = Union()
+const Bottom = Union{}
+
+call(::Type{Union}, args...) = Union{args...}
 
 # The real @inline macro is not available until after array.jl, so this
 # internal macro splices the meta Expr directly into the function body.
@@ -24,6 +26,7 @@ call(T::Type{DomainError}) = Core.call(T)
 call(T::Type{OverflowError}) = Core.call(T)
 call(T::Type{InexactError}) = Core.call(T)
 call(T::Type{OutOfMemoryError}) = Core.call(T)
+call(T::Type{ReadOnlyMemoryError}) = Core.call(T)
 call(T::Type{StackOverflowError}) = Core.call(T)
 call(T::Type{SegmentationFault}) = Core.call(T)
 call(T::Type{UndefRefError}) = Core.call(T)
@@ -92,6 +95,7 @@ tail(x::Tuple) = argtail(x...)
 
 convert{T<:Tuple{Any,Vararg{Any}}}(::Type{T}, x::Tuple{Any, Vararg{Any}}) =
     tuple(convert(tuple_type_head(T),x[1]), convert(tuple_type_tail(T), tail(x))...)
+convert{T<:Tuple{Any,Vararg{Any}}}(::Type{T}, x::T) = x
 
 oftype(x,c) = convert(typeof(x),c)
 

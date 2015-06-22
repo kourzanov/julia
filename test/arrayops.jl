@@ -383,7 +383,7 @@ for i = 1 : 3
     @test isequal(a', permutedims(a, [2, 1]))
 end
 
-begin
+let
     local A, A1, A2, A3, v, v2, cv, cv2, c, R, T
     A = ones(Int,2,3,4)
     A1 = reshape(repmat([1,2],1,12),2,3,4)
@@ -642,7 +642,7 @@ B = cat(3, 1, 2, 3)
 @test isequal(symdiff(Int64[]), Int64[])
 
 # mapslices
-begin
+let
     local a,h,i
     a = rand(5,5)
     h = mapslices(v -> hist(v,0:0.1:1)[2], a, 1)
@@ -725,7 +725,7 @@ a[a] = [4,5,6]
 @test lexcmp([1, 1], [1]) == 1
 
 # sort on arrays
-begin
+let
     local a = rand(3,3)
 
     asr = sortrows(a)
@@ -765,7 +765,7 @@ fill!(S, 3)
 @test A == [1 1 3; 2 2 3; 1 1 1]
 rt = Base.return_types(fill!, Tuple{Array{Int32, 3}, UInt8})
 @test length(rt) == 1 && rt[1] == Array{Int32, 3}
-A = Array(Union(UInt8,Int8), 3)
+A = Array(Union{UInt8,Int8}, 3)
 fill!(A, UInt8(3))
 @test A == [0x03, 0x03, 0x03]
 # Issue #9964
@@ -950,6 +950,13 @@ a = Array(Float64, 9,8,7,6,5,4,3,2,1)
 @test size(a,1,1) == (9,9)
 @test size(a,4) == 6
 @test size(a,9,8,7,6,5,4,3,2,19,8,7,6,5,4,3,2,1) == (1,2,3,4,5,6,7,8,1,2,3,4,5,6,7,8,9)
+
+# Cartesian
+function cartesian_foo()
+    Base.@nexprs 2 d->(a_d_d = d)
+    a_2_2
+end
+@test cartesian_foo() == 2
 
 # Multidimensional iterators
 for a in ([1:5;], reshape([2]))

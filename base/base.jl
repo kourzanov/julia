@@ -66,7 +66,7 @@ ccall(:jl_get_system_hooks, Void, ())
 ==(w::WeakRef, v) = isequal(w.value, v)
 ==(w, v::WeakRef) = isequal(w, v.value)
 
-function finalizer(o::ANY, f::Union(Function,Ptr))
+function finalizer(o::ANY, f::Union{Function,Ptr})
     if isimmutable(o)
         error("objects of type ", typeof(o), " cannot be finalized")
     end
@@ -76,8 +76,7 @@ end
 finalize(o::ANY) = ccall(:jl_finalize, Void, (Any,), o)
 
 gc(full::Bool=true) = ccall(:jl_gc_collect, Void, (Cint,), full)
-gc_enable() = ccall(:jl_gc_enable, Cint, ())!=0
-gc_disable() = ccall(:jl_gc_disable, Cint, ())!=0
+gc_enable(on::Bool) = ccall(:jl_gc_enable, Cint, (Cint,), on)!=0
 
 bytestring(str::ByteString) = str
 
@@ -106,5 +105,5 @@ immutable Nullable{T}
     value::T
 
     Nullable() = new(true)
-    Nullable(value::T) = new(false, value)
+    Nullable(value::T, isnull::Bool=false) = new(isnull, value)
 end

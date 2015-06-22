@@ -874,6 +874,8 @@ A = speye(5)
 @test convert(Matrix,A) == full(A)
 
 # test float
+A = sprandbool(5,5,0.0)
+@test eltype(float(A)) == Float64  # issue #11658
 A = sprandbool(5,5,0.2)
 @test float(A) == float(full(A))
 
@@ -968,3 +970,28 @@ A[3,1] = 2
 A.nzval[2] = 0.0
 @test ishermitian(A) == true
 @test issym(A) == true
+
+# equality ==
+A1 = speye(10)
+A2 = speye(10)
+nonzeros(A1)[end]=0
+@test A1!=A2
+nonzeros(A1)[end]=1
+@test A1==A2
+A1[1:4,end] = 1
+@test A1!=A2
+nonzeros(A1)[end-4:end-1]=0
+@test A1==A2
+A2[1:4,end-1] = 1
+@test A1!=A2
+nonzeros(A2)[end-5:end-2]=0
+@test A1==A2
+A2[2:3,1] = 1
+@test A1!=A2
+nonzeros(A2)[2:3]=0
+@test A1==A2
+A1[2:5,1] = 1
+@test A1!=A2
+nonzeros(A1)[2:5]=0
+@test A1==A2
+@test sparse([1,1,0])!=sparse([0,1,1])

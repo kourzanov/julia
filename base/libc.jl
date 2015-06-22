@@ -10,7 +10,7 @@ include("errno.jl")
 
 ## RawFD ##
 
-#Wrapper for an OS file descriptor (on both Unix and Windows)
+# Wrapper for an OS file descriptor (on both Unix and Windows)
 immutable RawFD
     fd::Int32
     RawFD(fd::Integer) = new(fd)
@@ -46,7 +46,7 @@ function FILE(s::IO)
     f
 end
 
-Base.unsafe_convert(T::Union(Type{Ptr{Void}},Type{Ptr{FILE}}), f::FILE) = convert(T, f.ptr)
+Base.unsafe_convert(T::Union{Type{Ptr{Void}},Type{Ptr{FILE}}}, f::FILE) = convert(T, f.ptr)
 Base.close(f::FILE) = systemerror("fclose", ccall(:fclose, Cint, (Ptr{Void},), f.ptr) != 0)
 Base.convert(::Type{FILE}, s::IO) = FILE(s)
 

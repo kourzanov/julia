@@ -301,18 +301,17 @@
 (define (expand-compare-chain e)
   (car (expand-vector-compare e)))
 
-;; last = is this last index?
+;; return the appropriate computation for an `end` symbol for indexing
+;; the array `a` in the `n`th index.
+;; `tuples` are a list of the splatted arguments that precede index `n`
+;; `last` = is this last index?
+;; returns a call to endof(a), trailingsize(a,n), or size(a,n)
 (define (end-val a n tuples last)
   (if (null? tuples)
       (if last
           (if (= n 1)
               `(call (top endof) ,a)
               `(call (top trailingsize) ,a ,n))
-              #;`(call (top div)
-                     (call (top length) ,a)
-                     (call (top *)
-                           ,@(map (lambda (d) `(call (top size) ,a ,(1+ d)))
-                                  (iota (- n 1)))))
           `(call (top size) ,a ,n))
       (let ((dimno `(call (top +) ,(- n (length tuples))
                           ,.(map (lambda (t) `(call (top length) ,t))
@@ -321,8 +320,7 @@
             `(call (top trailingsize) ,a ,dimno)
             `(call (top size) ,a ,dimno)))))
 
-; replace end inside ex with (call (top size) a n)
-; affects only the closest ref expression, so doesn't go inside nested refs
+; replace `end` for the closest ref expression, so doesn't go inside nested refs
 (define (replace-end ex a n tuples last)
   (cond ((eq? ex 'end)                (end-val a n tuples last))
         ((or (atom? ex) (quoted? ex)) ex)
@@ -335,29 +333,7 @@
                (map (lambda (x) (replace-end x a n tuples last))
                     (cdr ex))))))
 
-; translate index x from colons to ranges
-(define (expand-index-colon x)
-  (cond ((eq? x ':) `(call colon 1 end))
-        ((and (pair? x)
-              (eq? (car x) ':))
-         (cond ((length= x 3)
-                (if (eq? (caddr x) ':)
-                    ;; (: a :) a:
-                    `(call colon ,(cadr x) end)
-                    ;; (: a b)
-                    `(call colon ,(cadr x) ,(caddr x))))
-               ((length= x 4)
-                (if (eq? (cadddr x) ':)
-                    ;; (: a b :) a:b:
-                    `(call colon ,(cadr x) ,(caddr x) end)
-                    ;; (: a b c)
-                    `(call colon ,@(cdr x))))
-               (else x)))
-        (else x)))
-
-;; : inside indexing means 1:end
-;; expand end to size(a,n),
-;;     or div(length(a), prod(size(a)[1:(n-1)])) for the last index
+;; go through indices and replace the `end` symbol
 ;; a = array being indexed, i = list of indexes
 ;; returns (values index-list stmts) where stmts are statements that need
 ;; to execute first.
@@ -386,8 +362,7 @@
                           (cons `(... ,g) ret))))
               (loop (cdr lst) (+ n 1)
                     stmts tuples
-                    (cons (replace-end (expand-index-colon idx) a n tuples last)
-                          ret)))))))
+                    (cons (replace-end idx a n tuples last) ret)))))))
 
 (define (make-decl n t) `(|::| ,n ,t))
 
@@ -449,6 +424,11 @@
     (cond ((symbol? lhs)       lhs)
           ((eq? (car lhs) 'kw) (cadr lhs))
           (else                lhs))))
+
+(define (method-expr-static-parameters m)
+  (if (eq? (car (cadr (caddr m))) 'lambda)
+      (cadr (cadr (caddr m)))
+      '()))
 
 (define (sym-ref? e)
   (or (symbol? e)
@@ -991,9 +971,11 @@
    (sparam-name-bounds params '() '())
    `(block
      (const ,name)
-     ,@(map (lambda (v) `(local ,v)) params)
-     ,@(map make-assignment params (symbols->typevars params bounds #f))
-     (abstract_type ,name (call (top svec) ,@params) ,super))))
+     (scope-block
+      (block
+       ,@(map (lambda (v) `(local ,v)) params)
+       ,@(map make-assignment params (symbols->typevars params bounds #f))
+       (abstract_type ,name (call (top svec) ,@params) ,super))))))
 
 (define (bits-def-expr n name params super)
   (receive
@@ -1001,9 +983,11 @@
    (sparam-name-bounds params '() '())
    `(block
      (const ,name)
-     ,@(map (lambda (v) `(local ,v)) params)
-     ,@(map make-assignment params (symbols->typevars params bounds #f))
-     (bits_type ,name (call (top svec) ,@params) ,n ,super))))
+     (scope-block
+      (block
+       ,@(map (lambda (v) `(local ,v)) params)
+       ,@(map make-assignment params (symbols->typevars params bounds #f))
+       (bits_type ,name (call (top svec) ,@params) ,n ,super))))))
 
 ; take apart a type signature, e.g. T{X} <: S{Y}
 (define (analyze-type-sig ex)
@@ -2589,15 +2573,6 @@ The first one gave something broken, but the second case works.
 So far only the second case can actually occur.
 |#
 
-(define (declared-global-vars e)
-  (if (or (not (pair? e)) (quoted? e))
-      '()
-      (case (car e)
-        ((lambda scope-block)  '())
-        ((global)  (cdr e))
-        (else
-         (apply append (map declared-global-vars e))))))
-
 (define (check-dups locals)
   (if (and (pair? locals) (pair? (cdr locals)))
       (or (and (memq (car locals) (cdr locals))
@@ -2624,7 +2599,7 @@ So far only the second case can actually occur.
          (apply append! (map (lambda (x) (find-assigned-vars x env))
                              e))))))
 
-(define (find-decls kind e env)
+(define (find-decls kind e)
   (if (or (not (pair? e)) (quoted? e))
       '()
       (cond ((or (eq? (car e) 'lambda) (eq? (car e) 'scope-block))
@@ -2632,18 +2607,19 @@ So far only the second case can actually occur.
             ((eq? (car e) kind)
              (list (decl-var (cadr e))))
             (else
-             (apply append! (map (lambda (x) (find-decls kind x env))
+             (apply append! (map (lambda (x) (find-decls kind x))
                                  e))))))
 
-(define (find-local-decls  e env) (find-decls 'local  e env))
-(define (find-local!-decls e env) (find-decls 'local! e env))
+(define (find-local-decls  e) (find-decls 'local  e))
+(define (find-local!-decls e) (find-decls 'local! e))
+(define (find-global-decls e) (find-decls 'global e))
 
 (define (find-locals e env glob)
   (delete-duplicates
-   (append! (check-dups (find-local-decls e env))
+   (append! (check-dups (find-local-decls e))
             ;; const decls on non-globals also introduce locals
-            (diff (find-decls 'const e env) glob)
-            (find-local!-decls e env)
+            (diff (find-decls 'const e) glob)
+            (find-local!-decls e)
             (find-assigned-vars e env))))
 
 (define (remove-local-decls e)
@@ -2663,22 +2639,30 @@ So far only the second case can actually occur.
 ;; 2. (const x) expressions in a scope-block where x is not declared global
 ;; 3. variables assigned inside this scope-block that don't exist in outer
 ;;    scopes
-(define (add-local-decls e env)
+(define (add-local-decls e env implicitglobals)
   (if (or (not (pair? e)) (quoted? e)) e
       (cond ((eq? (car e) 'lambda)
              (let* ((env (append (lam:vars e) env))
-                    (body (add-local-decls (caddr e) env)))
+                    (body (add-local-decls (caddr e) env
+					   ;; don't propagate implicit globals
+					   ;; issue #7234
+					   '())))
                (list 'lambda (cadr e) body)))
 
             ((eq? (car e) 'scope-block)
-             (let* ((glob (declared-global-vars (cadr e)))
+             (let* ((iglo (find-decls 'implicit-global (cadr e)))
+		    (glob (diff (find-global-decls (cadr e)) iglo))
                     (vars (find-locals
                            ;; being declared global prevents a variable
                            ;; assignment from introducing a local
-                           (cadr e) (append env glob) glob))
-                    (body (add-local-decls (cadr e) (append vars glob env)))
-                    (lineno (if (and (length> body 1)
-                                     (pair? (cadr body))
+                           (cadr e)
+			   (append env glob implicitglobals iglo)
+			   (append glob iglo)))
+                    (body (add-local-decls (cadr e)
+					   (append vars glob env)
+					   (append iglo implicitglobals)))
+		    (lineno (if (and (length> body 1)
+				     (pair? (cadr body))
                                      (eq? 'line (car (cadr body))))
                                 (list (cadr body))
                                 '()))
@@ -2698,10 +2682,10 @@ So far only the second case can actually occur.
              ;; form (local! x) adds a local to a normal (non-scope) block
              (let ((newenv (append (declared-local!-vars e) env)))
                (map (lambda (x)
-                      (add-local-decls x newenv))
+                      (add-local-decls x newenv implicitglobals))
                     e))))))
 
-(define (identify-locals e) (add-local-decls e '()))
+(define (identify-locals e) (add-local-decls e '() '()))
 
 (define (declared-local-vars e)
   (map (lambda (x) (decl-var (cadr x)))
@@ -2739,10 +2723,10 @@ So far only the second case can actually occur.
                          (case (car e)
                            ((lambda)
                             (append (lambda-all-vars e)
-                                    (declared-global-vars (cadddr e))))
+                                    (find-global-decls (cadddr e))))
                            ((scope-block)
                             (append (declared-local-vars e)
-                                    (declared-global-vars (cadr e))))
+                                    (find-global-decls (cadr e))))
                            (else '())))))
            (cons (car e)
                  (map (lambda (x)
@@ -2885,35 +2869,23 @@ So far only the second case can actually occur.
 (define (make-var-info name) (list name 'Any 0))
 (define vinfo:name car)
 (define vinfo:type cadr)
+(define (vinfo:set-type! v t) (set-car! (cdr v) t))
+
 (define (vinfo:capt v) (< 0 (logand (caddr v) 1)))
 (define (vinfo:asgn v) (< 0 (logand (caddr v) 2)))
 (define (vinfo:const v) (< 0 (logand (caddr v) 8)))
-(define (vinfo:set-type! v t) (set-car! (cdr v) t))
+(define (set-bit x b val) (if val (logior x b) (logand x (lognot b))))
 ;; record whether var is captured
-(define (vinfo:set-capt! v c) (set-car! (cddr v)
-                                        (if c
-                                            (logior (caddr v) 1)
-                                            (logand (caddr v) -2))))
+(define (vinfo:set-capt! v c)  (set-car! (cddr v) (set-bit (caddr v) 1 c)))
 ;; whether var is assigned
-(define (vinfo:set-asgn! v a) (set-car! (cddr v)
-                                        (if a
-                                            (logior (caddr v) 2)
-                                            (logand (caddr v) -3))))
+(define (vinfo:set-asgn! v a)  (set-car! (cddr v) (set-bit (caddr v) 2 a)))
 ;; whether var is assigned by an inner function
-(define (vinfo:set-iasg! v a) (set-car! (cddr v)
-                                        (if a
-                                            (logior (caddr v) 4)
-                                            (logand (caddr v) -5))))
+(define (vinfo:set-iasg! v a)  (set-car! (cddr v) (set-bit (caddr v) 4 a)))
 ;; whether var is const
-(define (vinfo:set-const! v a) (set-car! (cddr v)
-                                         (if a
-                                             (logior (caddr v) 8)
-                                             (logand (caddr v) -9))))
+(define (vinfo:set-const! v a) (set-car! (cddr v) (set-bit (caddr v) 8 a)))
 ;; whether var is assigned once
-(define (vinfo:set-sa! v a) (set-car! (cddr v)
-                                      (if a
-                                          (logior (caddr v) 16)
-                                          (logand (caddr v) -17))))
+(define (vinfo:set-sa! v a)    (set-car! (cddr v) (set-bit (caddr v) 16 a)))
+;; occurs undef: mask 32
 
 (define var-info-for assq)
 
@@ -2943,7 +2915,7 @@ So far only the second case can actually occur.
 ; convert each lambda's (locals ...) to
 ;   ((localvars...) var-info-lst captured-var-infos)
 ; where var-info-lst is a list of var-info records
-(define (analyze-vars e env captvars)
+(define (analyze-vars e env captvars sp)
   (if (or (atom? e) (quoted? e))
       e
       (case (car e)
@@ -2957,7 +2929,7 @@ So far only the second case can actually occur.
                  (vinfo:set-asgn! vi #t)
                  (if (assq (car vi) captvars)
                      (vinfo:set-iasg! vi #t)))))
-         `(= ,(cadr e) ,(analyze-vars (caddr e) env captvars)))
+         `(= ,(cadr e) ,(analyze-vars (caddr e) env captvars sp)))
         #;((or (eq? (car e) 'local) (eq? (car e) 'local!))
          '(null))
         ((typeassert)
@@ -2991,7 +2963,7 @@ So far only the second case can actually occur.
                                                        (if vi (free-vars (vinfo:type vi)) '())))
                                                    fv))))
                         (append (diff dv fv) fv)))
-                (glo  (declared-global-vars (lam:body e)))
+                (glo  (find-global-decls (lam:body e)))
                 ;; make var-info records for vars introduced by this lambda
                 (vi   (nconc
                        (map (lambda (decl) (make-var-info (decl-var decl)))
@@ -3014,12 +2986,12 @@ So far only the second case can actually occur.
                                            (not (memq (vinfo:name v) allv))
                                            (not (memq (vinfo:name v) glo))))
                                         env))
-                        cv)))
+                        cv sp)))
            ;; mark all the vars we capture as captured
            (for-each (lambda (v) (vinfo:set-capt! v #t))
                      cv)
            `(lambda ,args
-              (,(cdaddr e) ,vi ,cv ,gensym_types)
+              (,vi ,cv ,gensym_types ,sp)
               ,bod)))
         ((localize)
          ;; special feature for @spawn that wraps a piece of code in a "let"
@@ -3033,7 +3005,7 @@ So far only the second case can actually occur.
              (analyze-vars
               `(call (lambda ,vs ,(caddr (cadr e)) ,(cadddr (cadr e)))
                      ,@vs)
-              env captvars))))
+              env captvars sp))))
         ((method)
          (let ((vi (var-info-for (method-expr-name e) env)))
            (if vi
@@ -3046,14 +3018,16 @@ So far only the second case can actually occur.
 	 (if (length= e 2)
 	     `(method ,(cadr e))
 	     `(method ,(cadr e)
-		      ,(analyze-vars (caddr  e) env captvars)
-		      ,(analyze-vars (cadddr e) env captvars)
+		      ,(analyze-vars (caddr  e) env captvars sp)
+		      ,(analyze-vars (cadddr e) env captvars
+				     (delete-duplicates
+				      (append sp (method-expr-static-parameters e))))
 		      ,(caddddr e))))
         (else (cons (car e)
-                    (map (lambda (x) (analyze-vars x env captvars))
+                    (map (lambda (x) (analyze-vars x env captvars sp))
                          (cdr e)))))))
 
-(define (analyze-variables e) (analyze-vars e '() '()))
+(define (analyze-variables e) (analyze-vars e '() '() '()))
 
 (define (not-bool e)
   (cond ((memq e '(true #t))  'false)
@@ -3071,8 +3045,8 @@ So far only the second case can actually occur.
   (cond ((or (not (pair? e)) (quoted? e)) e)
         ((eq? (car e) 'lambda)
          `(lambda ,(cadr e) ,(caddr e)
-                  ,(compile-body (cadddr e) (append (cadr (caddr e))
-                                                    (caddr (caddr e))))))
+                  ,(compile-body (cadddr e) (append (car (caddr e))
+                                                    (cadr (caddr e))))))
         (else (cons (car e)
                     (map goto-form (cdr e))))))
 
@@ -3224,6 +3198,7 @@ So far only the second case can actually occur.
                ))
 
             ((global) #f)  ; remove global declarations
+            ((implicit-global) #f)
             ((local!) #f)
             ((jlgensym) #f)
             ((local)

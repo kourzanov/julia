@@ -32,7 +32,6 @@ USE_SYSTEM_GMP=0
 USE_SYSTEM_MPFR=0
 USE_SYSTEM_ARPACK=0
 USE_SYSTEM_SUITESPARSE=0
-USE_SYSTEM_RMATH=0
 USE_SYSTEM_LIBUV=0
 USE_SYSTEM_UTF8PROC=0
 USE_SYSTEM_LIBGIT2=0
@@ -474,6 +473,12 @@ endif
 
 JULIA_CPU_TARGET ?= native
 
+# Detect common pre-SSE2 JULIA_CPU_TARGET values known not to work (#7185)
+ifneq ($(findstring $(JULIA_CPU_TARGET),i386 i486 i586 i686 pentium pentium2 pentium3),)
+$(error Pre-SSE2 CPU targets not supported. To create a generic 32-bit x86 binary, \
+pass 'MARCH=i686 JULIA_CPU_TARGET=pentium4', or 'MARCH=pentium4' if not building any dependencies.)
+endif
+
 # We map amd64 to x86_64 for compatibility with systems that identify 64-bit systems as such
 ifeq ($(ARCH),amd64)
 override ARCH = x86_64
@@ -515,8 +520,10 @@ LLVM_ASSERTIONS=1
 #LLVM_FLAGS+="--with-float=hard --with-abi=aapcs-vfp"
 LLVM_VER=3.6.1
 
-USE_BLAS64=0
-OPENBLAS_DYNAMIC_ARCH=0
+override USE_BLAS64=0
+override OPENBLAS_DYNAMIC_ARCH=0
+override OPENBLAS_TARGET_ARCH=ARMV7
+
 endif
 
 # Set some ARCH-specific flags
@@ -555,12 +562,10 @@ endif
 
 ifeq ($(USE_SYSTEM_LLVM), 1)
 LLVM_CONFIG ?= llvm-config$(EXE)
-LLVM_LLC ?= llc$(EXE)
 JCPPFLAGS+=-DSYSTEM_LLVM
 LLVM_VER = $(shell $(LLVM_CONFIG) --version)
 else
 LLVM_CONFIG=$(build_bindir)/llvm-config$(EXE)
-LLVM_LLC=$(build_bindir)/llc$(EXE)
 endif
 
 ifeq ($(USE_SYSTEM_PCRE), 1)

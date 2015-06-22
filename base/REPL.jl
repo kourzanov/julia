@@ -380,7 +380,7 @@ function add_history(hist::REPLHistoryProvider, s)
     flush(hist.history_file)
 end
 
-function history_move(s::Union(LineEdit.MIState,LineEdit.PrefixSearchState), hist::REPLHistoryProvider, idx::Int, save_idx::Int = hist.cur_idx)
+function history_move(s::Union{LineEdit.MIState,LineEdit.PrefixSearchState}, hist::REPLHistoryProvider, idx::Int, save_idx::Int = hist.cur_idx)
     max_idx = length(hist.history) + 1
     @assert 1 <= hist.cur_idx <= max_idx
     (1 <= idx <= max_idx) || return :none
@@ -420,8 +420,8 @@ function LineEdit.accept_result(s, p::LineEdit.HistoryPrompt{REPLHistoryProvider
     hist = p.hp
     if 1 <= hist.cur_idx <= length(hist.modes)
         m = hist.mode_mapping[hist.modes[hist.cur_idx]]
-        LineEdit.replace_line(LineEdit.state(s, m), LineEdit.state(s, p).response_buffer)
         LineEdit.transition(s, m)
+        LineEdit.replace_line(LineEdit.state(s, m), LineEdit.state(s, p).response_buffer)
     else
         LineEdit.transition(s, parent)
     end
@@ -448,7 +448,8 @@ end
 function history_next(s::LineEdit.MIState, hist::REPLHistoryProvider,
         save_idx::Int = hist.cur_idx)
     cur_idx = hist.cur_idx
-    if 0 < hist.last_idx
+    max_idx = length(hist.history) + 1
+    if cur_idx == max_idx && 0 < hist.last_idx
         # issue #6312
         cur_idx = hist.last_idx
         hist.last_idx = -1

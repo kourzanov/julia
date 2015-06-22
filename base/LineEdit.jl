@@ -275,7 +275,7 @@ function refresh_multi_line(termbuf::TerminalBuffer, terminal::UnixTerminal, buf
     end
 
     # Same issue as above. TODO: We should figure out
-    # how to refactor this to avoid duplcating functionality.
+    # how to refactor this to avoid duplicating functionality.
     if curs_pos == cols
         if line_pos == 0
             write(termbuf, "\n")
@@ -880,7 +880,7 @@ end
 # source is the keymap specified by the user (with normalized keys)
 function keymap_merge(target,source)
     ret = copy(target)
-    direct_keys = filter((k,v) -> isa(v, Union(Function, KeyAlias, Void)), source)
+    direct_keys = filter((k,v) -> isa(v, Union{Function, KeyAlias, Void}), source)
     # first direct entries
     for key in keys(direct_keys)
         add_nested_key!(ret, key, source[key]; override = true)
@@ -890,7 +890,7 @@ function keymap_merge(target,source)
         # We first resolve redirects in the source
         value = source[key]
         visited = Array(Any,0)
-        while isa(value, Union(Char,AbstractString))
+        while isa(value, Union{Char,AbstractString})
             value = normalize_key(value)
             if value in visited
                 error("Eager redirection cycle detected for key " * escape_string(key))
@@ -902,7 +902,7 @@ function keymap_merge(target,source)
             value = source[value]
         end
 
-        if isa(value, Union(Char,AbstractString))
+        if isa(value, Union{Char,AbstractString})
             value = getEntry(ret, value)
             if value === nothing
                 error("Could not find redirected value " * escape_string(source[key]))
@@ -1052,6 +1052,8 @@ type PrefixSearchState <: ModeState
     response_buffer::IOBuffer
     ias::InputAreaState
     indent::Int
+    # The modal interface state, if present
+    mi
     #The prompt whose input will be replaced by the matched history
     parent
     PrefixSearchState(terminal, histprompt, prefix, response_buffer) =
@@ -1086,8 +1088,14 @@ function reset_state(s::PrefixSearchState)
 end
 
 function transition(s::PrefixSearchState, mode)
+    if isdefined(s,:mi)
+        transition(s.mi,mode)
+    end
     s.parent = mode
     s.histprompt.parent_prompt = mode
+    if isdefined(s,:mi)
+        transition(s.mi,s.histprompt)
+    end
 end
 
 replace_line(s::PrefixSearchState, l::IOBuffer) = s.response_buffer = l
@@ -1164,6 +1172,7 @@ function enter_prefix_search(s::MIState, p::PrefixHistoryPrompt, backward::Bool)
     pss.prefix = bytestring(pointer(buf.data), position(buf))
     copybuf!(pss.response_buffer, buf)
     pss.indent = state(s, mode(s)).indent
+    pss.mi = s
     transition(s, p)
     if backward
         history_prev_prefix(pss, pss.histprompt.hp, pss.prefix)
@@ -1256,8 +1265,8 @@ function setup_search_keymap(hp)
     (p, skeymap)
 end
 
-keymap(state, p::Union(HistoryPrompt,PrefixHistoryPrompt)) = p.keymap_dict
-keymap_data(state, ::Union(HistoryPrompt, PrefixHistoryPrompt)) = state
+keymap(state, p::Union{HistoryPrompt,PrefixHistoryPrompt}) = p.keymap_dict
+keymap_data(state, ::Union{HistoryPrompt, PrefixHistoryPrompt}) = state
 
 Base.isempty(s::PromptState) = s.input_buffer.size == 0
 
@@ -1490,6 +1499,9 @@ function transition(s::MIState, mode)
     if mode == :reset
         reset_state(s)
         return
+    end
+    if !haskey(s.mode_state,mode)
+        s.mode_state[mode] = init_state(terminal(s), mode)
     end
     termbuf = TerminalBuffer(IOBuffer())
     s.mode_state[s.current_mode] = deactivate(s.current_mode, s.mode_state[s.current_mode], termbuf)
