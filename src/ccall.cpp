@@ -164,7 +164,7 @@ static Value *runtime_sym_lookup(PointerType *funcptype, char *f_lib, char *f_na
             libsym = get_library(f_lib);
             assert(libsym != NULL);
 #ifdef USE_MCJIT
-            llvm_to_jl_value[libptrgv] = libsym;
+            jl_llvm_to_jl_value[libptrgv] = libsym;
 #else
             *((uv_lib_t**)jl_ExecutionEngine->getPointerToGlobal(libptrgv)) = libsym;
 #endif
@@ -172,7 +172,7 @@ static Value *runtime_sym_lookup(PointerType *funcptype, char *f_lib, char *f_na
     }
     if (libsym == NULL) {
 #ifdef USE_MCJIT
-        libsym = (uv_lib_t*)llvm_to_jl_value[libptrgv];
+        libsym = (uv_lib_t*)jl_llvm_to_jl_value[libptrgv];
 #else
         libsym = *((uv_lib_t**)jl_ExecutionEngine->getPointerToGlobal(libptrgv));
 #endif
@@ -191,7 +191,7 @@ static Value *runtime_sym_lookup(PointerType *funcptype, char *f_lib, char *f_na
            initnul, name);
         symMapGV[f_name] = llvmgv;
 #ifdef USE_MCJIT
-        llvm_to_jl_value[llvmgv] = jl_dlsym_e(libsym, f_name);
+        jl_llvm_to_jl_value[llvmgv] = jl_dlsym_e(libsym, f_name);
 #else
         *((void**)jl_ExecutionEngine->getPointerToGlobal(llvmgv)) = jl_dlsym_e(libsym, f_name);
 #endif
@@ -715,12 +715,10 @@ static Value *emit_llvmcall(jl_value_t **args, size_t nargs, jl_codectx_t *ctx)
             }
         }
 
-#ifdef JL_GC_MARKSWEEP
         // make sure args are rooted
         if (t == jl_pvalue_llvmt && (needroot || might_need_root(argi))) {
             make_gcroot(arg, ctx);
         }
-#endif
         Value *v = julia_to_native(t, tti, arg, expr_type(argi, ctx), false, false, false, false, false, i, ctx, NULL);
         bool issigned = jl_signed_type && jl_subtype(tti, (jl_value_t*)jl_signed_type, 0);
         argvals[i] = llvm_type_rewrite(v, t, t, false, false, issigned, ctx);
@@ -1298,12 +1296,10 @@ static Value *emit_ccall(jl_value_t **args, size_t nargs, jl_codectx_t *ctx)
             }
         }
 
-#ifdef JL_GC_MARKSWEEP
         // make sure args are rooted
         if (largty == jl_pvalue_llvmt && (needroot || might_need_root(argi))) {
             make_gcroot(arg, ctx);
         }
-#endif
 
         bool nSR=false;
         bool issigned = jl_signed_type && jl_subtype(jargty, (jl_value_t*)jl_signed_type, 0);

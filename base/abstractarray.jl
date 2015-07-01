@@ -124,6 +124,7 @@ end
 
 ## Bounds checking ##
 @generated function trailingsize{T,N,n}(A::AbstractArray{T,N}, ::Type{Val{n}})
+    n > N && return 1
     ex = :(size(A, $n))
     for m = n+1:N
         ex = :($ex * size(A, $m))
@@ -150,7 +151,7 @@ throw_boundserror(A, I) = (@_noinline_meta; throw(BoundsError(A, I)))
 
 checkbounds(A::AbstractArray, I::AbstractArray{Bool}) = size(A) == size(I) || throw_boundserror(A, I)
 checkbounds(A::AbstractArray, I::AbstractVector{Bool}) = length(A) == length(I) || throw_boundserror(A, I)
-checkbounds(A::AbstractArray, I) = (@_inline_meta; _checkbounds(length(A), I) || throw_boundserror(A, I))
+checkbounds(A::AbstractArray, I::Union{Real,AbstractArray,Colon}) = (@_inline_meta; _checkbounds(length(A), I) || throw_boundserror(A, I))
 function checkbounds(A::AbstractMatrix, I::Union{Real,AbstractArray,Colon}, J::Union{Real,AbstractArray,Colon})
     @_inline_meta
     (_checkbounds(size(A,1), I) && _checkbounds(size(A,2), J)) || throw_boundserror(A, (I, J))
@@ -162,8 +163,10 @@ end
 @generated function checkbounds(A::AbstractArray, I::Union{Real,AbstractArray,Colon}...)
     meta = Expr(:meta, :inline)
     N = length(I)
-    args = Expr[:(_checkbounds(size(A,$dim), I[$dim]) || throw_boundserror(A, I)) for dim in 1:N-1]
-    push!(args, :(_checkbounds(trailingsize(A,Val{$N}), I[$N]) || throw_boundserror(A, I)))
+    Isplat = [:(I[$d]) for d=1:N]
+    error = :(throw_boundserror(A, tuple($(Isplat...))))
+    args = Expr[:(_checkbounds(size(A,$dim), I[$dim]) || $error) for dim in 1:N-1]
+    push!(args, :(_checkbounds(trailingsize(A,Val{$N}), I[$N]) || $error))
     Expr(:block, meta, args...)
 end
 
@@ -438,12 +441,12 @@ function _getindex(::LinearFast, A::AbstractArray, I::Real...)
     @_inline_meta
     # We must check bounds for sub2ind; so we can then call unsafe_getindex
     checkbounds(A, I...)
-    unsafe_getindex(A, sub2ind(size(A), to_index(I)...))
+    unsafe_getindex(A, sub2ind(size(A), to_indexes(I...)...))
 end
 _unsafe_getindex(::LinearFast, A::AbstractArray, I::Int) = (@_inline_meta; getindex(A, I))
 function _unsafe_getindex(::LinearFast, A::AbstractArray, I::Real...)
     @_inline_meta
-    unsafe_getindex(A, sub2ind(size(A), to_index(I)...))
+    unsafe_getindex(A, sub2ind(size(A), to_indexes(I...)...))
 end
 
 # LinearSlow Scalar indexing
@@ -530,12 +533,12 @@ function _setindex!(::LinearFast, A::AbstractArray, v, I::Real...)
     @_inline_meta
     # We must check bounds for sub2ind; so we can then call unsafe_setindex!
     checkbounds(A, I...)
-    unsafe_setindex!(A, v, sub2ind(size(A), to_index(I)...))
+    unsafe_setindex!(A, v, sub2ind(size(A), to_indexes(I...)...))
 end
 _unsafe_setindex!(::LinearFast, A::AbstractArray, v, I::Int) = (@_inline_meta; setindex!(A, v, I))
 function _unsafe_setindex!(::LinearFast, A::AbstractArray, v, I::Real...)
     @_inline_meta
-    unsafe_setindex!(A, v, sub2ind(size(A), to_index(I)...))
+    unsafe_setindex!(A, v, sub2ind(size(A), to_indexes(I...)...))
 end
 
 # LinearSlow Scalar indexing
@@ -1130,8 +1133,8 @@ end
 ## transform any set of dimensions
 ## dims specifies which dimensions will be transformed. for example
 ## dims==1:2 will call f on all slices A[:,:,...]
-mapslices(f::Function, A::AbstractArray, dims) = mapslices(f, A, [dims...])
-function mapslices(f::Function, A::AbstractArray, dims::AbstractVector)
+mapslices(f, A::AbstractArray, dims) = mapslices(f, A, [dims...])
+function mapslices(f, A::AbstractArray, dims::AbstractVector)
     if isempty(dims)
         return map(f,A)
     end

@@ -700,12 +700,14 @@
 
 ; the principal non-terminals follow, in increasing precedence order
 
-(define (parse-block s) (parse-Nary s parse-eq '(#\newline #\;) 'block
-                                    '(end else elseif catch finally) #t))
+(define (parse-block s (down parse-eq))
+  (parse-Nary s down '(#\newline #\;) 'block
+	      '(end else elseif catch finally) #t))
 
 ;; ";" at the top level produces a sequence of top level expressions
 (define (parse-stmts s)
-  (let ((ex (parse-Nary s parse-eq '(#\;) 'toplevel '(#\newline) #t)))
+  (let ((ex (parse-Nary s (lambda (s) (parse-docstring s parse-eq))
+			'(#\;) 'toplevel '(#\newline) #t)))
     ;; check for unparsed junk after an expression
     (let ((t (peek-token s)))
       (if (not (or (eof-object? t) (eqv? t #\newline) (eq? t #f)))
@@ -1027,7 +1029,7 @@
                                     (parse-string-literal s #t)))
                         (nxt (peek-token s))
                         (macname (symbol (string #\@ ex '_str)))
-                        (macstr (if (triplequote-string-literal? str) str (cadr str))))
+                        (macstr (car str)))
                    (if (and (symbol? nxt) (not (operator? nxt))
                             (not (ts:space? s)))
                        ;; string literal suffix, "s"x
@@ -1162,9 +1164,10 @@
      (let ((immu? (eq? word 'immutable)))
        (if (memq (peek-token s) reserved-words)
 	   (error (string "invalid type name \"" (take-token s) "\"")))
-       (let ((sig (parse-subtype-spec s)))
+       (let ((sig (parse-subtype-spec s))
+	     (loc (line-number-filename-node s)))
          (begin0 (list 'type (if (eq? word 'type) #t #f)
-                       sig (parse-block s))
+                       sig (add-filename-to-block! (parse-block s) loc))
                  (expect-end s)))))
     ((bitstype)
      (list 'bitstype (with-space-sensitive (parse-cond s))
@@ -1243,7 +1246,8 @@
            `(const ,assgn))))
     ((module baremodule)
      (let* ((name (parse-unary-prefix s))
-            (body (parse-block s)))
+	    (loc  (line-number-filename-node s))
+            (body (parse-block s (lambda (s) (parse-docstring s parse-eq)))))
        (expect-end s)
        (list 'module (eq? word 'module) name
              (if (eq? word 'module)
@@ -1251,9 +1255,13 @@
                         ;; add definitions for module-local eval
                         (let ((x (if (eq? name 'x) 'y 'x)))
                           `(= (call eval ,x)
-                              (call (|.| (top Core) 'eval) ,name ,x)))
+			      (block
+			       ,loc
+			       (call (|.| (top Core) 'eval) ,name ,x))))
                         `(= (call eval m x)
-                            (call (|.| (top Core) 'eval) m x))
+			    (block
+			     ,loc
+			     (call (|.| (top Core) 'eval) m x)))
                         (cdr body))
                  body))))
     ((export)
@@ -1630,13 +1638,105 @@
 (define (take-char p)
   (begin (read-char p) p))
 
+; map the first element of lst
+(define (map-first f lst)
+  (if (null? lst) ()
+    (cons (f (car lst)) (cdr lst))))
+
+; map the elements of lst where (pred index) is true
+; e.g., (map-at odd? (lambda (x) 0) '(a b c d)) -> '(a 0 c 0)
+(define (map-at pred f lst)
+  (define (map-at- pred f lst i r)
+    (if (null? lst) (reverse r)
+      (let* ((x (car lst))
+             (y (if (pred i) (f x) x)))
+        (map-at- pred f (cdr lst) (+ i 1) (cons y r)))))
+  (map-at- pred f lst 0 ()))
+
 (define (parse-string-literal s custom)
   (let ((p (ts:port s)))
     (if (eqv? (peek-char p) #\")
         (if (eqv? (peek-char (take-char p)) #\")
-            (parse-string-literal- 'triple_quoted_string 2 (take-char p) s custom)
-            '(single_quoted_string ""))
-        (parse-string-literal- 'single_quoted_string 0 p s custom))))
+            (map-first strip-leading-newline
+              (dedent-triplequoted-string
+                (parse-string-literal- 2 (take-char p) s custom)))
+            (list ""))
+        (parse-string-literal- 0 p s custom))))
+
+(define (strip-leading-newline s)
+  (if (and (> (sizeof s) 0) (eqv? (string.char s 0) #\newline))
+      (string.tail s 1)
+      s))
+
+(define (dedent-triplequoted-string lst)
+  (let ((prefix (triplequoted-string-indentation lst)))
+    (if (length> prefix 0)
+        (map-at even?
+                (lambda (s)
+                  (string-replace s
+                                  (list->string (cons #\newline prefix))
+                                  #\newline))
+                lst)
+        lst)))
+
+(define (triplequoted-string-indentation lst)
+  (longest-common-prefix
+    (apply append (map (lambda (s) (if (string? s)
+                                       (triplequoted-string-indentation- s)
+                                       ()))
+                       lst))))
+
+(define (triplequoted-string-indentation- s)
+  (let ((p (open-input-string s)))
+    (let loop ((c (read-char p))
+               (state 0)
+               (prefix ())
+               (prefixes ()))
+      (cond
+        ((eqv? c #\newline)
+         (loop (read-char p) 1 () prefixes))
+        ((eqv? state 0)
+         (if (eof-object? c) prefixes
+             (loop (read-char p) 0 () prefixes)))
+        ((memv c '(#\space #\tab))
+         (loop (read-char p) 2 (cons c prefix) prefixes))
+        (else
+         (loop (read-char p) 0 () (cons (reverse prefix) prefixes)))))))
+
+; return the longest common prefix of the elements of l
+; e.g., (longest-common-prefix ((1 2) (1 4))) -> (1)
+(define (longest-common-prefix l)
+  (let ((len (length l)))
+  (cond
+    ((= len 0) ())
+    ((= len 1) (car l))
+    (else (longest-common-prefix
+            (cons (longest-common-prefix2 (car l) (cadr l))
+                  (cddr l)))))))
+
+; return the longest common prefix of lists a & b
+(define (longest-common-prefix2 a b)
+  (longest-common-prefix2- a b ()))
+
+(define (longest-common-prefix2- a b p)
+  (if (and (length> a 0)
+           (length> b 0)
+           (eqv? (car a) (car b)))
+      (longest-common-prefix2- (cdr a) (cdr b) (cons (car a) p))
+      (reverse p)))
+
+(define (string-split s sep)
+  (string-split- s sep 0 ()))
+
+(define (string-split- s sep start splits)
+  (let ((i (string.find s sep start)))
+    (if i
+        (string-split- s sep (+ i (sizeof sep)) (cons (string.sub s start i) splits))
+        (reverse (cons (string.sub s start (sizeof s)) splits)))))
+
+; replace all occurrences of a in s with b
+(define (string-replace s a b)
+  (string.join (string-split s a) b))
 
 (define (parse-interpolate s)
   (let* ((p (ts:port s))
@@ -1664,10 +1764,10 @@
 ;; custom = custom string literal
 ;; when custom is #t, unescape only \\ and \"
 ;; otherwise do full unescaping, and parse interpolations too
-(define (parse-string-literal- head n p s custom)
+(define (parse-string-literal- n p s custom)
   (let loop ((c (read-char p))
              (b (open-output-string))
-             (e (list head))
+             (e ())
              (quotes 0))
     (cond
       ((eqv? c #\")
@@ -1705,9 +1805,6 @@
       (else
        (write-char (not-eof-3 c) b)
        (loop (read-char p) b e 0)))))
-
-(define (interpolate-string-literal? s) (length> s 2))
-(define (triplequote-string-literal? s) (eqv? (car s) 'triple_quoted_string))
 
 (define (not-eof-1 c)
   (if (eof-object? c)
@@ -1897,14 +1994,12 @@
           ((eqv? t #\")
            (take-token s)
            (let ((ps (parse-string-literal s #f)))
-             (if (triplequote-string-literal? ps)
-                 `(macrocall @mstr ,@(cdr ps))
-                 (if (interpolate-string-literal? ps)
-                     `(string ,@(filter (lambda (s)
-                                          (not (and (string? s)
-                                                    (= (length s) 0))))
-                                        (cdr ps)))
-                     (cadr ps)))))
+             (if (length> ps 1)
+                 `(string ,@(filter (lambda (s)
+                                      (not (and (string? s)
+                                                (= (length s) 0))))
+                                    ps))
+                 (car ps))))
 
           ;; macro call
           ((eqv? t #\@)
@@ -1940,6 +2035,24 @@
                               (quote ,(macroify-name (cadr (caddr e))))))
         (else (error (string "invalid macro use \"@(" (deparse e) ")\"" )))))
 
+(define (simple-string-literal? e) (string? e))
+
+(define (any-string-literal? e)
+  (or (simple-string-literal? e)
+      (and (length= e 3) (eq? (car e) 'macrocall)
+	   (simple-string-literal? (caddr e))
+	   (let ((mname (string (cadr e))))
+	     (equal? (string.sub mname (string.dec mname (length mname) 4))
+		     "_str")))))
+
+(define (parse-docstring s production)
+  (let* ((isstr (eqv? (peek-token s) #\"))
+	 (ex    (production s)))
+    (if (and (or isstr (any-string-literal? ex))
+	     (not (closing-token? (peek-token s))))
+	`(macrocall (|.| Base (quote @doc)) ,ex ,(production s))
+	ex)))
+
 ; --- main entry point ---
 
 ;; can optionally specify which grammar production to parse.
@@ -1962,4 +2075,4 @@
          (if (eof-object? (peek-token s))
              (eof-object)
              ((if (null? production) parse-stmts (car production))
-              s)))))
+	            s)))))

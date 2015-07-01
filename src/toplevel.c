@@ -75,7 +75,7 @@ jl_array_t *jl_module_init_order = NULL;
 // load time init procedure: in build mode, only record order
 void jl_module_load_time_initialize(jl_module_t *m)
 {
-    int build_mode = (jl_options.build_path != NULL);
+    int build_mode = jl_generating_output();
     if (build_mode) {
         if (jl_module_init_order == NULL)
             jl_module_init_order = jl_alloc_cell_1d(0);
@@ -111,7 +111,7 @@ jl_value_t *jl_eval_module_expr(jl_expr_t *ex)
     jl_module_t *parent_module = jl_current_module;
     jl_binding_t *b = jl_get_binding_wr(parent_module, name);
     jl_declare_constant(b);
-    if (b->value != NULL && jl_options.build_path == NULL) {
+    if (b->value != NULL && !jl_generating_output()) {
         jl_printf(JL_STDERR, "Warning: replacing module %s\n", name->name);
     }
     jl_module_t *newm = jl_new_module(name);
@@ -202,7 +202,7 @@ jl_value_t *jl_eval_module_expr(jl_expr_t *ex)
         module_stack.len = stackidx;
     }
 
-    return jl_nothing;
+    return (jl_value_t*)newm;
 }
 
 // module referenced by TopNode from within m
@@ -211,7 +211,7 @@ jl_value_t *jl_eval_module_expr(jl_expr_t *ex)
 // - later, it refers to either old Base or new Base
 DLLEXPORT jl_module_t *jl_base_relative_to(jl_module_t *m)
 {
-    while (m != jl_main_module) {
+    while (m != m->parent) {
         if (m->istopmod)
             return m;
         m = m->parent;
@@ -226,7 +226,7 @@ int jl_has_intrinsics(jl_expr_t *ast, jl_expr_t *e, jl_module_t *m)
     if (e->head == static_typeof_sym) return 1;
     jl_value_t *e0 = jl_exprarg(e,0);
     if (e->head == call_sym) {
-        jl_value_t *sv = jl_static_eval(e0, NULL, m, jl_emptysvec, ast, 0, 0);
+        jl_value_t *sv = jl_static_eval(e0, NULL, m, (jl_value_t*)jl_emptysvec, ast, 0, 0);
         if (sv && jl_typeis(sv, jl_intrinsic_type))
             return 1;
     }
@@ -241,7 +241,7 @@ int jl_has_intrinsics(jl_expr_t *ast, jl_expr_t *e, jl_module_t *m)
 
 // heuristic for whether a top-level input should be evaluated with
 // the compiler or the interpreter.
-int jl_eval_with_compiler_p(jl_value_t *ast, jl_expr_t *expr, int compileloops, jl_module_t *m)
+int jl_eval_with_compiler_p(jl_expr_t *ast, jl_expr_t *expr, int compileloops, jl_module_t *m)
 {
     assert(jl_is_expr(expr));
     if (expr->head==body_sym && compileloops) {
@@ -493,7 +493,7 @@ jl_value_t *jl_toplevel_eval_flex(jl_value_t *e, int fast)
         thk = (jl_lambda_info_t*)jl_exprarg(ex,0);
         assert(jl_is_lambda_info(thk));
         assert(jl_is_expr(thk->ast));
-        ewc = jl_eval_with_compiler_p(thk->ast, jl_lam_body((jl_expr_t*)thk->ast), fast, jl_current_module);
+        ewc = jl_eval_with_compiler_p((jl_expr_t*)thk->ast, jl_lam_body((jl_expr_t*)thk->ast), fast, jl_current_module);
         if (!ewc) {
             if (jl_lam_vars_captured((jl_expr_t*)thk->ast)) {
                 // interpreter doesn't handle closure environment
@@ -690,6 +690,24 @@ DLLEXPORT jl_value_t *jl_generic_function_def(jl_sym_t *name, jl_value_t **bp, j
     return gf;
 }
 
+static jl_lambda_info_t *jl_copy_lambda_info(jl_lambda_info_t *linfo)
+{
+    jl_lambda_info_t *new_linfo =
+        jl_new_lambda_info(linfo->ast, linfo->sparams);
+    new_linfo->tfunc = linfo->tfunc;
+    new_linfo->name = linfo->name;
+    new_linfo->roots = linfo->roots;
+    new_linfo->specTypes = linfo->specTypes;
+    new_linfo->unspecialized = linfo->unspecialized;
+    new_linfo->specializations = linfo->specializations;
+    new_linfo->module = linfo->module;
+    new_linfo->def = linfo->def;
+    new_linfo->capt = linfo->capt;
+    new_linfo->file = linfo->file;
+    new_linfo->line = linfo->line;
+    return new_linfo;
+}
+
 DLLEXPORT jl_value_t *jl_method_def(jl_sym_t *name, jl_value_t **bp, jl_value_t *bp_owner,
                                     jl_binding_t *bnd,
                                     jl_svec_t *argdata, jl_function_t *f, jl_value_t *isstaged,
@@ -698,8 +716,8 @@ DLLEXPORT jl_value_t *jl_method_def(jl_sym_t *name, jl_value_t **bp, jl_value_t 
     // argdata is svec({types...}, svec(typevars...))
     jl_tupletype_t *argtypes = (jl_tupletype_t*)jl_svecref(argdata,0);
     jl_svec_t *tvars = (jl_svec_t*)jl_svecref(argdata,1);
-    jl_value_t *gf=NULL;
-    JL_GC_PUSH3(&gf, &tvars, &argtypes);
+    jl_value_t *gf = NULL;
+    JL_GC_PUSH4(&gf, &tvars, &argtypes, &f);
 
     if (bnd && bnd->value != NULL && !bnd->constp) {
         jl_errorf("cannot define function %s; it already has a value", bnd->name->name);
@@ -714,7 +732,10 @@ DLLEXPORT jl_value_t *jl_method_def(jl_sym_t *name, jl_value_t **bp, jl_value_t 
                     call_func = (jl_value_t*)jl_module_call_func(jl_current_module);
                 size_t na = jl_nparams(argtypes);
                 jl_svec_t *newargtypes = jl_alloc_svec(1 + na);
-                JL_GC_PUSH1(&newargtypes);
+                jl_lambda_info_t *new_linfo = NULL;
+                JL_GC_PUSH2(&newargtypes, &new_linfo);
+                new_linfo = jl_copy_lambda_info(f->linfo);
+                f = jl_new_closure(f->fptr, f->env, new_linfo);
                 size_t i=0;
                 if (iskw) {
                     assert(na > 0);
@@ -734,6 +755,12 @@ DLLEXPORT jl_value_t *jl_method_def(jl_sym_t *name, jl_value_t **bp, jl_value_t 
                 // edit args, insert type first
                 if (!jl_is_expr(f->linfo->ast)) {
                     f->linfo->ast = jl_uncompress_ast(f->linfo, f->linfo->ast);
+                    jl_gc_wb(f->linfo, f->linfo->ast);
+                }
+                else {
+                    // Do not mutate the original ast since it might
+                    // be reused somewhere else
+                    f->linfo->ast = jl_copy_ast(f->linfo->ast);
                     jl_gc_wb(f->linfo, f->linfo->ast);
                 }
                 jl_array_t *al = jl_lam_args((jl_expr_t*)f->linfo->ast);

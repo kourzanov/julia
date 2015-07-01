@@ -75,7 +75,7 @@ static inline void add_named_global(GlobalValue *gv, void *addr)
 #ifdef _OS_WINDOWS_
     std::string imp_name;
     // setting DLLEXPORT correctly only matters when building a binary
-    if (jl_options.build_path != NULL) {
+    if (jl_generating_output()) {
         // add the __declspec(dllimport) attribute
         gv->setDLLStorageClass(GlobalValue::DLLImportStorageClass);
         // this will cause llvm to rename it, so we do the same
@@ -97,7 +97,7 @@ static inline void add_named_global(GlobalValue *gv, void *addr)
 
 #ifdef _OS_WINDOWS_
     // setting DLLEXPORT correctly only matters when building a binary
-    if (jl_options.build_path != NULL) {
+    if (jl_generating_output()) {
         if (gv->getLinkage() == GlobalValue::ExternalLinkage)
             gv->setLinkage(GlobalValue::DLLImportLinkage);
 #ifdef _P64
@@ -154,7 +154,7 @@ static GlobalVariable *stringConst(const std::string &txt)
 
 typedef struct {Value* gv; int32_t index;} jl_value_llvm; // uses 1-based indexing
 static std::map<void*, jl_value_llvm> jl_value_to_llvm;
-static std::map<Value *, void*> llvm_to_jl_value;
+DLLEXPORT std::map<Value *, void*> jl_llvm_to_jl_value;
 
 #ifdef USE_MCJIT
 class FunctionMover : public ValueMaterializer
@@ -277,8 +277,8 @@ public:
                 }
             }
             std::map<Value*, void *>::iterator it;
-            it = llvm_to_jl_value.find(GV);
-            if (it != llvm_to_jl_value.end()) {
+            it = jl_llvm_to_jl_value.find(GV);
+            if (it != jl_llvm_to_jl_value.end()) {
                 newGV->setInitializer(Constant::getIntegerValue(GV->getType()->getElementType(),APInt(sizeof(void*)*8,(ptrint_t)it->second)));
                 newGV->setConstant(true);
             }
@@ -444,7 +444,7 @@ static Value *julia_gv(const char *cname, void *addr)
 
     // make the pointer valid for this session
 #ifdef USE_MCJIT
-    llvm_to_jl_value[gv] = addr;
+    jl_llvm_to_jl_value[gv] = addr;
 #else
     void **p = (void**)jl_ExecutionEngine->getPointerToGlobal(gv);
     *p = addr;
@@ -1334,13 +1334,13 @@ static Value *emit_getfield_unknownidx(Value *strct, Value *idx, jl_datatype_t *
     }
     else if (is_tupletype_homogeneous(stt->types)) {
         assert(jl_isbits(stt));
-        assert(!jl_field_isptr(stt, 0));
         if (nfields == 0) {
             // TODO: pass correct thing to emit_bounds_check ?
             idx = emit_bounds_check(tbaa_decorate(tbaa_const, builder.CreateLoad(prepare_global(jlemptysvec_var))),
                                     (jl_value_t*)stt, idx, ConstantInt::get(T_size, nfields), ctx);
             return UndefValue::get(jl_pvalue_llvmt);
         }
+        assert(!jl_field_isptr(stt, 0));
         jl_value_t *jt = jl_field_type(stt,0);
         if (!stt->uid) {
             // add root for types not cached
@@ -1874,7 +1874,6 @@ static Value* emit_allocobj(size_t static_size)
 // if ptr is NULL this emits a write barrier _back_
 static void emit_write_barrier(jl_codectx_t* ctx, Value *parent, Value *ptr)
 {
-#ifdef JL_GC_MARKSWEEP
     Value* parenttag = builder.CreateBitCast(emit_typeptr_addr(parent), T_psize);
     Value* parent_type = builder.CreateLoad(parenttag);
     Value* parent_mark_bits = builder.CreateAnd(parent_type, 1);
@@ -1897,12 +1896,10 @@ static void emit_write_barrier(jl_codectx_t* ctx, Value *parent, Value *ptr)
     builder.CreateBr(cont);
     ctx->f->getBasicBlockList().push_back(cont);
     builder.SetInsertPoint(cont);
-#endif
 }
 
 static void emit_checked_write_barrier(jl_codectx_t *ctx, Value *parent, Value *ptr)
 {
-#ifdef JL_GC_MARKSWEEP
     BasicBlock *cont;
     Value *not_null = builder.CreateICmpNE(ptr, V_null);
     BasicBlock *if_not_null = BasicBlock::Create(getGlobalContext(), "wb_not_null", ctx->f);
@@ -1913,7 +1910,6 @@ static void emit_checked_write_barrier(jl_codectx_t *ctx, Value *parent, Value *
     builder.CreateBr(cont);
     ctx->f->getBasicBlockList().push_back(cont);
     builder.SetInsertPoint(cont);
-#endif
 }
 
 static Value *emit_setfield(jl_datatype_t *sty, Value *strct, size_t idx0,

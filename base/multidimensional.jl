@@ -297,7 +297,6 @@ _checksize(A::AbstractArray, dim, I::AbstractVector{Bool}) = size(A, dim) == sum
 _checksize(A::AbstractArray, dim, ::Colon) = true
 _checksize(A::AbstractArray, dim, ::Real) = size(A, dim) == 1
 
-@inline unsafe_setindex!{T}(v::Array{T}, x::T, ind::Int) = (@inbounds v[ind] = x; v)
 @inline unsafe_setindex!(v::BitArray, x::Bool, ind::Int) = (Base.unsafe_bitsetindex!(v.chunks, x, ind); v)
 @inline unsafe_setindex!(v::BitArray, x, ind::Real) = (Base.unsafe_bitsetindex!(v.chunks, convert(Bool, x), to_index(ind)); v)
 
@@ -312,7 +311,7 @@ _iterable(v) = repeated(v)
     _unsafe_setindex!(l, A, x, J...)
 end
 @inline function _unsafe_setindex!(l::LinearIndexing, A::AbstractArray, x, J::Union{Real,AbstractVector,Colon}...)
-    _unsafe_batchsetindex!(l, A, _iterable(x), to_index(J)...)
+    _unsafe_batchsetindex!(l, A, _iterable(x), to_indexes(J...)...)
 end
 
 # While setindex! with one array argument doesn't mean anything special, it is
@@ -643,7 +642,7 @@ end
 
         storeind = 1
         Xc, Bc = X.chunks, B.chunks
-        @nloops($N, i, d->I_d,
+        @nloops($N, i, d->1:size(X, d+1),
                 d->nothing, # PRE
                 d->(ind += stride_lst_d - gap_lst_d), # POST
                 begin # BODY

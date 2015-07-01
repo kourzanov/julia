@@ -57,6 +57,9 @@ include("abstractarray.jl")
 include("subarray.jl")
 include("array.jl")
 
+include("docs/bootstrap.jl")
+using .DocBootstrap
+
 # numeric operations
 include("hashing.jl")
 include("rounding.jl")
@@ -243,7 +246,7 @@ include("client.jl")
 # Documentation
 
 include("markdown/Markdown.jl")
-include("docs.jl")
+include("docs/Docs.jl")
 using .Docs
 using .Markdown
 
@@ -276,8 +279,8 @@ end
 include("sysinfo.jl")
 import .Sys.CPU_CORES
 
-# mathematical constants
-include("constants.jl")
+# irrational mathematical constants
+include("irrationals.jl")
 
 # Numerical integration
 include("quadgk.jl")
@@ -303,7 +306,7 @@ import .Dates: Date, DateTime, now
 include("deprecated.jl")
 
 # Some basic documentation
-include("basedocs.jl")
+include("docs/basedocs.jl")
 
 function __init__()
     # Base library init
