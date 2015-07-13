@@ -1437,10 +1437,10 @@ UTF8PROC_SRC_TARGET = $(UTF8PROC_SRC_DIR)/libutf8proc.a
 UTF8PROC_OBJ_LIB    = $(build_libdir)/libutf8proc.a
 UTF8PROC_OBJ_HEADER = $(build_includedir)/utf8proc.h
 UTF8PROC_OBJ_TARGET = $(UTF8PROC_OBJ_LIB) $(UTF8PROC_OBJ_HEADER)
-UTF8PROC_CFLAGS     = -O2 -std=c99 $(fPIC) -DUTF8PROC_EXPORTS
+UTF8PROC_CFLAGS     = -O2
 
 $(UTF8PROC_SRC_TARGET): $(UTF8PROC_SRC_DIR)/Makefile
-	$(MAKE) -C $(UTF8PROC_SRC_DIR) CC="$(CC) $(DEPS_CFLAGS)" CFLAGS="$(CFLAGS) $(UTF8PROC_CFLAGS)" AR="$(AR)" libutf8proc.a
+	$(MAKE) -C $(UTF8PROC_SRC_DIR) CC="$(CC) $(DEPS_CFLAGS)" CFLAGS="$(CFLAGS) $(UTF8PROC_CFLAGS)" PICFLAG="$(fPIC)" AR="$(AR)" libutf8proc.a
 	touch -c $@
 $(UTF8PROC_SRC_DIR)/checked: $(UTF8PROC_SRC_TARGET)
 ifeq ($(OS),$(BUILD_OS))
@@ -1894,17 +1894,18 @@ LIBGIT2_OBJ_TARGET = $(build_shlibdir)/libgit2.$(SHLIB_EXT)
 
 LIBGIT2_OPTS = $(CMAKE_COMMON) -DTHREADSAFE=ON
 ifeq ($(OS),WINNT)
-LIBGIT2_OPTS += -DWIN32=ON -DMINGW=ON -DUSE_SSH=OFF -DCMAKE_SYSTEM_NAME=Windows
+LIBGIT2_OPTS += -DWIN32=ON -DMINGW=ON -DUSE_SSH=OFF -DCMAKE_SYSTEM_NAME=Windows -DCMAKE_BUILD_TYPE=Debug
 ifeq ($(BUILD_OS),WINNT)
 LIBGIT2_OPTS += -G"MSYS Makefiles"
 else
-LIBGIT2_OPTS += -DBUILD_CLAR=OFF -DCMAKE_RC_COMPILER=`which $(CROSS_COMPILE)windres`
+LIBGIT2_OPTS += -DBUILD_CLAR=OFF -DCMAKE_RC_COMPILER=`which $(CROSS_COMPILE)windres` -DDLLTOOL=`which $(CROSS_COMPILE)dlltool`
 LIBGIT2_OPTS += -DCMAKE_FIND_ROOT_PATH=/usr/$(XC_HOST) -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=ONLY
 endif
 endif
 
 $(LIBGIT2_SRC_DIR)/build/Makefile: $(LIBGIT2_SRC_DIR)/CMakeLists.txt
-	cd $(LIBGIT2_SRC_DIR) && patch -p1 < ../libgit2_oldcmake.patch
+	-cd $(LIBGIT2_SRC_DIR) && patch -p1 -f < ../libgit2_oldcmake.patch
+	-cd $(LIBGIT2_SRC_DIR) && patch -p1 -f < ../libgit2_oldssl.patch
 	mkdir -p $(LIBGIT2_SRC_DIR)/build
 	cd $(LIBGIT2_SRC_DIR)/build/ && \
 	$(CMAKE) .. $(LIBGIT2_OPTS)

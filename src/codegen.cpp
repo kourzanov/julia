@@ -396,9 +396,8 @@ struct jl_varinfo_t {
 };
 
 // --- helpers for reloading IR image
-static void jl_gen_llvm_gv_array(llvm::Module *mod, SmallVector<GlobalVariable*, 8> &globalvars);
-static void jl_sysimg_to_llvm(llvm::Module *mod, SmallVector<GlobalVariable*, 8> &globalvars,
-                              const char *sysimg_data, size_t sysimg_len);
+static void jl_gen_llvm_gv_array(llvm::Module *mod);
+static void jl_sysimg_to_llvm(llvm::Module *mod, const char *sysimg_data, size_t sysimg_len);
 
 extern "C"
 void jl_dump_bitcode(char *fname)
@@ -414,17 +413,15 @@ void jl_dump_bitcode(char *fname)
     std::string err;
     raw_fd_ostream OS(fname, err);
 #endif
-    SmallVector<GlobalVariable*, 8> globalvars;
 #ifdef USE_MCJIT
-    jl_gen_llvm_gv_array(shadow_module, globalvars);
-    WriteBitcodeToFile(shadow_module, OS);
+    Module *bitcode = CloneModule(shadow_module);
+    jl_gen_llvm_gv_array(bitcode);
+    WriteBitcodeToFile(bitcode, OS);
 #else
-    jl_gen_llvm_gv_array(jl_Module, globalvars);
-    WriteBitcodeToFile(jl_Module, OS);
+    Module *bitcode = CloneModule(jl_Module);
+    jl_gen_llvm_gv_array(bitcode);
+    WriteBitcodeToFile(bitcode, OS);
 #endif
-    for (SmallVectorImpl<GlobalVariable>::iterator *I = globalvars.begin(), *E = globalvars.end(); I != E; ++I) {
-        (*I)->eraseFromParent();
-    }
 }
 
 extern "C"
@@ -505,26 +502,24 @@ void jl_dump_objfile(char *fname, int jit_model, const char *sysimg_data, size_t
         jl_error("Could not generate obj file for this target");
     }
 
-    SmallVector<GlobalVariable*, 8> globalvars;
 #ifdef USE_MCJIT
-    if (sysimg_data)
-        jl_sysimg_to_llvm(shadow_module, globalvars, sysimg_data, sysimg_len);
-    jl_gen_llvm_gv_array(shadow_module, globalvars);
     // Reset the target triple to make sure it matches the new target machine
-#ifdef LLVM37
+    #ifdef LLVM37
     shadow_module->setTargetTriple(TM->getTargetTriple().str());
     shadow_module->setDataLayout(TM->getDataLayout()->getStringRepresentation());
-#endif
-    PM.run(*shadow_module);
-#else
+    #endif
+    Module *objfile = CloneModule(shadow_module);
     if (sysimg_data)
-        jl_sysimg_to_llvm(jl_Module, globalvars, sysimg_data, sysimg_len);
-    jl_gen_llvm_gv_array(jl_Module, globalvars);
-    PM.run(*jl_Module);
+        jl_sysimg_to_llvm(objfile, sysimg_data, sysimg_len);
+    jl_gen_llvm_gv_array(objfile);
+    PM.run(*objfile);
+#else
+    Module *objfile = CloneModule(jl_Module);
+    if (sysimg_data)
+        jl_sysimg_to_llvm(objfile, sysimg_data, sysimg_len);
+    jl_gen_llvm_gv_array(objfile);
+    PM.run(*objfile);
 #endif
-    for (SmallVectorImpl<GlobalVariable>::iterator *I = globalvars.begin(), *E = globalvars.end(); I != E; ++I) {
-        (*I)->eraseFromParent();
-    }
 }
 
 // aggregate of array metadata
@@ -1291,9 +1286,13 @@ void write_log_data(logdata_t logData, const char *extension)
     }
 }
 
+extern "C" int jl_getpid();
 extern "C" void jl_write_coverage_data(void)
 {
-    write_log_data(coverageData, ".cov");
+    std::ostringstream stm;
+    stm << jl_getpid();
+    std::string outf = "." + stm.str() + ".cov";
+    write_log_data(coverageData, outf.c_str());
 }
 
 // Memory allocation log (malloc_log)
@@ -1573,7 +1572,7 @@ static void mark_volatile_vars(jl_array_t *stmts, std::map<jl_sym_t*,jl_varinfo_
 
 static bool expr_is_symbol(jl_value_t *e)
 {
-    return (jl_is_symbol(e) || jl_is_symbolnode(e) || jl_is_topnode(e));
+    return (jl_is_symbol(e) || jl_is_symbolnode(e) || jl_is_topnode(e) || jl_is_globalref(e));
 }
 
 // a very simple, conservative escape analysis that is sufficient for
@@ -1747,7 +1746,8 @@ static bool is_stable_expr(jl_value_t *ex, jl_codectx_t *ctx)
 static bool might_need_root(jl_value_t *ex)
 {
     return (!jl_is_symbol(ex) && !jl_is_symbolnode(ex) && !jl_is_gensym(ex) &&
-            !jl_is_bool(ex) && !jl_is_quotenode(ex) && !jl_is_byte_string(ex));
+            !jl_is_bool(ex) && !jl_is_quotenode(ex) && !jl_is_byte_string(ex) &&
+            !jl_is_globalref(ex));
 }
 
 static Value *emit_boxed_rooted(jl_value_t *e, jl_codectx_t *ctx)
@@ -4380,8 +4380,7 @@ static Function *emit_function(jl_lambda_info_t *lam)
                 vi.hasGCRoot = false;
                 continue;
             }
-            if (vi.isSA && !vi.isVolatile &&
-                    !vi.isCaptured && !vi.usedUndef) {
+            if (vi.isSA && !vi.isVolatile && !vi.isCaptured && !vi.usedUndef) {
                 vi.hasGCRoot = false; // so far...
             }
             else {
@@ -5605,6 +5604,7 @@ extern "C" void jl_init_codegen(void)
     jl_mcjmm = new SectionMemoryManager();
 #endif
     const char *mattr[] = {
+#if defined(_CPU_X86_64_) || defined(_CPU_X86_)
 #ifndef USE_MCJIT
         // Temporarily disable Haswell BMI2 features due to LLVM bug.
         "-bmi2", "-avx2",
@@ -5612,6 +5612,8 @@ extern "C" void jl_init_codegen(void)
 #ifdef V128_BUG
         "-avx",
 #endif
+#endif
+        "", // padding to make sure this isn't an empty array (ref #11817)
     };
     SmallVector<std::string, 4> MAttrs(mattr, mattr+sizeof(mattr)/sizeof(mattr[0]));
 #ifdef LLVM36
@@ -5641,14 +5643,17 @@ extern "C" void jl_init_codegen(void)
     TheTriple.setEnvironment(Triple::ELF);
 #endif
 #endif
+    std::string TheCPU = strcmp(jl_options.cpu_target,"native") ? jl_options.cpu_target : sys::getHostCPUName();
+    if (TheCPU.empty() || TheCPU == "generic") {
+        jl_printf(JL_STDERR, "warning: unable to determine host cpu name.\n");
+#ifdef _CPU_ARM_
+        MAttrs.append(1, "+vfp2"); // the processors that don't have VFP are old and (hopefully) rare. this affects the platform calling convention.
+#endif
+    }
     TargetMachine *targetMachine = eb.selectTarget(
             TheTriple,
             "",
-#if LLVM35
-            strcmp(jl_options.cpu_target,"native") ? StringRef(jl_options.cpu_target) : sys::getHostCPUName(),
-#else
-            strcmp(jl_options.cpu_target,"native") ? jl_options.cpu_target : "",
-#endif
+            TheCPU,
             MAttrs);
     jl_TargetMachine = targetMachine->getTarget().createTargetMachine(
             TheTriple.getTriple(),
