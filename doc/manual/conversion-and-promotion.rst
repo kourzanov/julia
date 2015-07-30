@@ -45,7 +45,7 @@ mathematical operators are just functions with special syntax, and the
 arguments of functions are never automatically converted. However, one
 may observe that applying mathematical operations to a wide variety of
 mixed argument types is just an extreme case of polymorphic multiple
-dispatch — something which Julia's dispatch and type systems are
+dispatch — something which Julia's dispatch and type systems are
 particularly well-suited to handle. "Automatic" promotion of
 mathematical operands simply emerges as a special application: Julia
 comes with pre-defined catch-all dispatch rules for mathematical
@@ -276,6 +276,9 @@ the the catch-all method definitions given in
     *(x::Number, y::Number) = *(promote(x,y)...)
     /(x::Number, y::Number) = /(promote(x,y)...)
 
+In certain cases, the result type also depends on the operator; how to
+handle such scenarios is described :ref:`elsewhere <devdocs-promote-op>`.
+
 These method definitions say that in the absence of more specific rules
 for adding, subtracting, multiplying and dividing pairs of numeric
 values, promote the values to a common type and then try again. That's
@@ -308,6 +311,8 @@ For most user-defined types, it is better practice to require
 programmers to supply the expected types to constructor functions
 explicitly, but sometimes, especially for numeric problems, it can be
 convenient to do promotion automatically.
+
+.. _man-promotion-rules:
 
 Defining Promotion Rules
 ~~~~~~~~~~~~~~~~~~~~~~~~
@@ -383,7 +388,7 @@ as promoting the numerator/denominator type with the float.
 This small handful of promotion rules, together with the `conversion
 methods discussed above <#case-study-rational-conversions>`_, are
 sufficient to make rational numbers interoperate completely naturally
-with all of Julia's other numeric types — integers, floating-point
+with all of Julia's other numeric types — integers, floating-point
 numbers, and complex numbers. By providing appropriate conversion
 methods and promotion rules in the same manner, any user-defined numeric
 type can interoperate just as naturally with Julia's predefined

@@ -149,6 +149,11 @@ debug && println("non-symmetric eigen decomposition")
 
         num_fact = eigfact(one(eltya))
         @test num_fact.values[1] == one(eltya)
+        h = a + a'
+        @test_approx_eq minimum(eigvals(h)) eigmin(h)
+        @test_approx_eq maximum(eigvals(h)) eigmax(h)
+        @test_throws DomainError eigmin(a - a')
+        @test_throws DomainError eigmax(a - a')
     end
 
 debug && println("symmetric generalized eigenproblem")
@@ -183,7 +188,7 @@ debug && println("Schur")
         @test_approx_eq f[:vectors]*f[:Schur]*f[:vectors]' a
         @test_approx_eq sort(real(f[:values])) sort(real(d))
         @test_approx_eq sort(imag(f[:values])) sort(imag(d))
-        @test istriu(f[:Schur]) || iseltype(a,Real)
+        @test istriu(f[:Schur]) || eltype(a)<:Real
         @test_approx_eq full(f) a
         @test_throws KeyError f[:A]
     end
@@ -208,8 +213,8 @@ debug && println("Generalized Schur")
         f = schurfact(a1_sf, a2_sf)
         @test_approx_eq f[:Q]*f[:S]*f[:Z]' a1_sf
         @test_approx_eq f[:Q]*f[:T]*f[:Z]' a2_sf
-        @test istriu(f[:S]) || iseltype(a,Real)
-        @test istriu(f[:T]) || iseltype(a,Real)
+        @test istriu(f[:S]) || eltype(a)<:Real
+        @test istriu(f[:T]) || eltype(a)<:Real
         @test_throws KeyError f[:A]
     end
 

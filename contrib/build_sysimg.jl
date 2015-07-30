@@ -62,8 +62,8 @@ function build_sysimg(sysimg_path=default_sysimg_path, cpu_target="native", user
 
             # Bootstrap off off that to create sys.{ji,o}
             info("Building sys.o...")
-            println("$julia -C $cpu_target --output-ji $sysimg_path.ji --output-o $sysimg_path.o  -J $inference_path.ji -f sysimg.jl")
-            run(`$julia -C $cpu_target --output-ji $sysimg_path.ji --output-o $sysimg_path.o -J $inference_path.ji -f sysimg.jl`)
+            println("$julia -C $cpu_target --output-ji $sysimg_path.ji --output-o $sysimg_path.o -J $inference_path.ji --startup-file=no sysimg.jl")
+            run(`$julia -C $cpu_target --output-ji $sysimg_path.ji --output-o $sysimg_path.o -J $inference_path.ji --startup-file=no sysimg.jl`)
 
             if ld != nothing
                 link_sysimg(sysimg_path, ld)
@@ -130,18 +130,13 @@ function link_sysimg(sysimg_path=default_sysimg_path, ld=find_system_linker())
     FLAGS = ["-L$julia_libdir"]
     if OS_NAME == :Darwin
         push!(FLAGS, "-dylib")
-        push!(FLAGS, "-undefined")
-        push!(FLAGS, "dynamic_lookup")
         push!(FLAGS, "-macosx_version_min")
         push!(FLAGS, "10.7")
     else
         push!(FLAGS, "-shared")
-        # on windows we link using gcc for now
-        wl = @windows? "-Wl," : ""
-        push!(FLAGS, wl * "--unresolved-symbols")
-        push!(FLAGS, wl * "ignore-all")
     end
-    @windows_only append!(FLAGS, ["-ljulia", "-lssp-0"])
+    push!(FLAGS, "-ljulia")
+    @windows_only push!(FLAGS, "-lssp")
 
     info("Linking sys.$(Libdl.dlext)")
     run(`$ld $FLAGS -o $sysimg_path.$(Libdl.dlext) $sysimg_path.o`)

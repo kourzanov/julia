@@ -40,6 +40,7 @@ export
     BufferStream,
     CartesianIndex,
     CartesianRange,
+    Channel,
     Cmd,
     Colon,
     Complex,
@@ -78,6 +79,7 @@ export
     ObjectIdDict,
     OrdinalRange,
     Pair,
+    PartialQuickSort,
     PollingFileWatcher,
     ProcessGroup,
     QuickSort,
@@ -89,7 +91,6 @@ export
     RemoteRef,
     RepString,
     RevString,
-    RopeString,
     RoundFromZero,
     RoundDown,
     RoundingMode,
@@ -157,6 +158,7 @@ export
     DimensionMismatch,
     EOFError,
     ErrorException,
+    InvalidStateException,
     KeyError,
     LoadError,
     MethodError,
@@ -219,6 +221,7 @@ export
     .-,
     .*,
     ./,
+    .%,
     .<,
     .<=,
     .≤,
@@ -247,6 +250,7 @@ export
     \,
     ^,
     |,
+    |>,
     ~,
     :,
     ÷,
@@ -367,7 +371,6 @@ export
     invdigamma,
     invmod,
     isapprox,
-    iseltype,
     iseven,
     isfinite,
     isinf,
@@ -457,6 +460,7 @@ export
     airyprime,
     airyx,
     besselh,
+    besselhx,
     besseli,
     besselix,
     besselj,
@@ -591,6 +595,8 @@ export
     sort!,
     sort,
     sortcols,
+    selectperm,
+    selectperm!,
     sortperm,
     sortperm!,
     sortrows,
@@ -658,6 +664,7 @@ export
     linreg,
     logabsdet,
     logdet,
+    logm,
     lu,
     lufact!,
     lufact,
@@ -741,8 +748,6 @@ export
     any!,
     any,
     collect,
-    complement!,
-    complement,
     contains,
     count,
     delete!,
@@ -915,6 +920,8 @@ export
     get_rounding,
     set_rounding,
     with_rounding,
+    get_zero_subnormals,
+    set_zero_subnormals,
 
 # statistics
     cor,
@@ -1095,8 +1102,6 @@ export
     evalfile,
     include,
     include_string,
-    reload,
-    require,
 
 # RTS internals
     finalizer,
@@ -1315,6 +1320,7 @@ export
     pointer,
     pointer_from_objref,
     pointer_to_array,
+    pointer_to_string,
     reenable_sigint,
     unsafe_copy!,
     unsafe_load,
@@ -1335,6 +1341,7 @@ export
     # notation for certain types
     @b_str,  # byte vector
     @r_str,  # regex
+    @s_str,  # regex substitution string
     @v_str,  # version number
 
     # documentation

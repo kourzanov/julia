@@ -62,9 +62,9 @@ eigfact(x::Number) = Eigen([x], fill(one(x), 1, 1))
 #     F = eigfact(A, permute=permute, scale=scale)
 #     F[:values], F[:vectors]
 # end
-function eig(A::Union{Number, AbstractMatrix}, args...; kwargs...)
-    F = eigfact(A, args...; kwargs...)
-    F[:values], F[:vectors]
+function eig(A::Union{Number, AbstractMatrix}; kwargs...)
+    F = eigfact(A; kwargs...)
+    F.values, F.vectors
 end
 #Calculates eigenvectors
 eigvecs(A::Union{Number, AbstractMatrix}, args...; kwargs...) = eigfact(A, args...; kwargs...)[:vectors]
@@ -87,14 +87,21 @@ function eigvals{T<:Number}(x::T; kwargs...)
     return imag(val) == 0 ? [real(val)] : [val]
 end
 
+# TO DO: Put message about not being able to sort complex numbers back in!
 #Computes maximum and minimum eigenvalue
 function eigmax(A::Union{Number, StridedMatrix}; permute::Bool=true, scale::Bool=true)
     v = eigvals(A, permute = permute, scale = scale)
-    iseltype(v,Complex) ? error("DomainError: complex eigenvalues cannot be ordered") : maximum(v)
+    if eltype(v)<:Complex
+        throw(DomainError())
+    end
+    maximum(v)
 end
 function eigmin(A::Union{Number, StridedMatrix}; permute::Bool=true, scale::Bool=true)
     v = eigvals(A, permute = permute, scale = scale)
-    iseltype(v,Complex) ? error("DomainError: complex eigenvalues cannot be ordered") : minimum(v)
+    if eltype(v)<:Complex
+        throw(DomainError())
+    end
+    minimum(v)
 end
 
 inv(A::Eigen) = A.vectors * inv(Diagonal(A.values)) / A.vectors
@@ -130,6 +137,11 @@ end
 function eigfact{TA,TB}(A::AbstractMatrix{TA}, B::AbstractMatrix{TB})
     S = promote_type(Float32, typeof(one(TA)/norm(one(TA))),TB)
     return eigfact!(copy_oftype(A, S), copy_oftype(B, S))
+end
+
+function eig(A::Union{Number, AbstractMatrix}, B::Union{Number, AbstractMatrix})
+    F = eigfact(B)
+    F.values, F.vectors
 end
 
 function eigvals!{T<:BlasReal}(A::StridedMatrix{T}, B::StridedMatrix{T})

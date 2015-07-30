@@ -1,7 +1,6 @@
 # This file is a part of Julia. License is MIT: http://julialang.org/license
 
 import Core.Intrinsics.ccall
-ccall(:jl_new_main_module, Any, ())
 
 baremodule Base
 
@@ -205,6 +204,7 @@ importall .Enums
 # concurrency and parallelism
 include("serialize.jl")
 importall .Serializer
+include("channels.jl")
 include("multi.jl")
 include("managers.jl")
 
@@ -239,7 +239,7 @@ include("REPLCompletions.jl")
 include("REPL.jl")
 include("client.jl")
 
-# Documentation
+# Documentation
 
 include("markdown/Markdown.jl")
 include("docs/Docs.jl")
@@ -264,19 +264,18 @@ include("statistics.jl")
 include("sparse.jl")
 importall .SparseMatrix
 
+# irrational mathematical constants
+include("irrationals.jl")
+
 # signal processing
-if USE_GPL_LIBS
-    include("fftw.jl")
-    include("dsp.jl")
-    importall .DSP
-end
+include("dft.jl")
+importall .DFT
+include("dsp.jl")
+importall .DSP
 
 # system information
 include("sysinfo.jl")
 import .Sys.CPU_CORES
-
-# irrational mathematical constants
-include("irrationals.jl")
 
 # Numerical integration
 include("quadgk.jl")
@@ -308,15 +307,13 @@ function __init__()
     # Base library init
     reinit_stdio()
     Multimedia.reinit_displays() # since Multimedia.displays uses STDOUT as fallback
-    fdwatcher_init()
     early_init()
     init_load_path()
     init_parallel()
 end
 
-include("precompile.jl")
-
 include = include_from_node1
+include("precompile.jl")
 
 end # baremodule Base
 

@@ -64,6 +64,10 @@ USE_LIBCPP = 0
 # assume we don't have LIBSSP support in our compiler, will enable later if likely true
 HAVE_SSP = 0
 
+# GC debugging options
+WITH_GC_VERIFY = 0
+WITH_GC_DEBUG_ENV = 0
+
 # Prevent picking up $ARCH from the environment variables
 ARCH=
 
@@ -382,10 +386,6 @@ else
   SHLIB_EXT = so
 endif
 
-
-# if not absolute, then relative to the directory of the julia executable
-JCPPFLAGS += "-DJL_SYSTEM_IMAGE_PATH=\"$(build_private_libdir_rel)/sys.$(SHLIB_EXT)\""
-
 # On Windows, we want shared library files to end up in $(build_bindir), instead of $(build_libdir)
 ifeq ($(OS),WINNT)
 build_shlibdir = $(build_bindir)
@@ -416,6 +416,16 @@ ifeq (,$(findstring components,$(TAR_TEST)))
 ifneq (bsdtar,$(findstring bsdtar,$(TAR_TEST)))
 $(error "please install either GNU tar or bsdtar")
 endif
+endif
+
+ifeq ($(WITH_GC_VERIFY), 1)
+JCXXFLAGS += -DGC_VERIFY
+JCFLAGS += -DGC_VERIFY
+endif
+
+ifeq ($(WITH_GC_DEBUG_ENV), 1)
+JCXXFLAGS += -DGC_DEBUG_ENV
+JCFLAGS += -DGC_DEBUG_ENV
 endif
 
 # ===========================================================================
@@ -899,9 +909,11 @@ endif
 pathsearch = $(firstword $(wildcard $(addsuffix /$(1),$(subst :, ,$(2)))))
 
 JULIA_BUILD_MODE = release
+JULIA_LIBSUFFIX=
 ifeq (,$(findstring release,$(MAKECMDGOALS)))
 ifneq (,$(findstring debug,$(MAKECMDGOALS)))
 JULIA_BUILD_MODE = debug
+JULIA_LIBSUFFIX=-debug
 endif
 endif
 

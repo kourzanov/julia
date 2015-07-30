@@ -10,10 +10,11 @@ for σ in map(Hermitian, Any[ eye(2), [0 1; 1 0], [0 -im; im 0], [1 0; 0 -1] ])
     @test ishermitian(σ)
 end
 
-# Hermitian matrix exponential
+# Hermitian matrix exponential/log
 let A1 = randn(4,4) + im*randn(4,4)
     A2 = A1 + A1'
     @test_approx_eq expm(A2) expm(Hermitian(A2))
+    @test_approx_eq logm(A2) logm(Hermitian(A2))
 end
 
 let n=10
@@ -37,6 +38,9 @@ let n=10
         # full
         @test asym == full(Hermitian(asym))
 
+        #trace
+        @test trace(asym) == trace(Hermitian(asym))
+
         # issym, ishermitian
         if eltya <: Real
             @test issym(Symmetric(asym))
@@ -49,7 +53,10 @@ let n=10
         #transpose, ctranspose
         if eltya <: Real
             @test transpose(Symmetric(asym)) == asym
+        else
+            @test transpose(Hermitian(asym)) == transpose(asym)
         end
+        @test ctranspose(Symmetric(asym)) == Symmetric(conj(asym))
         @test ctranspose(Hermitian(asym)) == asym
 
         eltya == BigFloat && continue # Revisit when implemented in julia
@@ -91,7 +98,7 @@ let n=10
             @test_approx_eq a * Hermitian(asym) a * asym
             @test_approx_eq Hermitian(asym) * Hermitian(asym) asym*asym
             @test_throws DimensionMismatch Hermitian(asym) * ones(eltya,n+1)
-            Base.LinAlg.A_mul_B!(C,a,asym)
+            Base.LinAlg.A_mul_B!(C,a,Hermitian(asym))
             @test_approx_eq C a*asym
         end
         if eltya <: Real && eltya != Int
@@ -99,7 +106,7 @@ let n=10
             @test_approx_eq Symmetric(asym) * a asym * a
             @test_approx_eq a * Symmetric(asym) a * asym
             @test_throws DimensionMismatch Symmetric(asym) * ones(eltya,n+1)
-            Base.LinAlg.A_mul_B!(C,a,asym)
+            Base.LinAlg.A_mul_B!(C,a,Symmetric(asym))
             @test_approx_eq C a*asym
         end
 

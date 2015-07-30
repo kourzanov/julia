@@ -55,7 +55,7 @@ or edit `%USERPROFILE%\.gitconfig` and add/edit the lines:
 
 ### MSYS2 provides a robust MSYS experience.
 
-1. Install [Python 2.x](http://www.python.org/download/releases). Do **not** install Python 3.
+1. Install [Python 2.x](http://www.python.org/downloads/). Do **not** install Python 3.
 
 2. Install [CMake](http://www.cmake.org/download/).
 
@@ -236,15 +236,32 @@ Finally, the build and install process for Julia:
 
 If you are building for 64-bit windows, the steps are essentially the same. Just replace i686 in XC_HOST with x86_64. (note: on Mac, wine only runs in 32-bit mode)
 
+## Using a Windows VM
+
+[Vagrant](http://www.vagrantup.com/downloads) can also be used with a Windows
+guest VM via the `Vagrantfile` in [contrib/windows](contrib/windows/Vagrantfile),
+just run `vagrant up` from that folder. To build with Cygwin instead of MSYS2,
+replace `config.vm.provision :shell, privileged: false, :inline => $script_msys2`
+(near the end of the file) with `config.vm.provision :shell, privileged: false, :inline => $script_cygwin`.
+
+
 ## Windows Build Debugging
 
 ### GDB hangs with cygwin mintty
 
-- run gdb under the windows console (cmd) instead. gdb [does not function properly](https://www.cygwin.com/ml/cygwin/2009-02/msg00531.html) under mintty with non-cygwin applications.
+- Run gdb under the windows console (cmd) instead. gdb [does not function properly](https://www.cygwin.com/ml/cygwin/2009-02/msg00531.html) under mintty with non-cygwin applications. You can use `cmd /c start` to start the windows console from mintty if necessary.
+
+### GDB not attaching to the right process
+
+- Use the PID from the windows task manager or `WINPID` from the `ps` command instead of the PID from unix style command line tools (e.g. `pgrep`). You may need to add the PID column if it is not shown by default in the windows task manager.
+
+### GDB not showing the right backtrace
+
+- When attaching to the julia process, GDB may not be attaching to the right thread. Use `info threads` command to show all the threads and `thread <threadno>` to switch threads.
 
 ### Build process is slow/eats memory/hangs my computer
 
-- Disable the Windows [Superfetch](http://en.wikipedia.org/wiki/Windows_Vista_I/O_technologies#SuperFetch) and
+- Disable the Windows [Superfetch](https://en.wikipedia.org/wiki/Windows_Vista_I/O_technologies#SuperFetch) and
   [Program Compatibility Assistant](http://blogs.msdn.com/b/cjacks/archive/2011/11/22/managing-the-windows-7-program-compatibility-assistant-pca.aspx) services, as they are known to have
   [spurious interactions]((https://cygwin.com/ml/cygwin/2011-12/msg00058.html)) with MinGW/Cygwin.
 

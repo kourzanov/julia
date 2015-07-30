@@ -27,6 +27,9 @@
 #include <io.h>
 #define write _write
 #endif
+#if defined(_COMPILER_MICROSOFT_) && !defined(_Static_assert)
+#define _Static_assert static_assert
+#endif
 
 #ifdef __cplusplus
 #include <cstring>
@@ -63,7 +66,7 @@ DLLEXPORT void jl_uv_closeHandle(uv_handle_t *handle)
     if (handle == (uv_handle_t*)JL_STDERR)
         JL_STDERR = (JL_STREAM*)STDERR_FILENO;
     // also let the client app do its own cleanup
-    if (handle->data)
+    if (handle->type != UV_FILE && handle->data)
         jl_uv_call_close_callback(handle->data);
     free(handle);
 }
@@ -137,33 +140,44 @@ DLLEXPORT int jl_init_pipe(uv_pipe_t *pipe, int writable, int readable, int juli
 
 DLLEXPORT void jl_close_uv(uv_handle_t *handle)
 {
-    if (handle->type==UV_TTY)
-        uv_tty_set_mode((uv_tty_t*)handle,0);
-
-    if ((handle->type == UV_NAMED_PIPE || handle->type == UV_TCP) &&
-        uv_is_writable((uv_stream_t*)handle)) {
-        uv_shutdown_t *req = (uv_shutdown_t*)malloc(sizeof(uv_shutdown_t));
-        req->data = 0;
-        /*
-         * We are explicity ignoring the error here for the following reason:
-         * There is only two scenarios in which this returns an error:
-         * a) In case the stream is already shut down, in which case we're likely
-         *    in the process of closing this stream (since there's no other call to
-         *    uv_shutdown).
-         * b) In case the stream is already closed, in which case uv_close would
-         *    cause an assertion failure.
-         */
-        uv_shutdown(req, (uv_stream_t*)handle, &jl_uv_shutdownCallback);
-    }
-    else if (handle->type == UV_FILE) {
+    if (handle->type == UV_FILE) {
         uv_fs_t req;
         jl_uv_file_t *fd = (jl_uv_file_t*)handle;
         if (fd->file != -1) {
             uv_fs_close(handle->loop, &req, fd->file, NULL);
             fd->file = -1;
         }
+        jl_uv_closeHandle(handle); // synchronous (ok since the callback is known to not interact with any global state)
+        return;
     }
-    else if (!uv_is_closing((uv_handle_t*)handle)) {
+
+    if (handle->type == UV_NAMED_PIPE || handle->type == UV_TCP) {
+        if (((uv_stream_t*)handle)->shutdown_req) {
+            // don't close the stream while attempting a graceful shutdown
+            return;
+        }
+        if (uv_is_writable((uv_stream_t*)handle)) {
+            // attempt graceful shutdown of writable streams to give them a chance to flush first
+            uv_shutdown_t *req = (uv_shutdown_t*)malloc(sizeof(uv_shutdown_t));
+            req->data = 0;
+            /*
+             * We are explicitly ignoring the error here for the following reason:
+             * There is only two scenarios in which this returns an error:
+             * a) In case the stream is already shut down, in which case we're likely
+             *    in the process of closing this stream (since there's no other call to
+             *    uv_shutdown).
+             * b) In case the stream is already closed, in which case uv_close would
+             *    cause an assertion failure.
+             */
+            uv_shutdown(req, (uv_stream_t*)handle, &jl_uv_shutdownCallback);
+            return;
+        }
+    }
+
+    if (!uv_is_closing((uv_handle_t*)handle)) {
+        // avoid double-closing the stream
+        if (handle->type == UV_TTY)
+            uv_tty_set_mode((uv_tty_t*)handle,0);
         uv_close(handle,&jl_uv_closeHandle);
     }
 }
@@ -351,6 +365,9 @@ DLLEXPORT void jl_uv_writecb(uv_write_t *req, int status)
 static void jl_write(uv_stream_t *stream, const char *str, size_t n)
 {
     assert(stream);
+    _Static_assert(offsetof(uv_stream_t,type) == offsetof(ios_t,bm) &&
+        sizeof(((uv_stream_t*)0)->type) == sizeof(((ios_t*)0)->bm),
+	   "UV and ios layout mismatch");
 
     uv_file fd = 0;
 
@@ -446,7 +463,7 @@ DLLEXPORT void jl_safe_printf(const char *fmt, ...)
 DLLEXPORT void jl_exit(int exitcode)
 {
     uv_tty_reset_mode();
-    jl_atexit_hook();
+    jl_atexit_hook(exitcode);
     exit(exitcode);
 }
 
@@ -655,7 +672,36 @@ DLLEXPORT int jl_tcp_quickack(uv_tcp_t *handle, int on)
     }
     return 0;
 }
+
 #endif
+
+
+DLLEXPORT int jl_tcp_reuseport(uv_tcp_t *handle)
+{
+#if defined(SO_REUSEPORT)
+    int fd = (handle)->io_watcher.fd;
+    int yes = 1;
+    if (setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &yes, sizeof(yes))) {
+        return -1;
+    }
+    return 0;
+#else
+    return 1;
+#endif
+}
+
+DLLEXPORT int jl_tcp_getsockname_v4(uv_tcp_t *handle, uint32_t * ip, uint16_t * port)
+{
+    struct sockaddr_in name;
+    int len = sizeof(name);
+    if (uv_tcp_getsockname(handle, (struct sockaddr *)&name, &len)) {
+        return -1;
+    }
+
+    *ip = ntohl(name.sin_addr.s_addr);
+    *port = ntohs(name.sin_port);
+    return 0;
+}
 
 #ifndef _OS_WINDOWS_
 
@@ -665,7 +711,7 @@ DLLEXPORT int jl_uv_unix_fd_is_watched(int fd, uv_poll_t *handle, uv_loop_t *loo
         return 0;
     if (loop->watchers[fd] == NULL)
         return 0;
-    if (loop->watchers[fd] == &handle->io_watcher)
+    if (handle && loop->watchers[fd] == &handle->io_watcher)
         return 0;
     return 1;
 }

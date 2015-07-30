@@ -4,6 +4,7 @@
 include("uv_constants.jl")
 
 import .Libc: RawFD, dup
+@windows_only import .Libc: WindowsRawSocket
 
 ## types ##
 typealias Callback Union{Function,Bool}
@@ -515,6 +516,7 @@ function _uv_hook_close(uv::Union{AsyncStream,UVServer})
     notify(uv.closenotify)
     try notify(uv.readnotify) end
     try notify(uv.connectnotify) end
+    nothing
 end
 
 ##########################################
@@ -557,7 +559,7 @@ type Timer
 
     function Timer(timeout::Real, repeat::Real=0.0)
         timeout ≥ 0 || throw(ArgumentError("timer cannot have negative timeout of $timeout seconds"))
-        repeat ≥ 0 || throw(ArgumentError("timer cannot repeat $repeat times"))
+        repeat ≥ 0 || throw(ArgumentError("timer cannot have negative repeat interval of $repeat seconds"))
 
         this = new(Libc.malloc(_sizeof_uv_timer), Condition(), true)
         err = ccall(:uv_timer_init,Cint,(Ptr{Void},Ptr{Void}),eventloop(),this.handle)
@@ -595,6 +597,7 @@ function _uv_hook_close(t::Timer)
     unpreserve_handle(t)
     disassociate_julia_struct(t)
     t.handle = C_NULL
+    notify(t.cond)
     nothing
 end
 
@@ -620,7 +623,7 @@ function Timer(cb::Function, timeout::Real, repeat::Real=0.0)
     @schedule begin
         while isopen(t)
             wait(t)
-            cb(t)
+            isopen(t) && cb(t)
         end
     end
     t
@@ -1037,17 +1040,16 @@ for (x,writable,unix_fd,c_symbol) in ((:STDIN,false,0,:jl_uv_stdin),(:STDOUT,tru
             global $x
             @windows? (
                 ccall(:SetStdHandle,stdcall,Int32,(Int32,Ptr{Void}),
-                    $(-10-unix_fd),_get_osfhandle(_fd(stream)).handle) :
+                    $(-10-unix_fd), Libc._get_osfhandle(_fd(stream)).handle) :
                 dup(_fd(stream),  RawFD($unix_fd)) )
             $x = stream
         end
-        function ($f)(handle::AsyncStream)
+        function ($f)(handle::Union{AsyncStream,IOStream})
             $(_f)(handle)
             unsafe_store!(cglobal($(Expr(:quote,c_symbol)),Ptr{Void}),
                 handle.handle)
             handle
         end
-        ($f)(handle::IOStream) = ($_f)(handle)
         function ($f)()
             read,write = (Pipe(C_NULL), Pipe(C_NULL))
             link_pipe(read,$(writable),write,$(!writable))

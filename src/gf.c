@@ -38,11 +38,12 @@ static jl_value_t *jl_apply_unspecialized(jl_function_t *meth, jl_value_t **args
 }
 
 
-static jl_methtable_t *new_method_table(jl_sym_t *name)
+static jl_methtable_t *new_method_table(jl_sym_t *name, jl_module_t *module)
 {
     jl_methtable_t *mt = (jl_methtable_t*)jl_gc_allocobj(sizeof(jl_methtable_t));
     jl_set_typeof(mt, jl_methtable_type);
     mt->name = name;
+    mt->module = module;
     mt->defs = (jl_methlist_t*)jl_nothing;
     mt->cache = (jl_methlist_t*)jl_nothing;
     mt->cache_arg1 = (jl_array_t*)jl_nothing;
@@ -1129,7 +1130,7 @@ static void check_ambiguous(jl_methlist_t *ml, jl_tupletype_t *type,
         }
         n = fname->name;
         s = JL_STDERR;
-        jl_printf(s, "Warning: New definition \n    %s", n);
+        jl_printf(s, "WARNING: New definition \n    %s", n);
         jl_static_show_func_sig(s, (jl_value_t*)type);
         print_func_loc(s, linfo);
         jl_printf(s, "\nis ambiguous with: \n    %s", n);
@@ -1172,7 +1173,7 @@ jl_methlist_t *jl_method_list_insert(jl_methlist_t **pml, jl_tupletype_t *type,
                 (l->func->linfo->module != method->linfo->module)) {
                 jl_module_t *newmod = method->linfo->module;
                 JL_STREAM *s = JL_STDERR;
-                jl_printf(s, "Warning: Method definition %s", method->linfo->name->name);
+                jl_printf(s, "WARNING: Method definition %s", method->linfo->name->name);
                 jl_static_show_func_sig(s, (jl_value_t*)type);
                 jl_printf(s, " in module %s", l->func->linfo->module->name->name);
                 print_func_loc(s, l->func->linfo);
@@ -1466,6 +1467,8 @@ static void parameters_to_closureenv(jl_value_t *ast, jl_svec_t *tvars)
         tvs = jl_svec_data(tvars);
         tvarslen = jl_svec_len(tvars);
     }
+    if (jl_in_vinfo_array(closed, ((jl_tvar_t*)tvs[0])->name))
+        return;
     size_t i;
     jl_array_t *vi=NULL;
     JL_GC_PUSH1(&vi);
@@ -1498,7 +1501,8 @@ static void all_p2c(jl_value_t *ast, jl_svec_t *tvars)
 static void precompile_unspecialized(jl_function_t *func, jl_tupletype_t *sig, jl_svec_t *tvars)
 {
     func->linfo->specTypes = sig;
-    jl_gc_wb(func->linfo, sig);
+    if (sig)
+        jl_gc_wb(func->linfo, sig);
     if (tvars != jl_emptysvec) {
         // add static parameter names to end of closure env; compile
         // assuming they are there. method cache will fill them in when
@@ -1749,7 +1753,7 @@ jl_value_t *jl_gf_invoke(jl_function_t *gf, jl_tupletype_t *types,
         JL_GC_PUSH3(&tpenv, &newsig, &tt);
         tt = arg_type_tuple(args, nargs);
         if (m->invokes == (void*)jl_nothing) {
-            m->invokes = new_method_table(mt->name);
+            m->invokes = new_method_table(mt->name, mt->module);
             jl_gc_wb(m, m->invokes);
             update_max_args(m->invokes, tt);
             // this private method table has just this one definition
@@ -1790,18 +1794,13 @@ void print_func_loc(JL_STREAM *s, jl_lambda_info_t *li)
     }
 }
 
-void jl_initialize_generic_function(jl_function_t *f, jl_sym_t *name)
-{
-    f->fptr = jl_apply_generic;
-    f->env = (jl_value_t*)new_method_table(name);
-    jl_gc_wb(f, f->env);
-}
-
-jl_function_t *jl_new_generic_function(jl_sym_t *name)
+jl_function_t *jl_new_generic_function(jl_sym_t *name, jl_module_t *module)
 {
     jl_function_t *f = jl_new_closure(jl_apply_generic, NULL, NULL);
     JL_GC_PUSH1(&f);
-    jl_initialize_generic_function(f, name);
+    f->fptr = jl_apply_generic;
+    f->env = (jl_value_t*)new_method_table(name, module);
+    jl_gc_wb(f, f->env);
     JL_GC_POP();
     return f;
 }

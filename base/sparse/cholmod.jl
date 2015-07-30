@@ -3,7 +3,7 @@
 module CHOLMOD
 
 import Base: (*), convert, copy, eltype, getindex, show, showarray, size,
-             linearindexing, LinearFast, LinearSlow
+             linearindexing, LinearFast, LinearSlow, ctranspose
 
 import Base.LinAlg: (\), A_mul_Bc, A_mul_Bt, Ac_ldiv_B, Ac_mul_B, At_ldiv_B, At_mul_B,
                  cholfact, det, diag, ishermitian, isposdef,
@@ -65,6 +65,7 @@ const version = VersionNumber(version_array...)
 function __init__()
     ### Check if the linked library is compatible with the Julia code
     if Libdl.dlsym(Libdl.dlopen("libcholmod"), :cholmod_version) == C_NULL
+        hasversion = false
         warn("""
 
             CHOLMOD version incompatibility
@@ -81,6 +82,7 @@ function __init__()
             versions of all dependencies.
         """)
     else
+        hasversion = true
         tmp = Array(Cint, 3)
         ccall((:cholmod_version, :libcholmod), Cint, (Ptr{Cint},), version_array)
         ccall((:jl_cholmod_version, :libsuitesparse_wrapper), Cint, (Ptr{Cint},), tmp)
@@ -139,6 +141,15 @@ function __init__()
 
     start(commonStruct)              # initializes CHOLMOD
     set_print_level(commonStruct, 0) # no printing from CHOLMOD by default
+
+    # Register gc tracked allocator if CHOLMOD is new enough
+    if hasversion && version >= v"3.0.0"
+        cnfg = cglobal((:SuiteSparse_config, :libsuitesparseconfig), Ptr{Void})
+        unsafe_store!(cnfg, cglobal(:jl_malloc, Ptr{Void}), 1)
+        unsafe_store!(cnfg, cglobal(:jl_calloc, Ptr{Void}), 2)
+        unsafe_store!(cnfg, cglobal(:jl_realloc, Ptr{Void}), 3)
+        unsafe_store!(cnfg, cglobal(:jl_free, Ptr{Void}), 4)
+    end
 
 end
 
@@ -1002,9 +1013,9 @@ free!(A::Dense) = free_dense!(A.p)
 free!(A::Sparse) = free_sparse!(A.p)
 free!(F::Factor) = free_factor!(F.p)
 
-eltype{T<:VTypes}(A::Dense{T}) = T
-eltype{T<:VTypes}(A::Factor{T}) = T
-eltype{T<:VTypes}(A::Sparse{T}) = T
+eltype{T<:VTypes}(::Type{Dense{T}}) = T
+eltype{T<:VTypes}(::Type{Factor{T}}) = T
+eltype{T<:VTypes}(::Type{Sparse{T}}) = T
 
 nnz(F::Factor) = nnz(Sparse(F))
 

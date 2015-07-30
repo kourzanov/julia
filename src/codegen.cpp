@@ -101,8 +101,13 @@
 #include <cstdio>
 #include <cassert>
 using namespace llvm;
+
+// LLVM version compatibility macros
 #if LLVM37
 using namespace llvm::legacy;
+#define LLVM37_param(x) (x),
+#else
+#define LLVM37_param(x)
 #endif
 
 extern "C" {
@@ -161,6 +166,7 @@ DLLEXPORT RTDyldMemoryManager *jl_mcjmm;
 #define jl_Module (builder.GetInsertBlock()->getParent()->getParent())
 #else
 static Module *jl_Module;
+#define shadow_module jl_Module
 #endif
 static MDBuilder *mbuilder;
 static std::map<int, std::string> argNumberStrings;
@@ -344,7 +350,6 @@ static Function *jlgetnthfieldchecked_func;
 static Function *resetstkoflw_func;
 #endif
 static Function *diff_gc_total_bytes_func;
-static Function *show_execution_point_func;
 
 static std::vector<Type *> two_pvalue_llvmt;
 static std::vector<Type *> three_pvalue_llvmt;
@@ -396,131 +401,20 @@ struct jl_varinfo_t {
 };
 
 // --- helpers for reloading IR image
-static void jl_gen_llvm_gv_array(llvm::Module *mod);
-static void jl_sysimg_to_llvm(llvm::Module *mod, const char *sysimg_data, size_t sysimg_len);
+static void jl_dump_shadow(char *fname, int jit_model, const char *sysimg_data, size_t sysimg_len, bool dump_as_bc);
 
 extern "C"
 void jl_dump_bitcode(char *fname)
 {
-#ifdef LLVM36
-    std::error_code err;
-    StringRef fname_ref = StringRef(fname);
-    raw_fd_ostream OS(fname_ref, err, sys::fs::F_None);
-#elif LLVM35
-    std::string err;
-    raw_fd_ostream OS(fname, err, sys::fs::F_None);
-#else
-    std::string err;
-    raw_fd_ostream OS(fname, err);
-#endif
-#ifdef USE_MCJIT
-    Module *bitcode = CloneModule(shadow_module);
-    jl_gen_llvm_gv_array(bitcode);
-    WriteBitcodeToFile(bitcode, OS);
-#else
-    Module *bitcode = CloneModule(jl_Module);
-    jl_gen_llvm_gv_array(bitcode);
-    WriteBitcodeToFile(bitcode, OS);
-#endif
+    jl_dump_shadow(fname, 0, NULL, 0, true);
 }
 
 extern "C"
 void jl_dump_objfile(char *fname, int jit_model, const char *sysimg_data, size_t sysimg_len)
 {
-#ifdef LLVM36
-    std::error_code err;
-    StringRef fname_ref = StringRef(fname);
-    raw_fd_ostream OS(fname_ref, err, sys::fs::F_None);
-#elif  LLVM35
-    std::string err;
-    raw_fd_ostream OS(fname, err, sys::fs::F_None);
-#else
-    std::string err;
-    raw_fd_ostream OS(fname, err);
-#endif
-
-    // We don't want to use MCJIT's target machine because
-    // it uses the large code model and we may potentially
-    // want less optimizations there.
-    Triple TheTriple = Triple(jl_TargetMachine->getTargetTriple());
-#if defined(_OS_WINDOWS_) && defined(FORCE_ELF)
-#ifdef LLVM35
-    TheTriple.setObjectFormat(Triple::COFF);
-#else
-    TheTriple.setEnvironment(Triple::UnknownEnvironment);
-#endif
-#elif defined(_OS_DARWIN_) && defined(FORCE_ELF)
-#ifdef LLVM35
-    TheTriple.setObjectFormat(Triple::MachO);
-#else
-    TheTriple.setEnvironment(Triple::MachO);
-#endif
-#endif
-#ifdef LLVM35
-    std::unique_ptr<TargetMachine>
-#else
-    OwningPtr<TargetMachine>
-#endif
-    TM(jl_TargetMachine->getTarget().createTargetMachine(
-        TheTriple.getTriple(),
-        jl_TargetMachine->getTargetCPU(),
-        jl_TargetMachine->getTargetFeatureString(),
-        jl_TargetMachine->Options,
-#if defined(_OS_LINUX_) || defined(_OS_FREEBSD_)
-        Reloc::PIC_,
-#else
-        jit_model ? Reloc::PIC_ : Reloc::Default,
-#endif
-        jit_model ? CodeModel::JITDefault : CodeModel::Default,
-        CodeGenOpt::Aggressive // -O3
-        ));
-
-    PassManager PM;
-#ifndef LLVM37
-    PM.add(new TargetLibraryInfo(Triple(TM->getTargetTriple())));
-#else
-    PM.add(new TargetLibraryInfoWrapperPass(Triple(TM->getTargetTriple())));
-#endif
-#ifdef LLVM37
-// No DataLayout pass needed anymore.
-#elif LLVM36
-    PM.add(new DataLayoutPass());
-#elif LLVM35
-    PM.add(new DataLayoutPass(*jl_ExecutionEngine->getDataLayout()));
-#else
-    PM.add(new DataLayout(*jl_ExecutionEngine->getDataLayout()));
-#endif
-
-
-#ifdef LLVM37 // 3.7 simplified formatted output; just use the raw stream alone
-    raw_fd_ostream& FOS(OS);
-#else
-    formatted_raw_ostream FOS(OS);
-#endif
-
-    if (TM->addPassesToEmitFile(PM, FOS, TargetMachine::CGFT_ObjectFile, false)) {
-        jl_error("Could not generate obj file for this target");
-    }
-
-#ifdef USE_MCJIT
-    // Reset the target triple to make sure it matches the new target machine
-    #ifdef LLVM37
-    shadow_module->setTargetTriple(TM->getTargetTriple().str());
-    shadow_module->setDataLayout(TM->getDataLayout()->getStringRepresentation());
-    #endif
-    Module *objfile = CloneModule(shadow_module);
-    if (sysimg_data)
-        jl_sysimg_to_llvm(objfile, sysimg_data, sysimg_len);
-    jl_gen_llvm_gv_array(objfile);
-    PM.run(*objfile);
-#else
-    Module *objfile = CloneModule(jl_Module);
-    if (sysimg_data)
-        jl_sysimg_to_llvm(objfile, sysimg_data, sysimg_len);
-    jl_gen_llvm_gv_array(objfile);
-    PM.run(*objfile);
-#endif
+    jl_dump_shadow(fname, jit_model, sysimg_data, sysimg_len, false);
 }
+
 
 // aggregate of array metadata
 typedef struct {
@@ -734,6 +628,7 @@ static Function *to_function(jl_lambda_info_t *li)
     DebugLoc olddl = builder.getCurrentDebugLocation();
     bool last_n_c = nested_compile;
     nested_compile = true;
+    jl_gc_inhibit_finalizers(nested_compile);
     Function *f = NULL;
     JL_TRY {
         f = emit_function(li);
@@ -753,6 +648,7 @@ static Function *to_function(jl_lambda_info_t *li)
     }
     assert(f != NULL);
     nested_compile = last_n_c;
+    jl_gc_inhibit_finalizers(nested_compile);
 #ifdef JL_DEBUG_BUILD
 #ifdef LLVM35
     llvm::raw_fd_ostream out(1,false);
@@ -796,7 +692,7 @@ static void jl_setup_module(Module *m, bool add)
 #endif
 #ifdef LLVM37
     if (jl_ExecutionEngine) {
-        m->setDataLayout(jl_ExecutionEngine->getDataLayout()->getStringRepresentation());
+        m->setDataLayout(jl_ExecutionEngine->getDataLayout().getStringRepresentation());
         m->setTargetTriple(jl_TargetMachine->getTargetTriple().str());
     }
 #elif LLVM36
@@ -995,6 +891,17 @@ void *jl_function_ptr(jl_function_t *f, jl_value_t *rt, jl_value_t *argt)
     assert(llvmf);
     JL_GC_POP();
 #ifdef USE_MCJIT
+    if (imaging_mode) {
+        // Copy the function out of the shadow module, unless this was done before
+        void *addr = (void*)(intptr_t)jl_ExecutionEngine->getFunctionAddress(llvmf->getName());
+        if (addr != nullptr) {
+            return addr;
+        }
+        Module *m = new Module("julia", jl_LLVMContext);
+        jl_setup_module(m, true);
+        FunctionMover mover(m, shadow_module);
+        llvmf = mover.CloneFunction(llvmf);
+    }
     return (void*)(intptr_t)jl_ExecutionEngine->getFunctionAddress(llvmf->getName());
 #else
     return jl_ExecutionEngine->getPointerToFunction(llvmf);
@@ -1060,7 +967,7 @@ void *jl_get_llvmf(jl_function_t *f, jl_tupletype_t *tt, bool getwrapper)
             return NULL;
         }
         jl_printf(JL_STDERR,
-                  "Warning: Returned code may not match what actually runs.\n");
+                  "WARNING: Returned code may not match what actually runs.\n");
     }
     if (sf->linfo->specFunctionObject != NULL) {
         // found in the system image: force a recompile
@@ -1198,7 +1105,7 @@ const jl_value_t *jl_dump_function_asm(void *f)
         jl_dump_asm_internal(fptr, symsize, slide, object, fstream);
     }
     else {
-        jl_printf(JL_STDERR, "Warning: Unable to find function pointer\n");
+        jl_printf(JL_STDERR, "WARNING: Unable to find function pointer\n");
     }
     fstream.flush();
 
@@ -1360,16 +1267,6 @@ extern "C" void jl_write_malloc_log(void)
 
 // --- constant determination ---
 
-static bool in_vinfo(jl_sym_t *s, jl_array_t *vi)
-{
-    size_t i, l = jl_array_len(vi);
-    for(i=0; i < l; i++) {
-        if (s == (jl_sym_t*)jl_cellref(jl_cellref(vi, i), 0))
-            return true;
-    }
-    return false;
-}
-
 // try to statically evaluate, NULL if not possible
 extern "C"
 jl_value_t *jl_static_eval(jl_value_t *ex, void *ctx_, jl_module_t *mod,
@@ -1385,7 +1282,7 @@ jl_value_t *jl_static_eval(jl_value_t *ex, void *ctx_, jl_module_t *mod,
             isglob = is_global(sym, ctx);
         }
         else if (ast) {
-            isglob = !in_vinfo(sym, jl_lam_vinfo(ast)) && !in_vinfo(sym, jl_lam_capt(ast));
+            isglob = !jl_local_in_ast(ast, sym);
         }
         if (isglob) {
             size_t i;
@@ -1819,11 +1716,7 @@ static Value *emit_lambda_closure(jl_value_t *expr, jl_codectx_t *ctx)
         jl_varinfo_t &vari = ctx->vars[s];
         if (vari.closureidx != -1) {
             int idx = vari.closureidx;
-#ifdef OVERLAP_SVEC_LEN
-            val = emit_nthptr((Value*)ctx->envArg, idx, tbaa_sveclen);
-#else
             val = emit_nthptr((Value*)ctx->envArg, idx+1, tbaa_sveclen);
-#endif
         }
         else {
             Value *l = vari.memvalue;
@@ -2921,17 +2814,9 @@ static Value *var_binding_pointer(jl_sym_t *s, jl_binding_t **pbnd,
         int idx = vi.closureidx;
         assert(((Value*)ctx->envArg)->getType() == jl_pvalue_llvmt);
         if (isBoxed(s, ctx)) {
-#ifdef OVERLAP_SVEC_LEN
-            return builder.CreatePointerCast(emit_nthptr((Value*)ctx->envArg, idx, tbaa_sveclen), jl_ppvalue_llvmt);
-#else
             return builder.CreatePointerCast(emit_nthptr((Value*)ctx->envArg, idx+1, tbaa_sveclen), jl_ppvalue_llvmt);
-#endif
         }
-#ifdef OVERLAP_SVEC_LEN
-        return emit_nthptr_addr((Value*)ctx->envArg, idx);
-#else
         return emit_nthptr_addr((Value*)ctx->envArg, idx+1);
-#endif
     }
     Value *l = vi.memvalue;
     if (l == NULL) return NULL;
@@ -3505,7 +3390,7 @@ static Value *emit_expr(jl_value_t *expr, jl_codectx_t *ctx, bool isboxed, bool 
     }
     else if (head == simdloop_sym) {
         if (!llvm::annotateSimdLoop(builder.GetInsertBlock()))
-            jl_printf(JL_STDERR, "Warning: could not attach metadata for @simd loop.\n");
+            jl_printf(JL_STDERR, "WARNING: could not attach metadata for @simd loop.\n");
         return NULL;
     }
     else if (head == meta_sym) {
@@ -3917,7 +3802,7 @@ static Function *gen_jlcall_wrapper(jl_lambda_info_t *lam, jl_expr_t *ast, Funct
     return w;
 }
 
-// cstyle = compile with c-callable signature, not jlcall
+// Compile to LLVM IR, using a specialized signature if applicable.
 static Function *emit_function(jl_lambda_info_t *lam)
 {
     // step 1. unpack AST and allocate codegen context for this function
@@ -4801,11 +4686,7 @@ extern "C" void jl_fptr_to_llvm(void *fptr, jl_lambda_info_t *lam, int specsig)
             }
             Type *rt = (jlrettype == (jl_value_t*)jl_void_type ? T_void : julia_type_to_llvm(jlrettype));
             Function *f = Function::Create(FunctionType::get(rt, fsig, false), Function::ExternalLinkage, funcName,
-#ifdef USE_MCJIT
                                            shadow_module);
-#else
-                                           jl_Module);
-#endif
 
         if (lam->specFunctionObject == NULL) {
             lam->specFunctionObject = (void*)f;
@@ -4814,11 +4695,7 @@ extern "C" void jl_fptr_to_llvm(void *fptr, jl_lambda_info_t *lam, int specsig)
             add_named_global(f, (void*)fptr);
         }
         else {
-#ifdef USE_MCJIT
             Function *f = jlcall_func_to_llvm(funcName, fptr, shadow_module);
-#else
-            Function *f = jlcall_func_to_llvm(funcName, fptr, jl_Module);
-#endif
             if (lam->functionObject == NULL) {
                 lam->functionObject = (void*)f;
                 lam->functionID = jl_assign_functionID(f);
@@ -5414,15 +5291,6 @@ static void init_julia_llvm_env(Module *m)
                          "jl_gc_diff_total_bytes", m);
     add_named_global(diff_gc_total_bytes_func, (void*)*jl_gc_diff_total_bytes);
 
-    std::vector<Type *> execpoint_args(0);
-    execpoint_args.push_back(T_pint8);
-    execpoint_args.push_back(T_int32);
-    show_execution_point_func =
-        Function::Create(FunctionType::get(T_void, execpoint_args, false),
-                         Function::ExternalLinkage,
-                         "show_execution_point", m);
-    add_named_global(show_execution_point_func, (void*)*show_execution_point);
-
     // set up optimization passes
     FPM = new FunctionPassManager(m);
 
@@ -5645,7 +5513,7 @@ extern "C" void jl_init_codegen(void)
 #endif
     std::string TheCPU = strcmp(jl_options.cpu_target,"native") ? jl_options.cpu_target : sys::getHostCPUName();
     if (TheCPU.empty() || TheCPU == "generic") {
-        jl_printf(JL_STDERR, "warning: unable to determine host cpu name.\n");
+        jl_printf(JL_STDERR, "WARNING: unable to determine host cpu name.\n");
 #ifdef _CPU_ARM_
         MAttrs.append(1, "+vfp2"); // the processors that don't have VFP are old and (hopefully) rare. this affects the platform calling convention.
 #endif
@@ -5655,6 +5523,8 @@ extern "C" void jl_init_codegen(void)
             "",
             TheCPU,
             MAttrs);
+    assert(targetMachine && "Failed to select target machine -"
+                            " Is the LLVM backend for this CPU enabled?");
     jl_TargetMachine = targetMachine->getTarget().createTargetMachine(
             TheTriple.getTriple(),
             targetMachine->getTargetCPU(),
@@ -5675,7 +5545,9 @@ extern "C" void jl_init_codegen(void)
             );
     delete targetMachine;
     assert(jl_TargetMachine);
-#if defined(LLVM36) && !defined(LLVM37)
+#if defined(LLVM38)
+    engine_module->setDataLayout(jl_TargetMachine->createDataLayout());
+#elif defined(LLVM36) && !defined(LLVM37)
     engine_module->setDataLayout(jl_TargetMachine->getSubtargetImpl()->getDataLayout());
 #elif defined(LLVM35) && !defined(LLVM37)
     engine_module->setDataLayout(jl_TargetMachine->getDataLayout());
@@ -5696,8 +5568,8 @@ extern "C" void jl_init_codegen(void)
     mbuilder = new MDBuilder(getGlobalContext());
 
 #ifdef LLVM37
-    m->setDataLayout(jl_ExecutionEngine->getDataLayout()->getStringRepresentation());
-    engine_module->setDataLayout(jl_ExecutionEngine->getDataLayout()->getStringRepresentation());
+    m->setDataLayout(jl_ExecutionEngine->getDataLayout().getStringRepresentation());
+    engine_module->setDataLayout(jl_ExecutionEngine->getDataLayout().getStringRepresentation());
     m->setTargetTriple(jl_TargetMachine->getTargetTriple().str());
     engine_module->setTargetTriple(jl_TargetMachine->getTargetTriple().str());
 #elif LLVM36

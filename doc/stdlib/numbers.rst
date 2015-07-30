@@ -273,11 +273,12 @@ General Number Functions and Constants
    ``big`` string literal.
 
    .. doctest::
+
       julia> BigFloat(2.1)
-      2.100000000000000088817841970012523233890533447265625e+00 with 256 bits of precision
+      2.100000000000000088817841970012523233890533447265625000000000000000000000000000
 
       julia> big"2.1"
-      2.099999999999999999999999999999999999999999999999999999999999999999999999999986e+00 with 256 bits of precision
+      2.099999999999999999999999999999999999999999999999999999999999999999999999999986
 
 
 .. function:: get_rounding(T)
@@ -309,6 +310,25 @@ General Number Functions and Constants
        set_rounding(T, old)
 
    See ``get_rounding`` for available rounding modes.
+
+.. function:: get_zero_subnormals() -> Bool
+
+   Returns ``false`` if operations on subnormal floating-point values
+   ("denormals") obey rules for IEEE arithmetic, and ``true`` if they
+   might be converted to zeros.
+
+.. function:: set_zero_subnormals(yes::Bool) -> Bool
+
+   If ``yes`` is ``false``, subsequent floating-point operations follow
+   rules for IEEE arithmetic on subnormal values ("denormals").
+   Otherwise, floating-point operations are permitted (but not required)
+   to convert subnormal inputs or outputs to zero.  Returns ``true``
+   unless ``yes==true`` but the hardware does not support zeroing of
+   subnormal numbers.
+
+   ``set_zero_subnormals(true)`` can speed up some computations on
+   some hardware. However, it can break identities such as
+   ``(x-y==0) == (x==y)``.
 
 Integers
 ~~~~~~~~

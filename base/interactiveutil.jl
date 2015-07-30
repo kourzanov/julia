@@ -54,8 +54,8 @@ function edit( m::Method )
 end
 
 edit(file::AbstractString) = edit(file, 1)
-edit(f::Callable)          = edit(functionloc(f)...)
-edit(f::Callable, t::ANY)  = edit(functionloc(f,t)...)
+edit(f)          = edit(functionloc(f)...)
+edit(f, t::ANY)  = edit(functionloc(f,t)...)
 
 # terminal pager
 
@@ -65,8 +65,8 @@ function less(file::AbstractString, line::Integer)
 end
 
 less(file::AbstractString) = less(file, 1)
-less(f::Callable)          = less(functionloc(f)...)
-less(f::Callable, t::ANY)  = less(functionloc(f,t)...)
+less(f)          = less(functionloc(f)...)
+less(f, t::ANY)  = less(functionloc(f,t)...)
 
 # clipboard copy and paste
 
@@ -236,11 +236,11 @@ function gen_call_with_extracted_types(fcn, ex0)
         return Expr(:call, fcn, esc(args[1]),
                     Expr(:call, :typesof, map(esc, args[2:end])...))
     end
-    if isa(ex0, Expr) && ex0.head == :call
-        return Expr(:call, fcn, esc(ex0.args[1]),
-                    Expr(:call, :typesof, map(esc, ex0.args[2:end])...))
-    end
     ex = expand(ex0)
+    if isa(ex, Expr) && ex.head == :call
+        return Expr(:call, fcn, esc(ex.args[1]),
+                    Expr(:call, :typesof, map(esc, ex.args[2:end])...))
+    end
     exret = Expr(:call, :error, "expression is not a function call or symbol")
     if !isa(ex, Expr)
         # do nothing -> error
@@ -385,7 +385,6 @@ function workspace()
          Expr(:toplevel,
               :(const Base = $(Expr(:quote, b))),
               :(const LastMain = $(Expr(:quote, last)))))
-    empty!(package_list)
     empty!(package_locks)
     nothing
 end

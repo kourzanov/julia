@@ -1308,9 +1308,15 @@ Any[
 
 "),
 
-("Base","require","require(file::AbstractString...)
+("Base","require","require(module::Symbol)
 
-   Load source files once, in the context of the \"Main\" module, on
+   This function is part of the implementation of \"using\" /
+   \"import\", if a module is not already defined in \"Main\". It can
+   also be called directly to force reloading a module, regardless of
+   whether it has been loaded before (for exmple, when interactively
+   developing libraries).
+
+   Loads a source files, in the context of the \"Main\" module, on
    every active node, searching standard locations for files.
    \"require\" is considered a top-level operation, so it sets the
    current \"include\" path but does not use it to search for files
@@ -1324,11 +1330,14 @@ Any[
 
 "),
 
-("Base","reload","reload(file::AbstractString)
+("Base","compile","compile(module::Symbol)
 
-   Like \"require\", except forces loading of files regardless of
-   whether they have been loaded before. Typically used when
-   interactively developing libraries.
+   Creates a precompiled cache file for module (see help for
+   \"require\") and all of its dependencies. This can be used to
+   reduce package load times. Cache files are stored in
+   LOAD_CACHE_PATH[1], which defaults to *~/.julia/lib/VERSION*. See
+   the manual section *Module initialization and precompilation*
+   (under *Modules*) for important notes.
 
 "),
 
@@ -1345,7 +1354,7 @@ Any[
 
 "),
 
-("Base","include_string","include_string(code::AbstractString)
+("Base","include_string","include_string(code::AbstractString[, filename])
 
    Like \"include\", except reads code from the given string rather
    than from a file. Since there is no file path involved, no path
@@ -2615,7 +2624,10 @@ Any[
 ("Base","Timer","Timer(delay, repeat=0)
 
    Create a timer that wakes up tasks waiting for it (by calling
-   \"wait\" on the timer object) at a specified interval.
+   \"wait\" on the timer object) at a specified interval. Waiting
+   tasks are also woken up when the timer is closed (by \"close\").
+   Use \"isopen\" to check whether a timer is still active after a
+   wakeup.
 
 "),
 
@@ -5701,17 +5713,25 @@ Millisecond(v)
 
 "),
 
-("Base","readbytes!","readbytes!(stream, b::Vector{UInt8}, nb=length(b))
+("Base","readbytes!","readbytes!(stream, b::Vector{UInt8}, nb=length(b); all=true)
 
    Read at most \"nb\" bytes from the stream into \"b\", returning the
    number of bytes read (increasing the size of \"b\" as needed).
 
+   See \"readbytes\" for a description of the \"all\" option.
+
 "),
 
-("Base","readbytes","readbytes(stream, nb=typemax(Int))
+("Base","readbytes","readbytes(stream, nb=typemax(Int); all=true)
 
    Read at most \"nb\" bytes from the stream, returning a
    \"Vector{UInt8}\" of the bytes read.
+
+   If \"all\" is true (the default), this function will block
+   repeatedly trying to read all requested bytes, until an error or
+   end-of-file occurs. If \"all\" is false, at most one \"read\" call
+   is performed, and the amount of data returned is device-dependent.
+   Note that not all stream types support the \"all\" option.
 
 "),
 
@@ -5798,12 +5818,14 @@ Millisecond(v)
 
 "),
 
-("Base","isopen","isopen(stream) -> Bool
+("Base","isopen","isopen(object) -> Bool
 
-   Determine whether a stream is open (i.e. has not been closed yet).
-   If the connection has been closed remotely (in case of e.g. a
-   socket), \"isopen\" will return \"false\" even though buffered data
-   may still be available. Use \"eof\" to check if necessary.
+   Determine whether an object - such as a stream, timer, or mmap --
+   is not yet closed. Once an object is closed, it will never produce
+   a new event. However, a closed stream may still have data to read
+   in its buffer, use \"eof\" to check for the ability to read data.
+   Use \"poll_fd\" to be notified when a stream might be writable or
+   readable.
 
 "),
 
@@ -5920,8 +5942,8 @@ Millisecond(v)
 
 ("Base","countlines","countlines(io[, eol::Char])
 
-   Read io until the end of the stream/file and count the number of
-   non-empty lines. To specify a file pass the filename as the first
+   Read \"io\" until the end of the stream/file and count the number
+   of lines. To specify a file pass the filename as the first
    argument. EOL markers other than '\\n' are supported by passing
    them as the second argument.
 
@@ -6387,31 +6409,55 @@ popdisplay(d::Display)
 
 "),
 
-("Base","mmap_array","mmap_array(type, dims, stream[, offset])
+("Base","Mmap","Mmap.Anonymous(name, readonly, create)
+
+   Create an \"IO\"-like object for creating zeroed-out mmapped-memory
+   that is not tied to a file for use in \"Mmap.mmap\". Used by
+   \"SharedArray\" for creating shared memory arrays.
+
+"),
+
+("Base","Mmap","Mmap.mmap(io::Union(IOStream,AbstractString,Mmap.AnonymousMmap)[, type::Type{Array{T,N}}, dims, offset]; grow::Bool=true, shared::Bool=true)
+Mmap.mmap(type::Type{Array{T, N}}, dims)
 
    Create an \"Array\" whose values are linked to a file, using
    memory-mapping. This provides a convenient way of working with data
    too large to fit in the computer's memory.
 
-   The type determines how the bytes of the array are interpreted.
-   Note that the file must be stored in binary format, and no format
-   conversions are possible (this is a limitation of operating
-   systems, not Julia).
+   The type is an \"Array{T,N}\" with a bits-type element of \"T\" and
+   dimension \"N\" that determines how the bytes of the array are
+   interpreted. Note that the file must be stored in binary format,
+   and no format conversions are possible (this is a limitation of
+   operating systems, not Julia).
 
-   \"dims\" is a tuple specifying the size of the array.
+   \"dims\" is a tuple or single \"Integer\" specifying the size or
+   length of the array.
 
-   The file is passed via the stream argument.  When you initialize
-   the stream, use \"\"r\"\" for a \"read-only\" array, and \"\"w+\"\"
-   to create a new array used to write values to disk.
+   The file is passed via the stream argument, either as an open
+   \"IOStream\" or filename string.  When you initialize the stream,
+   use \"\"r\"\" for a \"read-only\" array, and \"\"w+\"\" to create a
+   new array used to write values to disk.
+
+   If no \"type\" argument is specified, the default is
+   \"Vector{UInt8}\".
 
    Optionally, you can specify an offset (in bytes) if, for example,
    you want to skip over a header in the file. The default value for
-   the offset is the current stream position.
+   the offset is the current stream position for an \"IOStream\".
+
+   The \"grow\" keyword argument specifies whether the disk file
+   should be grown to accomodate the requested size of array (if the
+   total file size is < requested array size). Write privileges are
+   required to grow the file.
+
+   The \"shared\" keyword argument specifies whether the resulting
+   \"Array\" and changes made to it will be visible to other processes
+   mapping the same file.
 
    For example, the following code:
 
       # Create a file for mmapping
-      # (you could alternatively use mmap_array to do this step, too)
+      # (you could alternatively use mmap to do this step, too)
       A = rand(1:20, 5, 30)
       s = open(\"/tmp/mmap.bin\", \"w+\")
       # We'll write the dimensions of the array as the first two Ints in the file
@@ -6425,7 +6471,7 @@ popdisplay(d::Display)
       s = open(\"/tmp/mmap.bin\")   # default is read-only
       m = read(s, Int)
       n = read(s, Int)
-      A2 = mmap_array(Int, (m,n), s)
+      A2 = Mmap.mmap(s, Matrix{Int}, (m,n))
 
    creates a \"m\"-by-\"n\" \"Matrix{Int}\", linked to the file
    associated with stream \"s\".
@@ -6437,22 +6483,21 @@ popdisplay(d::Display)
 
 "),
 
-("Base","mmap_bitarray","mmap_bitarray([type], dims, stream[, offset])
+("Base","Mmap","Mmap.mmap(io, BitArray[, dims, offset])
 
    Create a \"BitArray\" whose values are linked to a file, using
    memory-mapping; it has the same purpose, works in the same way, and
-   has the same arguments, as \"mmap_array()\", but the byte
-   representation is different. The \"type\" parameter is optional,
-   and must be \"Bool\" if given.
+   has the same arguments, as \"mmap()\", but the byte representation
+   is different.
 
-   **Example**:  \"B = mmap_bitarray((25,30000), s)\"
+   **Example**:  \"B = Mmap.mmap(s, BitArray, (25,30000))\"
 
    This would create a 25-by-30000 \"BitArray\", linked to the file
    associated with stream \"s\".
 
 "),
 
-("Base","msync","msync(array)
+("Base","Mmap","Mmap.sync!(array)
 
    Forces synchronization between the in-memory version of a memory-
    mapped \"Array\" or \"BitArray\" and the on-disk version.
@@ -6794,12 +6839,18 @@ popdisplay(d::Display)
    \"RTLD_FIRST\".  These are converted to the corresponding flags of
    the POSIX (and/or GNU libc and/or MacOS) dlopen command, if
    possible, or are ignored if the specified functionality is not
-   available on the current platform.  The default is
-   \"RTLD_LAZY|RTLD_DEEPBIND|RTLD_LOCAL\".  An important usage of
-   these flags, on POSIX platforms, is to specify
-   \"RTLD_LAZY|RTLD_DEEPBIND|RTLD_GLOBAL\" in order for the library's
-   symbols to be available for usage in other shared libraries, in
-   situations where there are dependencies between shared libraries.
+   available on the current platform.  The default flags are platform
+   specific.  On MacOS the default \"dlopen\" flags are
+   \"RTLD_LAZY|RTLD_DEEPBIND|RTLD_GLOBAL\" while on other platforms
+   the defaults are \"RTLD_LAZY|RTLD_DEEPBIND|RTLD_LOCAL\". An
+   important usage of these flags is to specify non default behavior
+   for when the dynamic library loader binds library references to
+   exported symbols and if the bound references are put into process
+   local or global scope.  For instance
+   \"RTLD_LAZY|RTLD_DEEPBIND|RTLD_GLOBAL\" allows the library's
+   symbols to be available for usage in other shared libraries,
+   addressing situations where there are dependencies between shared
+   libraries.
 
 "),
 
@@ -6991,15 +7042,15 @@ popdisplay(d::Display)
    \"Complex{Float64}\" the return type is \"UmfpackLU\". Some
    examples are shown in the table below.
 
-      +-------------------------+---------------------------+----------------------------------------------+
-      | Type of input \\\"A\\\"     | Type of output \\\"F\\\"      | Relationship between \\\"F\\\" and \\\"A\\\"         |
-      +-------------------------+---------------------------+----------------------------------------------+
-      | \\\"Matrix()\\\"            | \\\"LU\\\"                    | \\\"F[:L]*F[:U] == A[F[:p], :]\\\"               |
-      +-------------------------+---------------------------+----------------------------------------------+
-      | \\\"Tridiagonal()\\\"       | \\\"LU{T,Tridiagonal{T}}\\\"  | N/A                                          |
-      +-------------------------+---------------------------+----------------------------------------------+
-      | \\\"SparseMatrixCSC()\\\"   | \\\"UmfpackLU\\\"             | \\\"F[:L]*F[:U] == F[:Rs] .* A[F[:p], F[:q]]\\\" |
-      +-------------------------+---------------------------+----------------------------------------------+
+      +-------------------------+---------------------------+------------------------------------------------+
+      | Type of input \\\"A\\\"     | Type of output \\\"F\\\"      | Relationship between \\\"F\\\" and \\\"A\\\"           |
+      +-------------------------+---------------------------+------------------------------------------------+
+      | \\\"Matrix()\\\"            | \\\"LU\\\"                    | \\\"F[:L]*F[:U] == A[F[:p], :]\\\"                 |
+      +-------------------------+---------------------------+------------------------------------------------+
+      | \\\"Tridiagonal()\\\"       | \\\"LU{T,Tridiagonal{T}}\\\"  | \\\"F[:L]*F[:U] == A[F[:p], :]\\\"                 |
+      +-------------------------+---------------------------+------------------------------------------------+
+      | \\\"SparseMatrixCSC()\\\"   | \\\"UmfpackLU\\\"             | \\\"F[:L]*F[:U] == (F[:Rs] .* A)[F[:p], F[:q]]\\\" |
+      +-------------------------+---------------------------+------------------------------------------------+
 
    The individual components of the factorization \"F\" can be
    accessed by indexing:
@@ -7007,13 +7058,13 @@ popdisplay(d::Display)
       +-------------+-----------------------------------------+--------+--------------------------+---------------+
       | Component   | Description                             | \\\"LU\\\" | \\\"LU{T,Tridiagonal{T}}\\\" | \\\"UmfpackLU\\\" |
       +-------------+-----------------------------------------+--------+--------------------------+---------------+
-      | \\\"F[:L]\\\"   | \\\"L\\\" (lower triangular) part of \\\"LU\\\" | ✓      |                          | ✓             |
+      | \\\"F[:L]\\\"   | \\\"L\\\" (lower triangular) part of \\\"LU\\\" | ✓      | ✓                        | ✓             |
       +-------------+-----------------------------------------+--------+--------------------------+---------------+
-      | \\\"F[:U]\\\"   | \\\"U\\\" (upper triangular) part of \\\"LU\\\" | ✓      |                          | ✓             |
+      | \\\"F[:U]\\\"   | \\\"U\\\" (upper triangular) part of \\\"LU\\\" | ✓      | ✓                        | ✓             |
       +-------------+-----------------------------------------+--------+--------------------------+---------------+
-      | \\\"F[:p]\\\"   | (right) permutation \\\"Vector\\\"          | ✓      |                          | ✓             |
+      | \\\"F[:p]\\\"   | (right) permutation \\\"Vector\\\"          | ✓      | ✓                        | ✓             |
       +-------------+-----------------------------------------+--------+--------------------------+---------------+
-      | \\\"F[:P]\\\"   | (right) permutation \\\"Matrix\\\"          | ✓      |                          |               |
+      | \\\"F[:P]\\\"   | (right) permutation \\\"Matrix\\\"          | ✓      | ✓                        |               |
       +-------------+-----------------------------------------+--------+--------------------------+---------------+
       | \\\"F[:q]\\\"   | left permutation \\\"Vector\\\"             |        |                          | ✓             |
       +-------------+-----------------------------------------+--------+--------------------------+---------------+
@@ -7958,6 +8009,12 @@ popdisplay(d::Display)
 ("Base","expm","expm(A)
 
    Matrix exponential.
+
+"),
+
+("Base","logm","logm(A)
+
+   Matrix logarithm.
 
 "),
 
@@ -10278,12 +10335,12 @@ popdisplay(d::Display)
 
 "),
 
-("Base","median","median(v)
+("Base","median","median(v[, region])
 
-   Compute the median of a vector \"v\". \"NaN\" is returned if the
-   data contains any \"NaN\" values. For applications requiring the
-   handling of missing data, the \"DataArrays\" package is
-   recommended.
+   Compute the median of whole array \"v\", or optionally along the
+   dimensions in \"region\". \"NaN\" is returned if the data contains
+   any \"NaN\" values. For applications requiring the handling of
+   missing data, the \"DataArrays\" package is recommended.
 
 "),
 
@@ -10499,12 +10556,25 @@ popdisplay(d::Display)
 
 "),
 
-("Base","plan_fft","plan_fft(A[, dims[, flags[, timelimit]]])
+("Base","plan_fft","plan_fft(A [, dims]; flags=FFTW.ESTIMATE;  timelimit=Inf)
 
    Pre-plan an optimized FFT along given dimensions (\"dims\") of
    arrays matching the shape and type of \"A\".  (The first two
-   arguments have the same meaning as for \"fft()\".)  Returns a
-   function \"plan(A)\" that computes \"fft(A, dims)\" quickly.
+   arguments have the same meaning as for \"fft()\".)  Returns an
+   object \"P\" which represents the linear operator computed by the
+   FFT, and which contains all of the information needed to compute
+   \"fft(A, dims)\" quickly.
+
+   To apply \"P\" to an array \"A\", use \"P * A\"; in general, the
+   syntax for applying plans is much like that of matrices.  (A plan
+   can only be applied to arrays of the same size as the \"A\" for
+   which the plan was created.)  You can also apply a plan with a
+   preallocated output array \"Â\" by calling \"A_mul_B!(Â, plan,
+   A)\".  You can compute the inverse-transform plan by \"inv(P)\" and
+   apply the inverse plan with \"P \\ Â\" (the inverse plan is cached
+   and reused for subsequent calls to \"inv\" or \"\\\"), and apply
+   the inverse plan to a pre-allocated output array \"A\" with
+   \"A_ldiv_B!(A, P, Â)\".
 
    The \"flags\" argument is a bitwise-or of FFTW planner flags,
    defaulting to \"FFTW.ESTIMATE\".  e.g. passing \"FFTW.MEASURE\" or
@@ -10524,33 +10594,33 @@ popdisplay(d::Display)
 
 "),
 
-("Base","plan_ifft","plan_ifft(A[, dims[, flags[, timelimit]]])
+("Base","plan_ifft","plan_ifft(A [, dims]; flags=FFTW.ESTIMATE;  timelimit=Inf)
 
    Same as \"plan_fft()\", but produces a plan that performs inverse
    transforms \"ifft()\".
 
 "),
 
-("Base","plan_bfft","plan_bfft(A[, dims[, flags[, timelimit]]])
+("Base","plan_bfft","plan_bfft(A [, dims]; flags=FFTW.ESTIMATE;  timelimit=Inf)
 
    Same as \"plan_fft()\", but produces a plan that performs an
    unnormalized backwards transform \"bfft()\".
 
 "),
 
-("Base","plan_fft!","plan_fft!(A[, dims[, flags[, timelimit]]])
+("Base","plan_fft!","plan_fft!(A [, dims]; flags=FFTW.ESTIMATE;  timelimit=Inf)
 
    Same as \"plan_fft()\", but operates in-place on \"A\".
 
 "),
 
-("Base","plan_ifft!","plan_ifft!(A[, dims[, flags[, timelimit]]])
+("Base","plan_ifft!","plan_ifft!(A [, dims]; flags=FFTW.ESTIMATE;  timelimit=Inf)
 
    Same as \"plan_ifft()\", but operates in-place on \"A\".
 
 "),
 
-("Base","plan_bfft!","plan_bfft!(A[, dims[, flags[, timelimit]]])
+("Base","plan_bfft!","plan_bfft!(A [, dims]; flags=FFTW.ESTIMATE;  timelimit=Inf)
 
    Same as \"plan_bfft()\", but operates in-place on \"A\".
 
@@ -10562,7 +10632,7 @@ popdisplay(d::Display)
    the transform has conjugate symmetry in order to save roughly half
    the computational time and storage costs compared with \"fft()\".
    If \"A\" has size \"(n_1, ..., n_d)\", the result has size
-   \"(floor(n_1/2)+1, ..., n_d)\".
+   \"(div(n_1,2)+1, ..., n_d)\".
 
    The optional \"dims\" argument specifies an iterable subset of one
    or more dimensions of \"A\" to transform, similar to \"fft()\".
@@ -10580,10 +10650,11 @@ popdisplay(d::Display)
    transform, defaulting to \"1:ndims(A)\".
 
    \"d\" is the length of the transformed real array along the
-   \"dims[1]\" dimension, which must satisfy \"d ==
-   floor(size(A,dims[1])/2)+1\". (This parameter cannot be inferred
-   from \"size(A)\" due to the possibility of rounding by the
-   \"floor\" function here.)
+   \"dims[1]\" dimension, which must satisfy \"div(d,2)+1 ==
+   size(A,dims[1])\". (This parameter cannot be inferred from
+   \"size(A)\" since both \"2*size(A,dims[1])-2\" as well as
+   \"2*size(A,dims[1])-1\" are valid sizes for the transformed real
+   array.)
 
 "),
 
@@ -10596,7 +10667,7 @@ popdisplay(d::Display)
 
 "),
 
-("Base","plan_rfft","plan_rfft(A[, dims[, flags[, timelimit]]])
+("Base","plan_rfft","plan_rfft(A [, dims]; flags=FFTW.ESTIMATE;  timelimit=Inf)
 
    Pre-plan an optimized real-input FFT, similar to \"plan_fft()\"
    except for \"rfft()\" instead of \"fft()\".  The first two
@@ -10605,7 +10676,7 @@ popdisplay(d::Display)
 
 "),
 
-("Base","plan_brfft","plan_brfft(A, d[, dims[, flags[, timelimit]]])
+("Base","plan_brfft","plan_brfft(A, d [, dims]; flags=FFTW.ESTIMATE;  timelimit=Inf)
 
    Pre-plan an optimized real-input unnormalized transform, similar to
    \"plan_rfft()\" except for \"brfft()\" instead of \"rfft()\". The
@@ -10614,7 +10685,7 @@ popdisplay(d::Display)
 
 "),
 
-("Base","plan_irfft","plan_irfft(A, d[, dims[, flags[, timelimit]]])
+("Base","plan_irfft","plan_irfft(A, d [, dims]; flags=FFTW.ESTIMATE;  timelimit=Inf)
 
    Pre-plan an optimized inverse real-input FFT, similar to
    \"plan_rfft()\" except for \"irfft()\" and \"brfft()\",
@@ -11288,6 +11359,29 @@ golden
       set_rounding(T, old)
 
    See \"get_rounding\" for available rounding modes.
+
+"),
+
+("Base","get_zero_subnormals","get_zero_subnormals() -> Bool
+
+   Returns \"false\" if operations on subnormal floating-point values
+   (\"denormals\") obey rules for IEEE arithmetic, and \"true\" if
+   they might be converted to zeros.
+
+"),
+
+("Base","set_zero_subnormals","set_zero_subnormals(yes::Bool) -> Bool
+
+   If \"yes\" is \"false\", subsequent floating-point operations
+   follow rules for IEEE arithmetic on subnormal values
+   (\"denormals\"). Otherwise, floating-point operations are permitted
+   (but not required) to convert subnormal inputs or outputs to zero.
+   Returns \"true\" unless \"yes==true\" but the hardware does not
+   support zeroing of subnormal numbers.
+
+   \"set_zero_subnormals(true)\" can speed up some computations on
+   some hardware. However, it can break identities such as \"(x-y==0)
+   == (x==y)\".
 
 "),
 
@@ -12228,8 +12322,8 @@ golden
 
 ("Base.Pkg","update","update()
 
-   Update package the metadata repo – kept in
-   \"Pkg.dir(\"METADATA\")\" – then update any fixed packages that can
+   Update package the metadata repo – kept in
+   \"Pkg.dir(\"METADATA\")\" – then update any fixed packages that can
    safely be pulled from their origin; then call \"Pkg.resolve()\" to
    determine a new optimal set of packages versions.
 
@@ -12291,8 +12385,9 @@ golden
    keys: \"\"MIT\"\", \"\"BSD\"\" or \"\"ASL\"\". If you want to make
    a package with a different license, you can edit it afterwards.
    Generate creates a git repo at \"Pkg.dir(pkg)\" for the package and
-   inside it \"LICENSE.md\", \"README.md\", the julia entrypoint
-   \"\$pkg/src/\$pkg.jl\", and a travis test file, \".travis.yml\".
+   inside it \"LICENSE.md\", \"README.md\", \"REQUIRE\", the julia
+   entrypoint \"\$pkg/src/\$pkg.jl\", and Travis and AppVeyor CI
+   configuration files \".travis.yml\" and \"appveyor.yml\".
 
 "),
 
@@ -12555,6 +12650,30 @@ golden
    Variant of \"select!\" which copies \"v\" before partially sorting
    it, thereby returning the same thing as \"select!\" but leaving
    \"v\" unmodified.
+
+"),
+
+("Base","selectperm","selectperm(v, k, [alg=<algorithm>,] [by=<transform>,] [lt=<comparison>,] [rev=false])
+
+   Return a partial permutation of the the vector \"v\", according to
+   the order specified by \"by\", \"lt\" and \"rev\", so that
+   \"v[output]\" returns the first \"k\" (or range of adjacent values
+   if \"k\" is a range) values of a fully sorted version of \"v\". If
+   \"k\" is a single index (Integer), an array  of the first \"k\"
+   indices is returned; if \"k\" is a range, an array of those indices
+   is returned. Note that the handling of integer values for \"k\" is
+   different from \"select\" in that it returns a vector of \"k\"
+   elements instead of just the \"k\" th element. Also note that this
+   is equivalent to, but more efficient than, calling
+   \"sortperm(...)[k]\"
+
+"),
+
+("Base","selectperm!","selectperm!(ix, v, k, [alg=<algorithm>,] [by=<transform>,] [lt=<comparison>,] [rev=false,] [initialized=false])
+
+   Like \"selectperm\", but accepts a preallocated index vector
+   \"ix\".  If \"initialized\" is \"false\" (the default), ix is
+   initialized to contain the values \"1:length(ix)\".
 
 "),
 
@@ -12855,7 +12974,10 @@ golden
    occurrences.  As with search, the second argument may be a single
    character, a vector or a set of characters, a string, or a regular
    expression. If \"r\" is a function, each occurrence is replaced
-   with \"r(s)\" where \"s\" is the matched substring.
+   with \"r(s)\" where \"s\" is the matched substring. If \"pat\" is a
+   regular expression and \"r\" is a \"SubstitutionString\", then
+   capture group references in \"r\" are replaced with the
+   corresponding matched text.
 
 "),
 
@@ -13235,8 +13357,9 @@ golden
 ("Base.Test","@test_throws","@test_throws(extype, ex)
 
    Test that the expression \"ex\" throws an exception of type
-   \"extype\" and calls the current handler to handle the result.
-   The default handler returns the exception if it is of the expected type.
+   \"extype\" and calls the current handler to handle the result. The
+   default handler returns the exception if it is of the expected
+   type.
 
 "),
 

@@ -27,7 +27,11 @@ endif
 # In LLVM >= 3.4, --ldflags has only options, and --system-libs has the libraries.
 LLVMLINK = $(call exec,$(LLVM_CONFIG) --ldflags) $(call exec,$(LLVM_CONFIG) --libs) $(call exec,$(LLVM_CONFIG) --ldflags) $(call exec,$(LLVM_CONFIG) --system-libs 2> /dev/null)
 ifeq ($(USE_LLVM_SHLIB),1)
+ifeq ($(LLVM_USE_CMAKE),1)
+LLVMLINK = $(call exec,$(LLVM_CONFIG) --ldflags) -lLLVM
+else
 LLVMLINK = $(call exec,$(LLVM_CONFIG) --ldflags) -lLLVM-$(call exec,$(LLVM_CONFIG) --version)
+endif
 FLAGS += -DLLVM_SHLIB
 endif
 
@@ -39,6 +43,10 @@ OBJS = $(SRCS:%=$(BUILDDIR)/%.o)
 DOBJS = $(SRCS:%=$(BUILDDIR)/%.dbg.obj)
 DEBUGFLAGS += $(FLAGS)
 SHIPFLAGS += $(FLAGS)
+
+# if not absolute, then relative to the directory of the julia executable
+SHIPFLAGS += "-DJL_SYSTEM_IMAGE_PATH=\"$(build_private_libdir_rel)/sys.$(SHLIB_EXT)\""
+DEBUGFLAGS += "-DJL_SYSTEM_IMAGE_PATH=\"$(build_private_libdir_rel)/sys-debug.$(SHLIB_EXT)\""
 
 ifeq ($(JULIAGC),MARKSWEEP)
 SRCS += gc
@@ -76,14 +84,15 @@ $(BUILDDIR)/%.dbg.obj: %.cpp $(HEADERS) $(shell which $(LLVM_CONFIG)) | $(BUILDD
 $(BUILDDIR)/julia_flisp.boot.inc: $(BUILDDIR)/julia_flisp.boot $(FLISP_EXECUTABLE)
 	@$(call PRINT_FLISP, $(call spawn,$(FLISP_EXECUTABLE)) ./bin2hex.scm < $< > $@)
 
-export julia_flisp.boot=$(BUILDDIR)/julia_flisp.boot
-$(julia_flisp.boot): julia-parser.scm julia-syntax.scm \
+export julia_flisp_boot=$(BUILDDIR)/julia_flisp.boot
+$(julia_flisp_boot): julia-parser.scm julia-syntax.scm \
 	match.scm utils.scm jlfrontend.scm mk_julia_flisp_boot.scm $(FLISP_EXECUTABLE)
 	@$(call PRINT_FLISP, $(call spawn,$(FLISP_EXECUTABLE)) ./mk_julia_flisp_boot.scm)
 
 $(BUILDDIR)/ast.o $(BUILDDIR)/ast.dbg.obj: $(BUILDDIR)/julia_flisp.boot.inc flisp/*.h
 $(BUILDDIR)/codegen.o $(BUILDDIR)/codegen.dbg.obj: intrinsics.cpp cgutils.cpp ccall.cpp abi_*.cpp
 $(BUILDDIR)/builtins.o $(BUILDDIR)/builtins.dbg.obj: table.c
+$(BUILDDIR)/gc.o $(BUILDDIR)/gc.dbg.obj: gc-debug.c
 
 $(BUILDDIR)/support/libsupport.a: support/*.h support/*.c
 	$(MAKE) -C support BUILDDIR='$(abspath $(BUILDDIR)/support)'
@@ -161,4 +170,3 @@ clean-support:
 cleanall: clean clean-flisp clean-support
 
 .PHONY: debug release clean cleanall clean-*
-

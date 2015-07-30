@@ -79,7 +79,7 @@ rm(file)
 
 # Stream Redirection
 @unix_only begin
-    r = RemoteRef()
+    r = Channel(1)
     @async begin
         port, server = listenany(2326)
         put!(r,port)
@@ -125,7 +125,7 @@ rm(file)
 
 # issue #3373
 # fixing up Conditions after interruptions
-r = RemoteRef()
+r = Channel(1)
 t = @async begin
     try
         wait(r)
@@ -141,7 +141,7 @@ yield()
 
 # Test marking of AsyncStream
 
-r = RemoteRef()
+r = Channel(1)
 @async begin
     port, server = listenany(2327)
     put!(r, port)
@@ -202,10 +202,58 @@ close(f)
 @test is(OLD_STDOUT,STDOUT)
 rm(fname)
 
+# Test that redirecting an IOStream does not crash the process
+fname = tempname()
+cmd = """
+# Overwrite libuv memory before freeing it, to make sure that a use after free
+# triggers an assertion.
+function thrash(handle::Ptr{Void})
+    # Kill the memory, but write a nice low value in the libuv type field to
+    # trigger the right code path
+    ccall(:memset,Ptr{Void},(Ptr{Void},Cint,Csize_t),handle,0xee,3*sizeof(Ptr{Void}))
+    unsafe_store!(convert(Ptr{Cint},handle+2*sizeof(Ptr{Void})),15)
+    nothing
+end
+OLD_STDERR = STDERR
+redirect_stderr(open("$(escape_string(fname))","w"))
+# Usually this would be done by GC. Do it manually, to make the failure
+# case more reliable.
+oldhandle = OLD_STDERR.handle
+OLD_STDERR.status = Base.StatusClosing
+OLD_STDERR.handle = C_NULL
+ccall(:uv_close,Void,(Ptr{Void},Ptr{Void}),oldhandle,cfunction(thrash,Void,(Ptr{Void},)))
+sleep(1)
+import Base.zzzInvalidIdentifier
+"""
+try
+    (in,p) = open(`$exename -f`, "w")
+    write(in,cmd)
+    close(in)
+    wait(p)
+catch
+    error("IOStream redirect failed. Child stderr was \n$(readall(fname))\n")
+end
+rm(fname)
+
 # issue #10994: libuv can't handle strings containing NUL
 let bad = "bad\0name"
     @test_throws ArgumentError run(`$bad`)
     @test_throws ArgumentError run(`echo $bad`)
     @test_throws ArgumentError run(setenv(`echo hello`, bad=>"good"))
     @test_throws ArgumentError run(setenv(`echo hello`, "good"=>bad))
+end
+
+# issue #8529
+@test_throws ErrorException run(pipe(Base.Pipe(C_NULL), `cat`))
+let fname = tempname()
+    open(fname, "w") do f
+        println(f, "test")
+    end
+    code = """
+    for line in eachline(STDIN)
+        run(pipe(`echo asdf`,`cat`))
+    end
+    """
+    @test success(pipe(`cat $fname`, `$exename -e $code`))
+    rm(fname)
 end

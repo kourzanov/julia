@@ -34,6 +34,9 @@ real(x::Real) = x
 imag(x::Real) = zero(x)
 reim(z) = (real(z), imag(z))
 
+real{T<:Real}(::Type{T}) = T
+real{T<:Real}(::Type{Complex{T}}) = T
+
 isreal(x::Real) = true
 isreal(z::Complex) = imag(z) == 0
 isimag(z::Number) = real(z) == 0
@@ -744,7 +747,7 @@ big{T<:FloatingPoint,N}(A::AbstractArray{Complex{T},N}) = convert(AbstractArray{
 
 ## promotion to complex ##
 
-promote_array_type{S<:Union{Complex, Real}, AT<:FloatingPoint}(::Type{S}, ::Type{Complex{AT}}) = Complex{AT}
+promote_array_type{S<:Union{Complex, Real}, AT<:FloatingPoint}(F, ::Type{S}, ::Type{Complex{AT}}) = Complex{AT}
 
 function complex{S<:Real,T<:Real}(A::Array{S}, B::Array{T})
     if size(A) != size(B); throw(DimensionMismatch()); end

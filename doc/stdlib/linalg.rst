@@ -21,7 +21,7 @@ Linear algebra functions in Julia are largely implemented by calling functions f
 .. function:: \\(A, B)
    :noindex:
 
-   Matrix division using a polyalgorithm. For input matrices ``A`` and ``B``, the result ``X`` is such that ``A*X == B`` when ``A`` is square.  The solver that is used depends upon the structure of ``A``.  A direct solver is used for upper- or lower triangular ``A``.  For Hermitian ``A`` (equivalent to symmetric ``A`` for non-complex ``A``) the ``BunchKaufman`` factorization is used.  Otherwise an LU factorization is used. For rectangular ``A`` the result is the minimum-norm least squares solution computed by a pivoted QR factorization of ``A`` and a rank estimate of A based on the R factor.
+   Matrix division using a polyalgorithm. For input matrices ``A`` and ``B``, the result ``X`` is such that ``A*X == B`` when ``A`` is square.  The solver that is used depends upon the structure of ``A``.  A direct solver is used for upper or lower triangular ``A``.  For Hermitian ``A`` (equivalent to symmetric ``A`` for non-complex ``A``) the ``BunchKaufman`` factorization is used.  Otherwise an LU factorization is used. For rectangular ``A`` the result is the minimum-norm least squares solution computed by a pivoted QR factorization of ``A`` and a rank estimate of A based on the R factor.
 
    When ``A`` is sparse, a similar polyalgorithm is used. For indefinite matrices, the LDLt factorization does not use pivoting during the numerical factorization and therefore the procedure can fail even for invertible matrices.
 
@@ -44,7 +44,7 @@ Linear algebra functions in Julia are largely implemented by calling functions f
 
 .. function:: factorize(A)
 
-   Compute a convenient factorization (including LU, Cholesky, Bunch-Kaufman, LowerTriangular, UpperTriangular) of A, based upon the type of the input matrix. The return value can then be reused for efficient solving of multiple systems. For example: ``A=factorize(A); x=A\\b; y=A\\C``.
+   Compute a convenient factorization (including LU, Cholesky, Bunch-Kaufman, LowerTriangular, UpperTriangular) of A, based upon the type of the input matrix. The return value can then be reused for efficient solving of multiple systems. For example: ``A=factorize(A); x=A\b; y=A\C``.
 
 .. function:: full(F)
 
@@ -62,8 +62,8 @@ Linear algebra functions in Julia are largely implemented by calling functions f
       Type of input ``A``     Type of output ``F``      Relationship between ``F`` and ``A``
       ----------------------- ------------------------- ----------------------------------------
       :func:`Matrix`           ``LU``                   ``F[:L]*F[:U] == A[F[:p], :]``
-      :func:`Tridiagonal`      ``LU{T,Tridiagonal{T}}``  N/A
-      :func:`SparseMatrixCSC`  ``UmfpackLU``            ``F[:L]*F[:U] == F[:Rs] .* A[F[:p], F[:q]]``
+      :func:`Tridiagonal`      ``LU{T,Tridiagonal{T}}`` ``F[:L]*F[:U] == A[F[:p], :]``
+      :func:`SparseMatrixCSC`  ``UmfpackLU``            ``F[:L]*F[:U] == (F[:Rs] .* A)[F[:p], F[:q]]``
       ======================= ========================= ========================================
 
    The individual components of the factorization ``F`` can be accessed by indexing:
@@ -71,10 +71,10 @@ Linear algebra functions in Julia are largely implemented by calling functions f
       =========== ======================================= ====== ======================== =============
       Component   Description                             ``LU`` ``LU{T,Tridiagonal{T}}`` ``UmfpackLU``
       ----------- --------------------------------------- ------ ------------------------ -------------
-      ``F[:L]``   ``L`` (lower triangular) part of ``LU``    ✓                                     ✓
-      ``F[:U]``   ``U`` (upper triangular) part of ``LU``    ✓                                     ✓
-      ``F[:p]``   (right) permutation ``Vector``             ✓                                     ✓
-      ``F[:P]``   (right) permutation ``Matrix``             ✓
+      ``F[:L]``   ``L`` (lower triangular) part of ``LU``    ✓            ✓                        ✓
+      ``F[:U]``   ``U`` (upper triangular) part of ``LU``    ✓            ✓                        ✓
+      ``F[:p]``   (right) permutation ``Vector``             ✓            ✓                        ✓
+      ``F[:P]``   (right) permutation ``Matrix``             ✓            ✓
       ``F[:q]``   left permutation ``Vector``                                                      ✓
       ``F[:Rs]``  ``Vector`` of scaling factors                                                    ✓
       ``F[:(:)]`` ``(L,U,p,q,Rs)`` components                                                      ✓
@@ -244,12 +244,6 @@ Linear algebra functions in Julia are largely implemented by calling functions f
 .. function:: bkfact!(A) -> BunchKaufman
 
    ``bkfact!`` is the same as :func:`bkfact`, but saves space by overwriting the input ``A``, instead of creating a copy.
-
-.. function:: sqrtm(A)
-
-   Compute the matrix square root of ``A``. If ``B = sqrtm(A)``, then ``B*B == A`` within roundoff error.
-
-   ``sqrtm`` uses a polyalgorithm, computing the matrix square root using Schur factorizations (:func:`schurfact`) unless it detects the matrix to be Hermitian or real symmetric, in which case it computes the matrix square root from an eigendecomposition (:func:`eigfact`). In the latter situation for positive definite matrices, the matrix square root has ``Real`` elements, otherwise it has ``Complex`` elements.
 
 .. function:: eig(A,[irange,][vl,][vu,][permute=true,][scale=true]) -> D, V
 
@@ -644,7 +638,17 @@ Linear algebra functions in Julia are largely implemented by calling functions f
 
 .. function:: expm(A)
 
-   Matrix exponential.
+   Compute the matrix exponential of ``A``.
+
+.. function:: logm(A)
+
+   Compute the matrix logarithm of ``A``.
+
+.. function:: sqrtm(A)
+
+   Compute the matrix square root of ``A``. If ``B = sqrtm(A)``, then ``B*B == A`` within roundoff error.
+
+   ``sqrtm`` uses a polyalgorithm, computing the matrix square root using Schur factorizations (:func:`schurfact`) unless it detects the matrix to be Hermitian or real symmetric, in which case it computes the matrix square root from an eigendecomposition (:func:`eigfact`). In the latter situation for positive definite matrices, the matrix square root has ``Real`` elements, otherwise it has ``Complex`` elements.
 
 .. function:: lyap(A, C)
 

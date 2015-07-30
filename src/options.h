@@ -8,12 +8,6 @@
 
 // object layout options ------------------------------------------------------
 
-#ifdef _P64
-// a risky way to save 8 bytes per tuple, by storing the length in the
-// top bits of the type tag. only possible on 64-bit.
-//#define OVERLAP_TUPLE_LEN
-#endif
-
 // if this is not defined, only individual dimension sizes are
 // stored and not total length, to save space.
 #define STORE_ARRAY_LEN
@@ -44,7 +38,15 @@
 
 // GC_VERIFY force a full verification gc along with every quick gc to ensure no
 // reachable memory is freed
+#ifndef GC_VERIFY
+#ifdef GC_DEBUG_ENV
+#define GC_VERIFY
+#else
+// It is recommanded to use the WITH_GC_VERIFY make option to turn on this
+// option. Keep the document here before a better build system is ready.
 // #define GC_VERIFY
+#endif
+#endif
 
 // SEGV_EXCEPTION turns segmentation faults into catchable julia exceptions.
 // This is not recommended, as the memory state after such an exception should
@@ -54,7 +56,7 @@
 // profiling options
 
 // GC_FINAL_STATS prints total GC stats at exit
-//#define GC_FINAL_STATS
+// #define GC_FINAL_STATS
 
 // MEMPROFILE prints pool summary statistics after every GC
 //#define MEMPROFILE
