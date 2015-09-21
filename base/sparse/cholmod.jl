@@ -24,6 +24,8 @@ using Base.SparseMatrix: AbstractSparseMatrix, SparseMatrixCSC, increment, indty
 
 include("cholmod_h.jl")
 
+const CHOLMOD_MIN_VERSION = v"2.1.1"
+
 ### These offsets are defined in SuiteSparse_wrapper.c
 const common_size = ccall((:jl_cholmod_common_size,:libsuitesparse_wrapper),Int,())
 
@@ -54,103 +56,112 @@ end
 
 common() = commonStruct
 
-const version_array = Array(Cint, 3)
-if Libdl.dlsym(Libdl.dlopen("libcholmod"), :cholmod_version) != C_NULL
-    ccall((:cholmod_version, :libcholmod), Cint, (Ptr{Cint},), version_array)
-else
-    ccall((:jl_cholmod_version, :libsuitesparse_wrapper), Cint, (Ptr{Cint},), version_array)
-end
-const version = VersionNumber(version_array...)
+const build_version_array = Array(Cint, 3)
+ccall((:jl_cholmod_version, :libsuitesparse_wrapper), Cint, (Ptr{Cint},), build_version_array)
+const build_version = VersionNumber(build_version_array...)
 
 function __init__()
-    ### Check if the linked library is compatible with the Julia code
-    if Libdl.dlsym(Libdl.dlopen("libcholmod"), :cholmod_version) == C_NULL
-        hasversion = false
-        warn("""
+    try
+        ### Check if the linked library is compatible with the Julia code
+        if Libdl.dlsym_e(Libdl.dlopen("libcholmod"), :cholmod_version) != C_NULL
+            current_version_array = Array(Cint, 3)
+            ccall((:cholmod_version, :libcholmod), Cint, (Ptr{Cint},), current_version_array)
+            current_version = VersionNumber(current_version_array...)
+        else # CHOLMOD < 2.1.1 does not include cholmod_version()
+            current_version = v"0.0.0"
+        end
 
-            CHOLMOD version incompatibility
 
-            Julia was compiled with CHOLMOD version $version. It is
-            currently linked with a version older than 2.1.0. This
-            might cause Julia to terminate when working with sparse
-            matrix factorizations, e.g. solving systems of equations
-            with \\.
-
-            It is recommended that you use Julia with a recent version
-            of CHOLMOD, or download the OS X or generic Linux binaries
-            from www.julialang.org, which ship with the correct
-            versions of all dependencies.
-        """)
-    else
-        hasversion = true
-        tmp = Array(Cint, 3)
-        ccall((:cholmod_version, :libcholmod), Cint, (Ptr{Cint},), version_array)
-        ccall((:jl_cholmod_version, :libsuitesparse_wrapper), Cint, (Ptr{Cint},), tmp)
-        if tmp != version_array
+        if current_version < CHOLMOD_MIN_VERSION
             warn("""
 
-                 CHOLMOD version incompatibility
+                CHOLMOD version incompatibility
 
-                 Julia was compiled with CHOLMOD version $version. It
-                 is currently linked with a version older than
-                 $(VersionNumber(tmp...)). This might cause Julia to
-                 terminate when working with sparse matrix
-                 factorizations, e.g. solving systems of equations
-                 with \\.
+                Julia was compiled with CHOLMOD version $build_version. It is
+                currently linked with a version older than
+                $(CHOLMOD_MIN_VERSION). This might cause Julia to
+                terminate when working with sparse matrix factorizations,
+                e.g. solving systems of equations with \\.
 
-                 It is recommended that you use Julia with a recent
-                 version of CHOLMOD, or download the OS X or generic
-                 Linux binary from www.julialang.org, which ship with
-                 the correct versions of all dependencies.
+                It is recommended that you use Julia with a recent version
+                of CHOLMOD, or download the generic binaries
+                from www.julialang.org, which ship with the correct
+                versions of all dependencies.
+            """)
+        elseif build_version_array[1] != current_version_array[1]
+            warn("""
+
+                CHOLMOD version incompatibility
+
+                Julia was compiled with CHOLMOD version $build_version. It is
+                currently linked with version $current_version.
+                This might cause Julia to terminate when working with
+                sparse matrix factorizations, e.g. solving systems of
+                equations with \\.
+
+                It is recommended that you use Julia with the same major
+                version of CHOLMOD as the one used during the build, or
+                download the generic binaries from www.julialang.org,
+                which ship with the correct versions of all dependencies.
             """)
         end
+
+        intsize = Int(ccall((:jl_cholmod_sizeof_long,:libsuitesparse_wrapper),Csize_t,()))
+        if intsize != 4length(IndexTypes)
+            warn("""
+
+                 CHOLMOD integer size incompatibility
+
+                 Julia was compiled with a version of CHOLMOD that
+                 supported $(32length(IndexTypes)) bit integers. It is
+                 currently linked with version that supports $(8intsize)
+                 integers. This might cause Julia to terminate when
+                 working with sparse matrix factorizations, e.g. solving
+                 systems of equations with \\.
+
+                 This problem can be fixed by modifying the Julia build
+                 configuration or by downloading the OS X or generic
+                 Linux binary from www.julialang.org, which include
+                 the correct versions of all dependencies.
+             """)
+        end
+
+        ### Initiate CHOLMOD
+        ### The common struct. Controls the type of factorization and keeps pointers
+        ### to temporary memory.
+        global const commonStruct = fill(0xff, common_size)
+
+        global const common_supernodal =
+            convert(Ptr{Cint}, pointer(commonStruct, cholmod_com_offsets[4] + 1))
+        global const common_final_ll =
+            convert(Ptr{Cint}, pointer(commonStruct, cholmod_com_offsets[7] + 1))
+        global const common_print =
+            convert(Ptr{Cint}, pointer(commonStruct, cholmod_com_offsets[13] + 1))
+        global const common_itype =
+            convert(Ptr{Cint}, pointer(commonStruct, cholmod_com_offsets[18] + 1))
+        global const common_dtype =
+            convert(Ptr{Cint}, pointer(commonStruct, cholmod_com_offsets[19] + 1))
+        global const common_nmethods =
+            convert(Ptr{Cint}, pointer(commonStruct, cholmod_com_offsets[15] + 1))
+        global const common_postorder =
+            convert(Ptr{Cint}, pointer(commonStruct, cholmod_com_offsets[17] + 1))
+
+        start(commonStruct)              # initializes CHOLMOD
+        set_print_level(commonStruct, 0) # no printing from CHOLMOD by default
+
+        # Register gc tracked allocator if CHOLMOD is new enough
+        if current_version >= v"3.0.0"
+            cnfg = cglobal((:SuiteSparse_config, :libsuitesparseconfig), Ptr{Void})
+            unsafe_store!(cnfg, cglobal(:jl_malloc, Ptr{Void}), 1)
+            unsafe_store!(cnfg, cglobal(:jl_calloc, Ptr{Void}), 2)
+            unsafe_store!(cnfg, cglobal(:jl_realloc, Ptr{Void}), 3)
+            unsafe_store!(cnfg, cglobal(:jl_free, Ptr{Void}), 4)
+        end
+
+    catch ex
+        Base.showerror_nostdio(ex,
+            "WARNING: Error during initialization of module CHOLMOD")
     end
-
-    intsize = Int(ccall((:jl_cholmod_sizeof_long,:libsuitesparse_wrapper),Csize_t,()))
-    if intsize != 4length(IndexTypes)
-        warn("""
-
-             CHOLMOD integer size incompatibility
-
-             Julia was compiled with a version of CHOLMOD that
-             supported $(32length(IndexTypes)) bit integers. It is
-             currently linked with version that supports $(8intsize)
-             integers. This might cause Julia to terminate when
-             working with sparse matrix factorizations, e.g. solving
-             systems of equations with \\.
-
-             This problem can be fixed by modifying the Julia build
-             configuration or by downloading the OS X or generic
-             Linux binary from www.julialang.org, which include
-             the correct versions of all dependencies.
-         """)
-    end
-
-    ### Initiate CHOLMOD
-    ### The common struct. Controls the type of factorization and keeps pointers
-    ### to temporary memory.
-    global const commonStruct = fill(0xff, common_size)
-
-    global const common_supernodal = convert(Ptr{Cint}, pointer(commonStruct, cholmod_com_offsets[4] + 1))
-    global const common_final_ll = convert(Ptr{Cint}, pointer(commonStruct, cholmod_com_offsets[7] + 1))
-    global const common_print = convert(Ptr{Cint}, pointer(commonStruct, cholmod_com_offsets[13] + 1))
-    global const common_itype = convert(Ptr{Cint}, pointer(commonStruct, cholmod_com_offsets[18] + 1))
-    global const common_dtype = convert(Ptr{Cint}, pointer(commonStruct, cholmod_com_offsets[19] + 1))
-    global const common_nmethods = convert(Ptr{Cint}, pointer(commonStruct, cholmod_com_offsets[15] + 1))
-    global const common_postorder = convert(Ptr{Cint}, pointer(commonStruct, cholmod_com_offsets[17] + 1))
-
-    start(commonStruct)              # initializes CHOLMOD
-    set_print_level(commonStruct, 0) # no printing from CHOLMOD by default
-
-    # Register gc tracked allocator if CHOLMOD is new enough
-    if hasversion && version >= v"3.0.0"
-        cnfg = cglobal((:SuiteSparse_config, :libsuitesparseconfig), Ptr{Void})
-        unsafe_store!(cnfg, cglobal(:jl_malloc, Ptr{Void}), 1)
-        unsafe_store!(cnfg, cglobal(:jl_calloc, Ptr{Void}), 2)
-        unsafe_store!(cnfg, cglobal(:jl_realloc, Ptr{Void}), 3)
-        unsafe_store!(cnfg, cglobal(:jl_free, Ptr{Void}), 4)
-    end
-
 end
 
 function set_print_level(cm::Array{UInt8}, lev::Integer)
@@ -234,7 +245,7 @@ Sparse{Tv<:VTypes}(p::Ptr{C_Sparse{Tv}}) = Sparse{Tv}(p)
 
 # Factor
 
-if version >= v"2.1.0" # CHOLMOD version 2.1.0 or later
+if build_version >= v"2.1.0" # CHOLMOD version 2.1.0 or later
     immutable C_Factor{Tv<:VTypes}
         n::Csize_t
         minor::Csize_t
@@ -784,16 +795,17 @@ get_perm(FC::FactorComponent) = get_perm(Factor(FC))
 #########################
 
 # Convertion/construction
-function Dense{T<:VTypes}(A::VecOrMat{T})
+function convert{T<:VTypes}(::Type{Dense}, A::VecOrMat{T})
     d = allocate_dense(size(A, 1), size(A, 2), stride(A, 2), T)
     s = unsafe_load(d.p)
     unsafe_copy!(s.x, pointer(A), length(A))
     d
 end
-Dense(A::Sparse) = sparse_to_dense(A)
+convert(::Type{Dense}, A::VecOrMat) = Dense(float(A))
+convert(::Type{Dense}, A::Sparse) = sparse_to_dense(A)
 
 # This constructior assumes zero based colptr and rowval
-function Sparse{Tv<:VTypes}(m::Integer, n::Integer, colptr::Vector{SuiteSparse_long}, rowval::Vector{SuiteSparse_long}, nzval::Vector{Tv}, stype)
+function convert{Tv<:VTypes}(::Type{Sparse}, m::Integer, n::Integer, colptr::Vector{SuiteSparse_long}, rowval::Vector{SuiteSparse_long}, nzval::Vector{Tv}, stype)
 
     # check if columns are sorted
     iss = true
@@ -816,7 +828,7 @@ function Sparse{Tv<:VTypes}(m::Integer, n::Integer, colptr::Vector{SuiteSparse_l
     return o
 
 end
-function Sparse{Tv<:VTypes}(m::Integer, n::Integer, colptr::Vector{SuiteSparse_long}, rowval::Vector{SuiteSparse_long}, nzval::Vector{Tv})
+function convert{Tv<:VTypes}(::Type{Sparse}, m::Integer, n::Integer, colptr::Vector{SuiteSparse_long}, rowval::Vector{SuiteSparse_long}, nzval::Vector{Tv})
     o = Sparse(m, n, colptr, rowval, nzval, 0)
 
     # check if array is symmetric and change stype if it is
@@ -826,7 +838,7 @@ function Sparse{Tv<:VTypes}(m::Integer, n::Integer, colptr::Vector{SuiteSparse_l
     o
 end
 
-function Sparse{Tv<:VTypes}(A::SparseMatrixCSC{Tv,SuiteSparse_long}, stype::Integer)
+function convert{Tv<:VTypes}(::Type{Sparse}, A::SparseMatrixCSC{Tv,SuiteSparse_long}, stype::Integer)
     o = allocate_sparse(A.m, A.n, length(A.nzval), true, true, stype, Tv)
     s = unsafe_load(o.p)
     for i = 1:length(A.colptr)
@@ -841,7 +853,7 @@ function Sparse{Tv<:VTypes}(A::SparseMatrixCSC{Tv,SuiteSparse_long}, stype::Inte
 
     return o
 end
-function Sparse{Tv<:VTypes}(A::SparseMatrixCSC{Tv,SuiteSparse_long})
+function convert{Tv<:VTypes}(::Type{Sparse}, A::SparseMatrixCSC{Tv,SuiteSparse_long})
     o = Sparse(A, 0)
     # check if array is symmetric and change stype if it is
     if ishermitian(o)
@@ -850,11 +862,18 @@ function Sparse{Tv<:VTypes}(A::SparseMatrixCSC{Tv,SuiteSparse_long})
     o
 end
 
-Sparse(A::Symmetric{Float64,SparseMatrixCSC{Float64,SuiteSparse_long}}) = Sparse(A.data, A.uplo == 'L' ? -1 : 1)
-Sparse{Tv<:VTypes}(A::Hermitian{Tv,SparseMatrixCSC{Tv,SuiteSparse_long}}) = Sparse(A.data, A.uplo == 'L' ? -1 : 1)
+convert(::Type{Sparse}, A::Symmetric{Float64,SparseMatrixCSC{Float64,SuiteSparse_long}}) = Sparse(A.data, A.uplo == 'L' ? -1 : 1)
+convert{Tv<:VTypes}(::Type{Sparse}, A::Hermitian{Tv,SparseMatrixCSC{Tv,SuiteSparse_long}}) = Sparse(A.data, A.uplo == 'L' ? -1 : 1)
+function convert{T}(::Type{Sparse},
+    A::Union{SparseMatrixCSC{T,SuiteSparse_long},
+             Symmetric{T,SparseMatrixCSC{T,SuiteSparse_long}},
+             Hermitian{T,SparseMatrixCSC{T,SuiteSparse_long}}},
+    args...)
+    return Sparse(float(A), args...)
+end
 
 # Useful when reading in files, but not type stable
-function Sparse(p::Ptr{C_SparseVoid})
+function convert(::Type{Sparse}, p::Ptr{C_SparseVoid})
 
     if p == C_NULL
         throw(ArgumentError("sparse matrix construction failed for unknown reasons. Please submit a bug report."))
@@ -898,9 +917,9 @@ function Sparse(p::Ptr{C_SparseVoid})
 
 end
 
-Sparse(A::Dense) = dense_to_sparse(A, SuiteSparse_long)
-Sparse(L::Factor) = factor_to_sparse!(copy(L))
-function Sparse(filename::ByteString)
+convert(::Type{Sparse}, A::Dense) = dense_to_sparse(A, SuiteSparse_long)
+convert(::Type{Sparse}, L::Factor) = factor_to_sparse!(copy(L))
+function convert(::Type{Sparse}, filename::ByteString)
     open(filename) do f
         return read_sparse(f, SuiteSparse_long)
     end

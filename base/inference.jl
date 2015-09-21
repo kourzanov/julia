@@ -2,7 +2,7 @@
 
 # parameters limiting potentially-infinite types
 const MAX_TYPEUNION_LEN = 3
-const MAX_TYPE_DEPTH = 4
+const MAX_TYPE_DEPTH = 5
 const MAX_TUPLETYPE_LEN  = 8
 const MAX_TUPLE_DEPTH = 4
 
@@ -174,29 +174,31 @@ add_tfunc(arraylen, 1, 1, x->Int)
 #                                     a.parameters[1] : Any))
 #add_tfunc(arrayset, 3, IInf, (a,v,i...)->a)
 add_tfunc(arraysize, 2, 2, (a,d)->Int)
-add_tfunc(pointerref, 2, 2, (a,i)->(isa(a,DataType) && a<:Ptr ? a.parameters[1] : Any))
+add_tfunc(pointerref, 2, 2, (a,i)->(isa(a,DataType) && a<:Ptr && isa(a.parameters[1],Union{Type,TypeVar}) ? a.parameters[1] : Any))
 add_tfunc(pointerset, 3, 3, (a,v,i)->a)
 
 const typeof_tfunc = function (t)
     if isType(t)
         t = t.parameters[1]
         if isa(t,TypeVar)
-            Type
+            DataType
         else
             Type{typeof(t)}
         end
     elseif isa(t,DataType)
         if isleaftype(t)
             Type{t}
+        elseif t === Any
+            DataType
         else
             Type{TypeVar(:_,t)}
         end
     elseif isa(t,Union)
         Union{map(typeof_tfunc, t.types)...}
-    elseif isa(t,TypeVar)
+    elseif isa(t,TypeVar) && !(Any <: t.ub)
         Type{t}
     else
-        Type
+        DataType
     end
 end
 add_tfunc(typeof, 1, 1, typeof_tfunc)
@@ -223,7 +225,8 @@ function limit_type_depth(t::ANY, d::Int, cov::Bool, vars)
         if d > MAX_TYPE_DEPTH
             R = t.name.primary
         else
-            Q = map(x->limit_type_depth(x, d+1, false, vars), P)
+            stillcov = cov && (t.name === Tuple.name)
+            Q = map(x->limit_type_depth(x, d+1, stillcov, vars), P)
             if !cov && any(p->contains_is(vars,p), Q)
                 R = t.name.primary
                 inexact = true
@@ -276,7 +279,7 @@ const getfield_tfunc = function (A, s0, name)
         end
         if isType(s0)
             sp = s0.parameters[1]
-            if isa(sp,DataType) && !any(x->isa(x,TypeVar), sp.parameters)
+            if isa(sp,DataType)
                 # TODO
                 #if fld === :parameters
                 #    return Type{sp.parameters}, true
@@ -485,7 +488,7 @@ function builtin_tfunction(f::ANY, args::ANY, argtype::ANY)
             return Bottom
         end
         a = argtypes[1]
-        return (isa(a,DataType) && a<:Array ?
+        return (isa(a,DataType) && a<:Array && isa(a.parameters[1],Union{Type,TypeVar}) ?
                 a.parameters[1] : Any)
     elseif is(f,Expr)
         if length(argtypes) < 1 && !isva
@@ -576,6 +579,9 @@ const limit_tuple_depth_ = function (t,d::Int)
         # may have to recur into other stuff in the future too.
         return Union{map(x->limit_tuple_depth_(x,d+1), t.types)...}
     end
+    if isa(t,TypeVar)
+        return limit_tuple_depth_(t.ub, d)
+    end
     if !(isa(t,DataType) && t.name === Tuple.name)
         return t
     end
@@ -610,8 +616,7 @@ let stagedcache=Dict{Any,Any}()
                 # don't call staged functions on abstract types.
                 # (see issues #8504, #10230)
                 # we can't guarantee that their type behavior is monotonic.
-                error("cannot call @generated function `", m.func.code.name, "` ",
-                      "with abstract argument types: ", tt)
+                return NF
             end
             f = ccall(:jl_instantiate_staged,Any,(Any,Any,Any),m,tt,env)
             stagedcache[(m,tt,env)] = f
@@ -623,7 +628,9 @@ end
 function abstract_call_gf(f, fargs, argtype, e)
     argtypes = argtype.parameters
     tm = _topmod()
-    if length(argtypes)>1 && (argtypes[1] <: Tuple) && argtypes[2]===Int
+    if length(argtypes)>1 && argtypes[2]===Int && (argtypes[1] <: Tuple ||
+       (isa(argtypes[1], DataType) && isdefined(Main, :Base) && isdefined(Main.Base, :Pair) &&
+        (argtypes[1]::DataType).name === Main.Base.Pair.name))
         # allow tuple indexing functions to take advantage of constant
         # index arguments.
         if istopfunction(tm, f, :getindex)
@@ -683,12 +690,16 @@ function abstract_call_gf(f, fargs, argtype, e)
     end
     for (m::SimpleVector) in x
         local linfo
-        try
-            linfo = func_for_method(m[3],argtype,m[2])
+        linfo = try
+            func_for_method(m[3],argtype,m[2])
         catch
+            NF
+        end
+        if linfo === NF
             rettype = Any
             break
         end
+        linfo = linfo::LambdaStaticData
         sig = m[1]
         lsig = length(m[3].sig.parameters)
         # limit argument type tuple based on size of definition signature.
@@ -739,18 +750,21 @@ function invoke_tfunc(f, types, argtype)
     if is(argtype,Bottom)
         return Bottom
     end
-    try
-        meth = ccall(:jl_gf_invoke_lookup, Any, (Any, Any), f, types)
-        if is(meth, nothing)
-            return Any
-        end
-        (ti, env) = ccall(:jl_match_method, Any, (Any, Any, Any),
-                          argtype, meth.sig, meth.tvars)::SimpleVector
-        linfo = func_for_method(meth, types, env)
-        return typeinf(linfo, ti, env, linfo)[2]
-    catch
+    meth = ccall(:jl_gf_invoke_lookup, Any, (Any, Any), f, types)
+    if is(meth, nothing)
         return Any
     end
+    (ti, env) = ccall(:jl_match_method, Any, (Any, Any, Any),
+                      argtype, meth.sig, meth.tvars)::SimpleVector
+    linfo = try
+        func_for_method(meth, types, env)
+    catch
+        NF
+    end
+    if linfo === NF
+        return Any
+    end
+    return typeinf(linfo::LambdaStaticData, ti, env, linfo)[2]
 end
 
 # `types` is an array of inferred types for expressions in `args`.
@@ -771,6 +785,8 @@ function precise_container_types(args, types, vtypes, sv)
             end
         elseif ti<:Tuple && (i==n || !isvatuple(ti))
             result[i] = ti.parameters
+        elseif ti<:AbstractArray && i==n
+            result[i] = Any[Vararg{eltype(ti)}]
         else
             return nothing
         end
@@ -791,28 +807,6 @@ function abstract_apply(af, fargs, aargtypes::Vector{Any}, vtypes, sv, e)
             at = vcat(at[1:MAX_TUPLETYPE_LEN-1], Any[Vararg{tail}])
         end
         return abstract_call(af, (), at, vtypes, sv, ())
-    end
-    if is(af,tuple) && length(aargtypes)==1
-        # tuple(xs...)
-        aat = aargtypes[1]
-        if aat <: AbstractArray
-            # tuple(array...)
-            # TODO: > 1 array of the same type
-            tn = AbstractArray.name
-            while isa(aat, DataType)
-                if is(aat.name, tn)
-                    et = aat.parameters[1]
-                    if !isa(et,TypeVar)
-                        return Tuple{Vararg{et}}
-                    end
-                end
-                if is(aat, Any)
-                    break
-                end
-                aat = aat.super
-            end
-        end
-        return Tuple
     end
     is(af,kwcall) && return Any
     # apply known function with unknown args => f(Any...)
@@ -887,7 +881,10 @@ function abstract_call(f, fargs, argtypes::Vector{Any}, vtypes, sv::StaticVarInf
         # TODO: call() case
         return Any
     end
-    if !isa(f,Function) && !isa(f,IntrinsicFunction) && _iisdefined(:call)
+    if !isa(f,Function) && !isa(f,IntrinsicFunction)
+        if !_iisdefined(:call)
+            return Any
+        end
         call_func = _ieval(:call)
         if isa(call_func,Function)
             return abstract_call(call_func, e.args,
@@ -1992,8 +1989,7 @@ function is_pure_builtin(f)
         if !(f === Intrinsics.pointerref || # this one is volatile
              f === Intrinsics.pointerset || # this one is never effect-free
              f === Intrinsics.ccall ||      # this one is never effect-free
-             f === Intrinsics.llvmcall ||   # this one is never effect-free
-             f === Intrinsics.jl_alloca)
+             f === Intrinsics.llvmcall)     # this one is never effect-free
             return true
         end
     end
@@ -2160,11 +2156,15 @@ function inlineable(f::ANY, e::Expr, atype::ANY, sv::StaticVarInfo, enclosing_as
     meth = meth[1]::SimpleVector
 
     local linfo
-    try
-        linfo = func_for_method(meth[3],atype,meth[2])
+    linfo = try
+        func_for_method(meth[3],atype,meth[2])
     catch
+        NF
+    end
+    if linfo === NF
         return NF
     end
+    linfo = linfo::LambdaStaticData
 
     ## This code tries to limit the argument list length only when it is
     ## growing due to recursion.

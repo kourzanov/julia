@@ -31,6 +31,8 @@ names(m::Module, all::Bool, imported::Bool) = sort!(ccall(:jl_module_names, Arra
 names(m::Module, all::Bool) = names(m, all, false)
 names(m::Module) = names(m, false, false)
 
+isexported(m::Module, s::Symbol) = ccall(:jl_module_exports_p, Cint, (Any, Any), m, s)!=0
+
 function isbindingresolved(m::Module, var::Symbol)
     ccall(:jl_binding_resolved_p, Cint, (Any, Any), m, var) != 0
 end
@@ -210,7 +212,7 @@ function _dump_function(f, t::ANY, native, wrapper, strip_ir_metadata, dump_modu
     end
 
     if (native)
-        str = ccall(:jl_dump_function_asm, Any, (Ptr{Void},), llvmf)::ByteString
+        str = ccall(:jl_dump_function_asm, Any, (Ptr{Void},Cint), llvmf, 0)::ByteString
     else
         str = ccall(:jl_dump_function_ir, Any,
                     (Ptr{Void}, Bool, Bool), llvmf, strip_ir_metadata, dump_module)::ByteString
@@ -233,11 +235,21 @@ code_native(f::ANY, types::ANY) = code_native(STDOUT, f, types)
 code_native(io::IO, f::ANY, t::ANY) =
     code_native(io, call, tt_cons(isa(f, Type) ? Type{f} : typeof(f), t))
 
+# give a decent error message if we try to instantiate a staged function on non-leaf types
+function func_for_method_checked(m, types)
+    linfo = Core.Inference.func_for_method(m[3],types,m[2])
+    if linfo === Core.Inference.NF
+        error("cannot call @generated function `", m[3], "` ",
+              "with abstract argument types: ", types)
+    end
+    linfo::LambdaStaticData
+end
+
 function code_typed(f::Function, types::ANY; optimize=true)
     types = to_tuple_type(types)
     asts = []
     for x in _methods(f,types,-1)
-        linfo = Core.Inference.func_for_method(x[3],types,x[2])
+        linfo = func_for_method_checked(x, types)
         if optimize
             (tree, ty) = Core.Inference.typeinf(linfo, x[1], x[2], linfo,
                                                 true, true)
@@ -263,7 +275,7 @@ function return_types(f::Function, types::ANY)
     types = to_tuple_type(types)
     rt = []
     for x in _methods(f,types,-1)
-        linfo = Core.Inference.func_for_method(x[3],types,x[2])
+        linfo = func_for_method_checked(x,types)
         (tree, ty) = Core.Inference.typeinf(linfo, x[1], x[2])
         push!(rt, ty)
     end

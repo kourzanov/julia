@@ -15,14 +15,18 @@ id_other = filter(x -> x != id_me, procs())[rand(1:(nprocs()-1))]
 @fetch begin myid() end
 
 rr=RemoteRef()
+@test typeof(rr) == RemoteRef{Channel{Any}}
 a = rand(5,5)
 put!(rr, a)
 @test rr[2,3] == a[2,3]
+@test rr[] == a
 
 rr=RemoteRef(workers()[1])
+@test typeof(rr) == RemoteRef{Channel{Any}}
 a = rand(5,5)
 put!(rr, a)
 @test rr[1,5] == a[1,5]
+@test rr[] == a
 
 dims = (20,20,20)
 
@@ -38,7 +42,18 @@ end
 
 # TODO : Need a similar test of shmem cleanup for OSX
 
-# SharedArray tests
+##### SharedArray tests
+
+function check_pids_all(S::SharedArray)
+    pidtested = falses(size(S))
+    for p in procs(S)
+        idxes_in_p = remotecall_fetch(p, D -> parentindexes(D.loc_subarr_1d)[1], S)
+        @test all(sdata(S)[idxes_in_p] .== p)
+        pidtested[idxes_in_p] = true
+    end
+    @test all(pidtested)
+end
+
 d = Base.shmem_rand(1:100, dims)
 a = convert(Array, d)
 
@@ -82,6 +97,72 @@ for p in procs(d)
     @test d[idxl] == p
 end
 
+d = SharedArray(Float64, (2,3))
+@test isa(d[:,2], Vector{Float64})
+
+### SharedArrays from a file
+
+# Mapping an existing file
+fn = tempname()
+open(fn, "w") do io
+    write(io, 1:30)
+end
+sz = (6,5)
+Atrue = reshape(1:30, sz)
+
+S = SharedArray(fn, Int, sz)
+@test S == Atrue
+@test length(procs(S)) > 1
+@sync begin
+    for p in procs(S)
+        @async remotecall_wait(p, D->fill!(D.loc_subarr_1d, myid()), S)
+    end
+end
+check_pids_all(S)
+
+filedata = similar(Atrue)
+open(fn, "r") do io
+    read!(io, filedata)
+end
+@test filedata == sdata(S)
+
+# Error for write-only files
+@test_throws ArgumentError SharedArray(fn, Int, sz, mode="w")
+
+# Error for file doesn't exist, but not allowed to create
+@test_throws ArgumentError SharedArray(tempname(), Int, sz, mode="r")
+
+# Creating a new file
+fn2 = tempname()
+S = SharedArray(fn2, Int, sz, init=D->D[localindexes(D)] = myid())
+@test S == filedata
+filedata2 = similar(Atrue)
+open(fn2, "r") do io
+    read!(io, filedata2)
+end
+@test filedata == filedata2
+
+# Appending to a file
+fn3 = tempname()
+open(fn3, "w") do io
+    write(io, ones(UInt8, 4))
+end
+S = SharedArray(fn3, UInt8, sz, 4, mode="a+", init=D->D[localindexes(D)]=0x02)
+len = prod(sz)+4
+@test filesize(fn3) == len
+filedata = Array(UInt8, len)
+open(fn3, "r") do io
+    read!(io, filedata)
+end
+@test all(filedata[1:4] .== 0x01)
+@test all(filedata[5:end] .== 0x02)
+
+@unix_only begin # these give unlink: operation not permitted (EPERM) on Windows
+    rm(fn); rm(fn2); rm(fn3)
+end
+
+### Utility functions
+
 # reshape
 
 d = Base.shmem_fill(1.0, (10,10,10))
@@ -105,10 +186,10 @@ d = Base.shmem_rand(dims)
 s = copy(sdata(d))
 ds = deepcopy(d)
 @test ds == d
-pids_ds = procs(ds)
-remotecall_fetch(pids_ds[findfirst(id->(id != myid()), pids_ds)], setindex!, ds, 1.0, 1:10)
+pids_d = procs(d)
+remotecall_fetch(pids_d[findfirst(id->(id != myid()), pids_d)], setindex!, d, 1.0, 1:10)
 @test ds != d
-@test s == d
+@test s != d
 
 
 # SharedArray as an array
@@ -231,6 +312,7 @@ function test_channel(c)
 end
 
 test_channel(Channel(10))
+test_channel(RemoteRef(()->Channel(10)))
 
 c=Channel{Int}(1)
 @test_throws MethodError put!(c, "Hello")
@@ -277,59 +359,72 @@ function test_iteration(in_c, out_c)
 end
 
 test_iteration(Channel(10), Channel(10))
+# make sure exceptions propagate when waiting on Tasks
+@test_throws CompositeException (@sync (@async error("oops")))
+try
+    @sync begin
+        for i in 1:5
+            @async error(i)
+        end
+    end
+catch ex
+    @test typeof(ex) == CompositeException
+    @test length(ex) == 5
+    @test typeof(ex.exceptions[1]) == CapturedException
+    @test typeof(ex.exceptions[1].ex) == ErrorException
+    errors = map(x->x.ex.msg, ex.exceptions)
+    @test collect(1:5) == sort(map(x->parse(Int, x), errors))
+end
+
+try
+    remotecall_fetch(id_other, ()->throw(ErrorException("foobar")))
+catch ex
+    @test typeof(ex) == RemoteException
+    @test typeof(ex.captured) == CapturedException
+    @test typeof(ex.captured.ex) == ErrorException
+    @test ex.captured.ex.msg == "foobar"
+end
 
 # The below block of tests are usually run only on local development systems, since:
+# - tests which print errors
 # - addprocs tests are memory intensive
 # - ssh addprocs requires sshd to be running locally with passwordless login enabled.
-# - includes some tests that print errors
 # The test block is enabled by defining env JULIA_TESTFULL=1
 
-if Bool(parse(Int,(get(ENV, "JULIA_TESTFULL", "0"))))
-    print("\n\nTesting correct error handling in pmap call. Please ignore printed errors when specified.\n")
+DoFullTest = Bool(parse(Int,(get(ENV, "JULIA_TESTFULL", "0"))))
 
-    # make sure exceptions propagate when waiting on Tasks
-    @test_throws ErrorException (@sync (@async error("oops")))
-
+if DoFullTest
     # pmap tests
-    # needs at least 4 processors (which are being created above for the @parallel tests)
-    s = "a"*"bcdefghijklmnopqrstuvwxyz"^100;
-    ups = "A"*"BCDEFGHIJKLMNOPQRSTUVWXYZ"^100;
+    # needs at least 4 processors dedicated to the below tests
+    ppids = remotecall_fetch(1, ()->addprocs(4))
+    s = "abcdefghijklmnopqrstuvwxyz";
+    ups = uppercase(s);
     @test ups == bytestring(UInt8[UInt8(c) for c in pmap(x->uppercase(x), s)])
     @test ups == bytestring(UInt8[UInt8(c) for c in pmap(x->uppercase(Char(x)), s.data)])
 
-    pmappids = remotecall_fetch(1, () -> addprocs(4))
-
     # retry, on error exit
-    res = pmap(x->(x=='a') ? error("EXPECTED TEST ERROR. TO BE IGNORED.") : uppercase(x), s; err_retry=true, err_stop=true, pids=pmappids);
+    res = pmap(x->(x=='a') ? error("EXPECTED TEST ERROR. TO BE IGNORED.") : (sleep(0.1);uppercase(x)), s; err_retry=true, err_stop=true, pids=ppids);
     @test (length(res) < length(ups))
     @test isa(res[1], Exception)
 
     # no retry, on error exit
-    res = pmap(x->(x=='a') ? error("EXPECTED TEST ERROR. TO BE IGNORED.") : uppercase(x), s; err_retry=false, err_stop=true, pids=pmappids);
+    res = pmap(x->(x=='a') ? error("EXPECTED TEST ERROR. TO BE IGNORED.") : (sleep(0.1);uppercase(x)), s; err_retry=false, err_stop=true, pids=ppids);
     @test (length(res) < length(ups))
     @test isa(res[1], Exception)
 
     # retry, on error continue
-    res = pmap(x->iseven(myid()) ? error("EXPECTED TEST ERROR. TO BE IGNORED.") : uppercase(x), s; err_retry=true, err_stop=false, pids=pmappids);
+    res = pmap(x->iseven(myid()) ? error("EXPECTED TEST ERROR. TO BE IGNORED.") : (sleep(0.1);uppercase(x)), s; err_retry=true, err_stop=false, pids=ppids);
     @test length(res) == length(ups)
     @test ups == bytestring(UInt8[UInt8(c) for c in res])
 
     # no retry, on error continue
-    res = pmap(x->(x=='a') ? error("EXPECTED TEST ERROR. TO BE IGNORED.") : uppercase(x), s; err_retry=false, err_stop=false, pids=pmappids);
+    res = pmap(x->(x=='a') ? error("EXPECTED TEST ERROR. TO BE IGNORED.") : (sleep(0.1);uppercase(x)), s; err_retry=false, err_stop=false, pids=ppids);
     @test length(res) == length(ups)
     @test isa(res[1], Exception)
 
-    remotecall_fetch(1, p->rmprocs(p), pmappids)
-
-    print("\n\nPassed all pmap tests that print errors.\n")
-
-    # Topology tests need to run externally since
-    # a given cluster at any time can only support a single topology and the
-    # current session is already running in parallel under the default
-    # topology.
-    # They also print errors to screen
-    print("\n\nTopology tests. \n")
-
+    # Topology tests need to run externally since a given cluster at any
+    # time can only support a single topology and the current session
+    # is already running in parallel under the default topology.
     script = joinpath(dirname(@__FILE__), "topology.jl")
     cmd = `$(joinpath(JULIA_HOME,Base.julia_exename())) $script`
 
@@ -340,6 +435,11 @@ if Bool(parse(Int,(get(ENV, "JULIA_TESTFULL", "0"))))
         error("Topology tests failed : $cmd")
     end
 
+    println("Testing exception printing on remote worker from a `remote_do` call")
+    println("Please ensure the remote error and backtrace is displayed on screen")
+
+    Base.remote_do(id_other, ()->throw(ErrorException("TESTING EXCEPTION ON REMOTE DO. PLEASE IGNORE")))
+    sleep(0.5)  # Give some time for the above error to be printed
 
 @unix_only begin
     function test_n_remove_pids(new_pids)
@@ -403,4 +503,27 @@ let A = [], B = []
         @async for x in t; push!(B,x); end
     end
     @test (A == [11]) != (B == [11])
+end
+
+let t = @task 42
+    schedule(t, ErrorException(""), error=true)
+    @test_throws ErrorException wait(t)
+end
+
+# issue #8207
+let A = Any[]
+    @parallel (+) for i in (push!(A,1); 1:2)
+        i
+    end
+    @test length(A) == 1
+end
+
+# issue #13168
+function f13168(n)
+    val = 0
+    for i=1:n val+=sum(rand(n,n)^2) end
+    val
+end
+let t = schedule(@task f13168(100))
+    @test schedule(t) === t
 end

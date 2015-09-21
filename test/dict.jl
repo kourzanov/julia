@@ -71,6 +71,18 @@ h["a","b"] = 4
 h["a","b","c"] = 4
 @test h["a","b","c"] == h[("a","b","c")] == 4
 
+# Test eltype, keytype and valtype
+@test eltype(h) == Pair{Any,Any}
+@test keytype(h) == Any
+@test valtype(h) == Any
+
+let
+    td = Dict{AbstractString,Float64}()
+    @test eltype(td) == Pair{AbstractString,Float64}
+    @test keytype(td) == AbstractString
+    @test valtype(td) == Float64
+end
+
 let
     z = Dict()
     get_KeyError = false
@@ -120,7 +132,7 @@ let
 end
 
 @test_throws ArgumentError first(Dict())
-@test first(Dict(:f=>2)) == :f=>2
+@test first(Dict(:f=>2)) == (:f=>2)
 
 # issue #1821
 let
@@ -338,3 +350,9 @@ end
 d = Dict('a'=>1, 'b'=>1, 'c'=> 3)
 @test [d[k] for k in keys(d)] == [d[k] for k in eachindex(d)] ==
       [v for (k, v) in d] == [d[x[1]] for (i, x) in enumerate(d)]
+
+
+# Issue 12451
+@test_throws ArgumentError Dict(0)
+@test_throws ArgumentError Dict([1])
+@test_throws ArgumentError Dict([(1,2),0])

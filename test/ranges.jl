@@ -108,8 +108,8 @@ end
 @test intersect(reverse(typemin(Int):2:typemax(Int)),typemin(Int):2:typemax(Int)) == reverse(typemin(Int):2:typemax(Int))
 @test intersect(typemin(Int):2:typemax(Int),reverse(typemin(Int):2:typemax(Int))) == typemin(Int):2:typemax(Int)
 
-@test 0 in UInt(0):100:typemax(Uint)
-@test last(UInt(0):100:typemax(Uint)) in UInt(0):100:typemax(Uint)
+@test 0 in UInt(0):100:typemax(UInt)
+@test last(UInt(0):100:typemax(UInt)) in UInt(0):100:typemax(UInt)
 @test -9223372036854775790 in -9223372036854775790:100:9223372036854775710
 @test -9223372036854775690 in -9223372036854775790:100:9223372036854775710
 @test -90 in -9223372036854775790:100:9223372036854775710
@@ -612,12 +612,12 @@ for _r in (1:2:100, 1:100, 1f0:2f0:100f0, 1.0:2.0:100.0,
     float_r = float(_r)
     big_r = big(_r)
     @test typeof(big_r).name === typeof(_r).name
-    if eltype(_r) <: FloatingPoint
+    if eltype(_r) <: AbstractFloat
         @test isa(float_r, typeof(_r))
         @test eltype(big_r) === BigFloat
     else
         @test isa(float_r, Range)
-        @test eltype(float_r) <: FloatingPoint
+        @test eltype(float_r) <: AbstractFloat
         @test eltype(big_r) === BigInt
     end
 end
@@ -659,3 +659,8 @@ test_range_sum_diff(1:5, linspace(0, 8, 5),
                     linspace(1, 13, 5), linspace(1, -3, 5))
 test_range_sum_diff(1.:5., linspace(0, 8, 5),
                     linspace(1, 13, 5), linspace(1, -3, 5))
+
+# Issue #12388
+let r = 0x02:0x05
+    @test r[2:3] == 0x03:0x04
+end

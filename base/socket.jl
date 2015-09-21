@@ -248,9 +248,7 @@ end
 
 ## SOCKETS ##
 
-abstract Socket <: AsyncStream
-
-type TCPSocket <: Socket
+type TCPSocket <: LibuvStream
     handle::Ptr{Void}
     status::Int
     line_buffered::Bool
@@ -294,7 +292,7 @@ function TCPSocket()
     this
 end
 
-type TCPServer <: UVServer
+type TCPServer <: LibuvServer
     handle::Ptr{Void}
     status::Int
     ccb::Callback
@@ -325,13 +323,8 @@ function TCPServer()
     this
 end
 
-isreadable(io::TCPSocket) = true
-iswritable(io::TCPSocket) = true
-
-show(io::IO,sock::TCPSocket) = print(io,"TCPSocket(",uv_status_string(sock),", ",
-    nb_available(sock.buffer)," bytes waiting)")
-
-show(io::IO,sock::TCPServer) = print(io,"TCPServer(",uv_status_string(sock),")")
+isreadable(io::TCPSocket) = isopen(io) || nb_available(io) > 0
+iswritable(io::TCPSocket) = isopen(io) && io.status != StatusClosing
 
 ## VARIOUS METHODS TO BE MOVED TO BETTER LOCATION
 
@@ -343,7 +336,12 @@ _jl_sockaddr_set_port(ptr::Ptr{Void},port::UInt16) =
     ccall(:jl_sockaddr_set_port,Void,(Ptr{Void},UInt16),ptr,port)
 
 accept(server::TCPServer) = accept(server, TCPSocket())
-accept(server::PipeServer) = accept(server, Pipe())
+
+# Libuv will internally reset the readable and writable flags on
+# this pipe after it has successfully accepted the connection, to
+# remember that before that this is an invalid pipe
+accept(server::PipeServer) = accept(server, init_pipe!(PipeEndpoint();
+    readable=false, writable=false, julia_only=true))
 
 ##
 
@@ -357,7 +355,7 @@ _bind(sock::TCPServer, host::IPv6, port::UInt16) = ccall(:jl_tcp_bind6, Int32, (
 
 # UDP
 
-type UDPSocket <: Socket
+type UDPSocket <: LibuvStream
     handle::Ptr{Void}
     status::Int
     recvnotify::Condition
@@ -388,7 +386,7 @@ function UDPSocket()
     this
 end
 
-function uvfinalize(uv::Union{TTY,Pipe,PipeServer,TCPServer,TCPSocket,UDPSocket})
+function uvfinalize(uv::Union{TTY,PipeEndpoint,PipeServer,TCPServer,TCPSocket,UDPSocket})
     if (uv.status != StatusUninit && uv.status != StatusInit)
         close(uv)
     end
@@ -510,10 +508,10 @@ function uv_recvcb(handle::Ptr{Void}, nread::Cssize_t, buf::Ptr{Void}, addr::Ptr
     addrout = if (addr == C_NULL)
                   IPv4(0)
               elseif ccall(:jl_sockaddr_in_is_ip4, Cint, (Ptr{Void},), addr) == 1
-                  IPv4(ntoh(ccall(:jl_sockaddr_host4, Uint32, (Ptr{Void},), addr)))
+                  IPv4(ntoh(ccall(:jl_sockaddr_host4, UInt32, (Ptr{Void},), addr)))
               else
                   tmp = [UInt128(0)]
-                  ccall(:jl_sockaddr_host6, Uint32, (Ptr{Void}, Ptr{Uint8}), addr, pointer(tmp))
+                  ccall(:jl_sockaddr_host6, UInt32, (Ptr{Void}, Ptr{UInt8}), addr, pointer(tmp))
                   IPv6(ntoh(tmp[1]))
               end
     buf = pointer_to_array(convert(Ptr{UInt8},buf_addr),Int(buf_size),true)
@@ -686,7 +684,7 @@ end
 
 ##
 
-listen(sock::UVServer; backlog::Integer=BACKLOG_DEFAULT) = (uv_error("listen",_listen(sock;backlog=backlog)); sock)
+listen(sock::LibuvServer; backlog::Integer=BACKLOG_DEFAULT) = (uv_error("listen",_listen(sock;backlog=backlog)); sock)
 
 function listen(addr; backlog::Integer=BACKLOG_DEFAULT)
     sock = TCPServer()
@@ -698,7 +696,7 @@ listen(port::Integer; backlog::Integer=BACKLOG_DEFAULT) = listen(IPv4(UInt32(0))
 listen(host::IPAddr, port::Integer; backlog::Integer=BACKLOG_DEFAULT) = listen(InetAddr(host,port);backlog=backlog)
 
 listen(cb::Callback,args...; backlog::Integer=BACKLOG_DEFAULT) = (sock=listen(args...;backlog=backlog);sock.ccb=cb;sock)
-listen(cb::Callback,sock::Socket; backlog::Integer=BACKLOG_DEFAULT) = (sock.ccb=cb;listen(sock;backlog=backlog))
+listen(cb::Callback,sock::Union{TCPSocket,UDPSocket}; backlog::Integer=BACKLOG_DEFAULT) = (sock.ccb=cb;listen(sock;backlog=backlog))
 
 ##
 

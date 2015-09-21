@@ -28,22 +28,11 @@ function qrfact!{T}(A::AbstractMatrix{T}, pivot::Union{Type{Val{false}}, Type{Va
     pivot==Val{true} && warn("pivoting only implemented for Float32, Float64, Complex64 and Complex128")
     m, n = size(A)
     τ = zeros(T, min(m,n))
-    @inbounds begin
-        for k = 1:min(m-1+!(T<:Real),n)
-            τk = elementaryLeft!(A, k, k)
-            τ[k] = τk
-            for j = k+1:n
-                vAj = A[k,j]
-                for i = k+1:m
-                    vAj += conj(A[i,k])*A[i,j]
-                end
-                vAj = conj(τk)*vAj
-                A[k,j] -= vAj
-                for i = k+1:m
-                    A[i,j] -= A[i,k]*vAj
-                end
-            end
-        end
+    for k = 1:min(m - 1 + !(T<:Real), n)
+        x = slice(A, k:m, k)
+        τk = reflector!(x)
+        τ[k] = τk
+        reflectorApply!(x, τk, slice(A, k:m, k + 1:n))
     end
     QR(A, τ)
 end
@@ -124,13 +113,6 @@ immutable QRPackedQ{T,S<:AbstractMatrix} <: AbstractMatrix{T}
     QRPackedQ(factors::AbstractMatrix{T}, τ::Vector{T}) = new(factors, τ)
 end
 QRPackedQ{T}(factors::AbstractMatrix{T}, τ::Vector{T}) = QRPackedQ{T,typeof(factors)}(factors, τ)
-
-immutable QRPackedWYQ{S,M<:AbstractMatrix} <: AbstractMatrix{S}
-    factors::M
-    T::Matrix{S}
-    QRPackedWYQ(factors::AbstractMatrix{S}, T::Matrix{S}) = new(factors, T)
-end
-QRPackedWYQ{S}(factors::AbstractMatrix{S}, T::Matrix{S}) = QRPackedWYQ{S,typeof(factors)}(factors, T)
 
 immutable QRCompactWYQ{S, M<:AbstractMatrix} <: AbstractMatrix{S}
     factors::M
@@ -241,7 +223,7 @@ end
 
 ### AQ
 A_mul_B!{T<:BlasFloat}(A::StridedVecOrMat{T}, B::QRCompactWYQ{T}) = LAPACK.gemqrt!('R','N', B.factors, B.T, A)
-A_mul_B!(A::StridedVecOrMat, B::QRPackedQ) = LAPACK.ormqr!('R', 'N', B.factors, B.τ, A)
+A_mul_B!{T<:BlasFloat}(A::StridedVecOrMat{T}, B::QRPackedQ{T}) = LAPACK.ormqr!('R', 'N', B.factors, B.τ, A)
 function A_mul_B!{T}(A::StridedMatrix{T},Q::QRPackedQ{T})
     mQ, nQ = size(Q.factors)
     mA, nA = size(A,1), size(A,2)
@@ -350,49 +332,44 @@ function A_ldiv_B!{T<:BlasFloat}(A::QRPivoted{T}, B::StridedMatrix{T}, rcond::Re
 end
 A_ldiv_B!{T<:BlasFloat}(A::QRPivoted{T}, B::StridedVector{T}) = vec(A_ldiv_B!(A,reshape(B,length(B),1)))
 A_ldiv_B!{T<:BlasFloat}(A::QRPivoted{T}, B::StridedVecOrMat{T}) = A_ldiv_B!(A, B, maximum(size(A))*eps(real(float(one(eltype(B))))))[1]
-function A_ldiv_B!{T}(A::QR{T},B::StridedMatrix{T})
+function A_ldiv_B!{T}(A::QR{T}, B::StridedMatrix{T})
     m, n = size(A)
     minmn = min(m,n)
     mB, nB = size(B)
-    Ac_mul_B!(A[:Q],sub(B,1:m,1:nB)) # Reconsider when arrayviews are merged.
+    Ac_mul_B!(A[:Q], sub(B, 1:m, 1:nB))
     R = A[:R]
     @inbounds begin
         if n > m # minimum norm solution
             τ = zeros(T,m)
             for k = m:-1:1 # Trapezoid to triangular by elementary operation
-                τ[k] = elementaryRightTrapezoid!(R,k)
-                for i = 1:k-1
+                x = slice(R, k, [k; m + 1:n])
+                τk = reflector!(x)
+                τ[k] = τk'
+                for i = 1:k - 1
                     vRi = R[i,k]
-                    for j = m+1:n
-                        vRi += R[i,j]*R[k,j]
+                    for j = m + 1:n
+                        vRi += R[i,j]*x[j - m + 1]'
                     end
-                    vRi *= τ[k]
+                    vRi *= τk
                     R[i,k] -= vRi
-                    for j = m+1:n
-                        R[i,j] -= vRi*R[k,j]
+                    for j = m + 1:n
+                        R[i,j] -= vRi*x[j - m + 1]
                     end
                 end
             end
         end
-        for k = 1:nB # solve triangular system. When array views are implemented, consider exporting    to function.
-            for i = minmn:-1:1
-                for j = i+1:minmn
-                    B[i,k] -= R[i,j]*B[j,k]
-                end
-                B[i,k] /= R[i,i]
-            end
-        end
+        Base.A_ldiv_B!(UpperTriangular(sub(R, :, 1:minmn)), sub(B, 1:minmn, :))
         if n > m # Apply elementary transformation to solution
-            B[m+1:mB,1:nB] = zero(T)
+            B[m + 1:mB,1:nB] = zero(T)
             for j = 1:nB
                 for k = 1:m
                     vBj = B[k,j]
-                    for i = m+1:n
-                        vBj += B[i,j]*conj(R[k,i])
+                    for i = m + 1:n
+                        vBj += B[i,j]*R[k,i]'
                     end
                     vBj *= τ[k]
                     B[k,j] -= vBj
-                    for i = m+1:n
+                    for i = m + 1:n
                         B[i,j] -= R[k,i]*vBj
                     end
                 end
@@ -409,7 +386,7 @@ function A_ldiv_B!(A::QRPivoted, b::StridedVector)
 end
 function A_ldiv_B!(A::QRPivoted, B::StridedMatrix)
     A_ldiv_B!(QR(A.factors, A.τ), B)
-    B[1:size(A.factors, 2),:] = sub(B, 1:size(A.factors, 2), :)[invperm(A.jpvt)]
+    B[1:size(A.factors, 2),:] = sub(B, 1:size(A.factors, 2), :)[invperm(A.jpvt),:]
     B
 end
 function \{TA,Tb}(A::Union{QR{TA},QRCompactWY{TA},QRPivoted{TA}}, b::StridedVector{Tb})

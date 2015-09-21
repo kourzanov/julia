@@ -15,10 +15,14 @@ function paragraph(stream::IO, md::MD)
     p = Paragraph()
     push!(md, p)
     skipwhitespace(stream)
+    prev_char = '\n'
     while !eof(stream)
         char = read(stream, Char)
         if char == '\n' || char == '\r'
-            if blankline(stream) || parse(stream, md, breaking = true)
+            char == '\r' && peek(stream) == '\n' && read(stream, Char)
+            if prev_char == '\\'
+                write(buffer, '\n')
+            elseif blankline(stream) || parse(stream, md, breaking = true)
                 break
             else
                 write(buffer, ' ')
@@ -26,6 +30,7 @@ function paragraph(stream::IO, md::MD)
         else
             write(buffer, char)
         end
+        prev_char = char
     end
     p.content = parseinline(seek(buffer, 0), md)
     return true
@@ -168,7 +173,7 @@ function list(stream::IO, block::MD)
     withstream(stream) do
         eatindent(stream) || return false
         b = startswith(stream, num_or_bullets)
-        (b == nothing || b == "") && return false
+        (b === nothing || b == "") && return false
         ordered = !(b[1] in bullets)
         if ordered
             b = b[end - 1] == '.' ? r"^\d+\. " : r"^\d+\) "

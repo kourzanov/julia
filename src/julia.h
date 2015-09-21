@@ -7,7 +7,11 @@
 extern "C" {
 #endif
 
-#include "options.h"
+//** Configuration options that affect the Julia ABI **//
+// if this is not defined, only individual dimension sizes are
+// stored and not total length, to save space.
+#define STORE_ARRAY_LEN
+//** End Configuration options **//
 
 #include "libsupport.h"
 #include <stdint.h>
@@ -249,13 +253,22 @@ typedef struct {
 } jl_uniontype_t;
 
 typedef struct {
+    uint8_t offset;   // offset relative to data start, excluding type tag
+    uint8_t size:7;
+    uint8_t isptr:1;
+} jl_fielddesc8_t;
+
+typedef struct {
     uint16_t offset;   // offset relative to data start, excluding type tag
     uint16_t size:15;
     uint16_t isptr:1;
-} jl_fielddesc_t;
+} jl_fielddesc16_t;
 
-#define JL_FIELD_MAX_OFFSET ((1ul << 16) - 1ul)
-#define JL_FIELD_MAX_SIZE ((1ul << 15) - 1ul)
+typedef struct {
+    uint32_t offset;   // offset relative to data start, excluding type tag
+    uint32_t size:31;
+    uint32_t isptr:1;
+} jl_fielddesc32_t;
 
 typedef struct _jl_datatype_t {
     JL_DATA_TYPE
@@ -271,12 +284,13 @@ typedef struct _jl_datatype_t {
     int32_t ninitialized;
     // hidden fields:
     uint32_t nfields;
-    uint32_t alignment : 31;  // strictest alignment over all fields
+    uint32_t alignment : 29;  // strictest alignment over all fields
     uint32_t haspadding : 1;  // has internal undefined bytes
+    uint32_t fielddesc_type : 2; // 0 -> 8, 1 -> 16, 2 -> 32
     uint32_t uid;
     void *struct_decl;  //llvm::Value*
     void *ditype; // llvm::MDNode* to be used as llvm::DIType(ditype)
-    jl_fielddesc_t fields[];
+    size_t fields[];
 } jl_datatype_t;
 
 typedef struct {
@@ -301,6 +315,7 @@ typedef struct {
     unsigned constp:1;
     unsigned exportp:1;
     unsigned imported:1;
+    unsigned deprecated:1;
 } jl_binding_t;
 
 typedef struct _jl_module_t {
@@ -393,6 +408,7 @@ extern DLLEXPORT jl_datatype_t *jl_utf8_string_type;
 extern DLLEXPORT jl_datatype_t *jl_errorexception_type;
 extern DLLEXPORT jl_datatype_t *jl_argumenterror_type;
 extern DLLEXPORT jl_datatype_t *jl_loaderror_type;
+extern DLLEXPORT jl_datatype_t *jl_initerror_type;
 extern DLLEXPORT jl_datatype_t *jl_typeerror_type;
 extern DLLEXPORT jl_datatype_t *jl_methoderror_type;
 extern DLLEXPORT jl_datatype_t *jl_undefvarerror_type;
@@ -665,7 +681,8 @@ STATIC_INLINE jl_value_t *jl_cellset(void *a, size_t i, void *x)
 
 #define jl_symbolnode_sym(s) ((jl_sym_t*)jl_fieldref(s,0))
 #define jl_symbolnode_type(s) (jl_fieldref(s,1))
-#define jl_linenode_line(x) (((ptrint_t*)x)[0])
+#define jl_linenode_file(x) ((jl_sym_t*)jl_fieldref(x,0))
+#define jl_linenode_line(x) (((ptrint_t*)jl_fieldref(x,1))[0])
 #define jl_labelnode_label(x) (((ptrint_t*)x)[0])
 #define jl_gotonode_label(x) (((ptrint_t*)x)[0])
 #define jl_globalref_mod(s) ((jl_module_t*)jl_fieldref(s,0))
@@ -688,13 +705,56 @@ STATIC_INLINE jl_value_t *jl_cellset(void *a, size_t i, void *x)
 #define jl_data_ptr(v)  (((jl_value_t*)v)->fieldptr)
 
 // struct type info
-#define jl_field_offset(st,i)  (((jl_datatype_t*)st)->fields[i].offset)
-#define jl_field_size(st,i)    (((jl_datatype_t*)st)->fields[i].size)
-#define jl_field_isptr(st,i)   (((jl_datatype_t*)st)->fields[i].isptr)
 #define jl_field_name(st,i)    (jl_sym_t*)jl_svecref(((jl_datatype_t*)st)->name->names, (i))
 #define jl_field_type(st,i)    jl_svecref(((jl_datatype_t*)st)->types, (i))
 #define jl_datatype_size(t)    (((jl_datatype_t*)t)->size)
 #define jl_datatype_nfields(t) (((jl_datatype_t*)(t))->nfields)
+
+#define DEFINE_FIELD_ACCESSORS(f)                                       \
+    static inline uint32_t jl_field_##f(jl_datatype_t *st, int i)       \
+    {                                                                   \
+        if (st->fielddesc_type == 0) {                                  \
+            return ((jl_fielddesc8_t*)st->fields)[i].f;                 \
+        }                                                               \
+        else if (st->fielddesc_type == 1) {                             \
+            return ((jl_fielddesc16_t*)st->fields)[i].f;                \
+        }                                                               \
+        else {                                                          \
+            return ((jl_fielddesc32_t*)st->fields)[i].f;                \
+        }                                                               \
+    }                                                                   \
+    static inline void jl_field_set##f(jl_datatype_t *st, int i,        \
+                                       uint32_t val)                    \
+    {                                                                   \
+        if (st->fielddesc_type == 0) {                                  \
+            ((jl_fielddesc8_t*)st->fields)[i].f = val;                  \
+        }                                                               \
+        else if (st->fielddesc_type == 1) {                             \
+            ((jl_fielddesc16_t*)st->fields)[i].f = val;                 \
+        }                                                               \
+        else {                                                          \
+            ((jl_fielddesc32_t*)st->fields)[i].f = val;                 \
+        }                                                               \
+    }
+
+DEFINE_FIELD_ACCESSORS(offset)
+DEFINE_FIELD_ACCESSORS(size)
+DEFINE_FIELD_ACCESSORS(isptr)
+
+static inline uint32_t jl_fielddesc_size(int8_t fielddesc_type)
+{
+    if (fielddesc_type == 0) {
+        return sizeof(jl_fielddesc8_t);
+    }
+    else if (fielddesc_type == 1) {
+        return sizeof(jl_fielddesc16_t);
+    }
+    else {
+        return sizeof(jl_fielddesc32_t);
+    }
+}
+
+#undef DEFINE_FIELD_ACCESSORS
 
 // basic predicates -----------------------------------------------------------
 #define jl_is_nothing(v)     (((jl_value_t*)(v)) == ((jl_value_t*)jl_nothing))
@@ -858,7 +918,6 @@ int jl_is_type(jl_value_t *v);
 DLLEXPORT int jl_is_leaf_type(jl_value_t *v);
 DLLEXPORT int jl_has_typevars(jl_value_t *v);
 DLLEXPORT int jl_subtype(jl_value_t *a, jl_value_t *b, int ta);
-int jl_type_morespecific(jl_value_t *a, jl_value_t *b);
 DLLEXPORT int jl_types_equal(jl_value_t *a, jl_value_t *b);
 DLLEXPORT jl_value_t *jl_type_union(jl_svec_t *types);
 jl_value_t *jl_type_union_v(jl_value_t **ts, size_t n);
@@ -868,6 +927,7 @@ DLLEXPORT jl_value_t *jl_type_intersection(jl_value_t *a, jl_value_t *b);
 DLLEXPORT int jl_args_morespecific(jl_value_t *a, jl_value_t *b);
 DLLEXPORT const char *jl_typename_str(jl_value_t *v);
 DLLEXPORT const char *jl_typeof_str(jl_value_t *v);
+DLLEXPORT int jl_type_morespecific(jl_value_t *a, jl_value_t *b);
 
 // type constructors
 DLLEXPORT jl_typename_t *jl_new_typename(jl_sym_t *name);
@@ -880,7 +940,8 @@ jl_value_t *jl_apply_type_(jl_value_t *tc, jl_value_t **params, size_t n);
 jl_value_t *jl_instantiate_type_with(jl_value_t *t, jl_value_t **env, size_t n);
 jl_datatype_t *jl_new_abstracttype(jl_value_t *name, jl_datatype_t *super,
                                    jl_svec_t *parameters);
-DLLEXPORT jl_datatype_t *jl_new_uninitialized_datatype(size_t nfields);
+DLLEXPORT jl_datatype_t *jl_new_uninitialized_datatype(size_t nfields,
+                                                       int8_t fielddesc_type);
 DLLEXPORT jl_datatype_t *jl_new_datatype(jl_sym_t *name, jl_datatype_t *super,
                                          jl_svec_t *parameters,
                                          jl_svec_t *fnames, jl_svec_t *ftypes,
@@ -898,7 +959,7 @@ DLLEXPORT jl_value_t *jl_new_structv(jl_datatype_t *type, jl_value_t **args, uin
 DLLEXPORT jl_value_t *jl_new_struct_uninit(jl_datatype_t *type);
 DLLEXPORT jl_function_t *jl_new_closure(jl_fptr_t proc, jl_value_t *env,
                                         jl_lambda_info_t *li);
-DLLEXPORT jl_lambda_info_t *jl_new_lambda_info(jl_value_t *ast, jl_svec_t *sparams);
+DLLEXPORT jl_lambda_info_t *jl_new_lambda_info(jl_value_t *ast, jl_svec_t *sparams, jl_module_t *ctx);
 DLLEXPORT jl_svec_t *jl_svec(size_t n, ...);
 DLLEXPORT jl_svec_t *jl_svec1(void *a);
 DLLEXPORT jl_svec_t *jl_svec2(void *a, void *b);
@@ -977,7 +1038,7 @@ DLLEXPORT jl_value_t *jl_get_nth_field(jl_value_t *v, size_t i);
 DLLEXPORT jl_value_t *jl_get_nth_field_checked(jl_value_t *v, size_t i);
 DLLEXPORT void        jl_set_nth_field(jl_value_t *v, size_t i, jl_value_t *rhs);
 DLLEXPORT int         jl_field_isdefined(jl_value_t *v, size_t i);
-DLLEXPORT jl_value_t *jl_get_field(jl_value_t *o, char *fld);
+DLLEXPORT jl_value_t *jl_get_field(jl_value_t *o, const char *fld);
 DLLEXPORT jl_value_t *jl_value_ptr(jl_value_t *a);
 
 // arrays
@@ -1073,6 +1134,8 @@ DLLEXPORT int jl_cpu_cores(void);
 DLLEXPORT long jl_getpagesize(void);
 DLLEXPORT long jl_getallocationgranularity(void);
 DLLEXPORT int jl_is_debugbuild(void);
+DLLEXPORT jl_sym_t* jl_get_OS_NAME();
+DLLEXPORT jl_sym_t* jl_get_ARCH();
 
 // environment entries
 DLLEXPORT jl_value_t *jl_environ(int i);
@@ -1128,15 +1191,16 @@ DLLEXPORT int julia_trampoline(int argc, const char *argv[], int (*pmain)(int ac
 DLLEXPORT void jl_atexit_hook(int status);
 DLLEXPORT void NORETURN jl_exit(int status);
 
+DLLEXPORT int jl_deserialize_verify_header(ios_t *s);
 DLLEXPORT void jl_preload_sysimg_so(const char *fname);
 DLLEXPORT ios_t *jl_create_system_image(void);
 DLLEXPORT void jl_save_system_image(const char *fname);
 DLLEXPORT void jl_restore_system_image(const char *fname);
 DLLEXPORT void jl_restore_system_image_data(const char *buf, size_t len);
 DLLEXPORT int jl_save_incremental(const char *fname, jl_array_t* worklist);
-DLLEXPORT jl_array_t *jl_restore_incremental(const char *fname);
-DLLEXPORT jl_array_t *jl_restore_incremental_from_buf(const char *buf, size_t sz);
-void jl_init_restored_modules(void);
+DLLEXPORT jl_value_t *jl_restore_incremental(const char *fname);
+DLLEXPORT jl_value_t *jl_restore_incremental_from_buf(const char *buf, size_t sz);
+void jl_init_restored_modules(jl_array_t *init_order);
 
 // front end interface
 DLLEXPORT jl_value_t *jl_parse_input_line(const char *str, size_t len);
@@ -1149,6 +1213,7 @@ jl_value_t *jl_parse_next(void);
 DLLEXPORT jl_value_t *jl_load_file_string(const char *text, size_t len,
                                           char *filename, size_t namelen);
 DLLEXPORT jl_value_t *jl_expand(jl_value_t *expr);
+DLLEXPORT jl_value_t *jl_expand_in(jl_module_t *module, jl_value_t *expr);
 jl_lambda_info_t *jl_wrap_expr(jl_value_t *expr);
 DLLEXPORT void *jl_eval_string(const char *str);
 
@@ -1184,7 +1249,7 @@ DLLEXPORT const char *jl_lookup_soname(const char *pfx, size_t n);
 // compiler
 void jl_compile(jl_function_t *f);
 DLLEXPORT jl_value_t *jl_toplevel_eval(jl_value_t *v);
-DLLEXPORT jl_value_t *jl_toplevel_eval_in(jl_module_t *m, jl_value_t *ex);
+DLLEXPORT jl_value_t *jl_toplevel_eval_in(jl_module_t *m, jl_value_t *ex, int delay_warn);
 jl_value_t *jl_eval_global_var(jl_module_t *m, jl_sym_t *e);
 DLLEXPORT jl_value_t *jl_load(const char *fname, size_t len);
 jl_value_t *jl_parse_eval_all(const char *fname, size_t len);
@@ -1294,8 +1359,6 @@ DLLEXPORT void restore_signals(void);
 DLLEXPORT void jl_install_sigint_handler(void);
 DLLEXPORT void jl_sigatomic_begin(void);
 DLLEXPORT void jl_sigatomic_end(void);
-void jl_install_default_signal_handlers(void);
-
 
 // tasks and exceptions -------------------------------------------------------
 
@@ -1316,6 +1379,7 @@ typedef struct _jl_task_t {
     jl_value_t *donenotify;
     jl_value_t *result;
     jl_value_t *exception;
+    jl_value_t *backtrace;
     jl_function_t *start;
     jl_jmp_buf ctx;
 #ifndef COPY_STACKS
@@ -1562,13 +1626,15 @@ DLLEXPORT int jl_generating_output(void);
 #define JL_OPTIONS_USE_PRECOMPILED_NO 0
 
 // Version information
-#include "julia_version.h"
+#include <julia_version.h>
 
 DLLEXPORT extern int jl_ver_major(void);
 DLLEXPORT extern int jl_ver_minor(void);
 DLLEXPORT extern int jl_ver_patch(void);
 DLLEXPORT extern int jl_ver_is_release(void);
 DLLEXPORT extern const char* jl_ver_string(void);
+DLLEXPORT const char *jl_git_branch();
+DLLEXPORT const char *jl_git_commit();
 
 // nullable struct representations
 typedef struct {

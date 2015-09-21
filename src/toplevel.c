@@ -58,6 +58,8 @@ jl_module_t *jl_new_main_module(void)
 
     jl_main_module = jl_new_module(jl_symbol("Main"));
     jl_main_module->parent = jl_main_module;
+    if (old_main) // don't block continued loading of incremental caches
+        jl_main_module->uuid = old_main->uuid;
     jl_current_module = jl_main_module;
 
     jl_core_module->parent = jl_main_module;
@@ -136,9 +138,9 @@ jl_value_t *jl_eval_module_expr(jl_expr_t *ex)
         // to pick up new types from Base
         jl_errorexception_type = NULL;
         jl_argumenterror_type = NULL;
-        jl_typeerror_type = NULL;
         jl_methoderror_type = NULL;
         jl_loaderror_type = NULL;
+        jl_initerror_type = NULL;
         jl_current_task->tls = jl_nothing; // may contain an entry for :SOURCE_FILE that is not valid in the new base
     }
     // export all modules from Main
@@ -203,12 +205,18 @@ jl_value_t *jl_eval_module_expr(jl_expr_t *ex)
     arraylist_push(&module_stack, newm);
 
     if (outermost == NULL || jl_current_module == jl_main_module) {
-        size_t i, l=module_stack.len;
-        for(i = stackidx; i < l; i++) {
-            jl_module_load_time_initialize((jl_module_t*)module_stack.items[i]);
+        JL_TRY {
+            size_t i, l=module_stack.len;
+            for(i = stackidx; i < l; i++) {
+                jl_module_load_time_initialize((jl_module_t*)module_stack.items[i]);
+            }
+            assert(module_stack.len == l);
+            module_stack.len = stackidx;
         }
-        assert(module_stack.len == l);
-        module_stack.len = stackidx;
+        JL_CATCH {
+            module_stack.len = stackidx;
+            jl_rethrow();
+        }
     }
 
     return (jl_value_t*)newm;
@@ -362,7 +370,7 @@ static jl_module_t *eval_import_path_(jl_array_t *args, int retrying)
             }
         }
         if (retrying && require_func) {
-            jl_printf(JL_STDERR, "WARNING: requiring \"%s\" did not define a corresponding module.\n", var->name);
+            jl_printf(JL_STDERR, "WARNING: requiring \"%s\" in module \"%s\" did not define a corresponding module.\n", var->name, jl_current_module->name->name);
             return NULL;
         }
         else {
@@ -499,13 +507,9 @@ jl_value_t *jl_toplevel_eval_flex(jl_value_t *e, int fast)
         thk = (jl_lambda_info_t*)jl_exprarg(ex,0);
         assert(jl_is_lambda_info(thk));
         assert(jl_is_expr(thk->ast));
-        ewc = jl_eval_with_compiler_p((jl_expr_t*)thk->ast, jl_lam_body((jl_expr_t*)thk->ast), fast, jl_current_module);
-        if (!ewc) {
-            if (jl_lam_vars_captured((jl_expr_t*)thk->ast)) {
-                // interpreter doesn't handle closure environment
-                ewc = 1;
-            }
-        }
+        ewc = jl_eval_with_compiler_p((jl_expr_t*)thk->ast, jl_lam_body((jl_expr_t*)thk->ast), fast, jl_current_module) ||
+            // interpreter doesn't handle closure environment
+            jl_lam_vars_captured((jl_expr_t*)thk->ast);
     }
     else {
         if (head && jl_eval_with_compiler_p(NULL, (jl_expr_t*)ex, fast, jl_current_module)) {
@@ -530,7 +534,7 @@ jl_value_t *jl_toplevel_eval_flex(jl_value_t *e, int fast)
     if (ewc) {
         thunk = (jl_value_t*)jl_new_closure(NULL, (jl_value_t*)jl_emptysvec, thk);
         if (!jl_in_inference) {
-            jl_type_infer(thk, jl_tuple_type, thk);
+            jl_type_infer(thk, (jl_tupletype_t*)jl_typeof(jl_emptytuple), thk);
         }
         result = jl_apply((jl_function_t*)thunk, NULL, 0);
     }
@@ -700,14 +704,13 @@ DLLEXPORT jl_value_t *jl_generic_function_def(jl_sym_t *name, jl_value_t **bp, j
 static jl_lambda_info_t *jl_copy_lambda_info(jl_lambda_info_t *linfo)
 {
     jl_lambda_info_t *new_linfo =
-        jl_new_lambda_info(linfo->ast, linfo->sparams);
+        jl_new_lambda_info(linfo->ast, linfo->sparams, linfo->module);
     new_linfo->tfunc = linfo->tfunc;
     new_linfo->name = linfo->name;
     new_linfo->roots = linfo->roots;
     new_linfo->specTypes = linfo->specTypes;
     new_linfo->unspecialized = linfo->unspecialized;
     new_linfo->specializations = linfo->specializations;
-    new_linfo->module = linfo->module;
     new_linfo->def = linfo->def;
     new_linfo->capt = linfo->capt;
     new_linfo->file = linfo->file;

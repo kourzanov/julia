@@ -41,7 +41,7 @@ union with ``typejoin``:
     Int8
 
     julia> Union{Signed, Union{UInt8, Int8}}
-    Union{UInt8,Signed}
+    Union{Signed,UInt8}
 
     julia> typejoin(Signed, Union{UInt8, Int8})
     Integer
@@ -50,7 +50,7 @@ union with ``typejoin``:
     Tuple{Int64,Float64}
 
     julia> Union{Tuple{Integer,Float64}, Tuple{Int,Real}}
-    Union{Tuple{Integer,Float64},Tuple{Int64,Real}}
+    Union{Tuple{Int64,Real},Tuple{Integer,Float64}}
 
     julia> typejoin(Tuple{Integer,Float64}, Tuple{Int,Real})
     Tuple{Integer,Real}
@@ -263,7 +263,7 @@ Some :obj:`TypeVar` interactions depend on the ``bound`` state, even when there 
 
    # These would be the same no matter whether we used S or T
    julia> Array{Array{S}} <: Array{Array}
-   false
+   true
 
    julia> Array{Array{S}} <: Array{Array{S}}
    true
@@ -360,13 +360,14 @@ type:
    svec(MyType{Float32,5},MyType{Int64,2},Evaluation succeeded, but an error occurred while showing value of type SimpleVector:
    ERROR: UndefRefError: access to undefined reference
     in getindex at ./essentials.jl:211
-    in show_delim_array at show.jl:213
-    in show at show.jl:241
-    in anonymous at show.jl:1280
-    in with_output_limit at ./show.jl:1257
-    in showlimited at show.jl:1279
+    in show_delim_array at show.jl:229
+    in show at show.jl:257
+    in anonymous at show.jl:1278
+    in with_output_limit at ./show.jl:1255
+    in showlimited at show.jl:1277
     in display at multimedia.jl:120
-    in display at multimedia.jl:151
+    [inlined code] from multimedia.jl:151
+    in display at multimedia.jl:162
 
 (The error is triggered because the cache is pre-allocated to have
 length 8, but only the first two entries are populated.)
@@ -597,9 +598,9 @@ comparing type parameters and otherwise is 0.
 
 The rules for these are somewhat different. ``subtype`` is sensitive
 to the number arguments, but ``type_morespecific`` may not be. In
-particular, ``Tuple{Int,FloatingPoint}`` is more specific than
+particular, ``Tuple{Int,AbstractFloat}`` is more specific than
 ``Tuple{Integer}``, even though it is not a subtype.  (Of
-``Tuple{Int,FloatingPoint}`` and ``Tuple{Integer,Float64}``, neither
+``Tuple{Int,AbstractFloat}`` and ``Tuple{Integer,Float64}``, neither
 is more specific than the other.)  Likewise, ``Tuple{Int,Vararg{Int}}``
 is not a subtype of ``Tuple{Integer}``, but it is considered
 more specific. However, ``morespecific`` does get a bonus for length:

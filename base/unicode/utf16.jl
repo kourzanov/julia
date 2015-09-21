@@ -1,9 +1,9 @@
 # This file is a part of Julia. License is MIT: http://julialang.org/license
 
 # Quickly copy and set trailing \0
-@inline function fast_utf_copy{S <: Union{UTF16String, UTF32String}, T <: Union{UInt16, Char}}(
-			      ::Type{S}, ::Type{T}, len, dat, flag::Bool=false)
-     S(setindex!(copy!(Vector{T}(len+1), 1, dat, 1, flag ? len : len+1), 0, len+1))
+@inline function fast_utf_copy{S <: Union{UTF16String, UTF32String}, T <: Union{UInt16, UInt32}}(
+                              ::Type{S}, ::Type{T}, len, dat, flag::Bool=false)
+    S(setindex!(copy!(Vector{T}(len+1), 1, dat, 1, flag ? len : len+1), 0, len+1))
 end
 
 # Get rest of character ch from 3-byte UTF-8 sequence in dat
@@ -101,15 +101,6 @@ function isvalid(::Type{UTF16String}, data::AbstractArray{UInt16})
     return i > n || !is_surrogate_codeunit(data[i])
 end
 
-"""
-Converts an `AbstractString` to a `UTF16String`
-
-### Returns:
-*   `UTF16String`
-
-### Throws:
-*   `UnicodeError`
-"""
 function convert(::Type{UTF16String}, str::AbstractString)
     len, flags, num4byte = unsafe_checkstring(str)
     buf = Vector{UInt16}(len+num4byte+1)
@@ -128,15 +119,6 @@ function convert(::Type{UTF16String}, str::AbstractString)
     UTF16String(buf)
 end
 
-"""
-Converts a `UTF8String` to a `UTF16String`
-
-### Returns:
-*   `UTF16String`
-
-### Throws:
-*   `UnicodeError`
-"""
 function convert(::Type{UTF16String}, str::UTF8String)
     dat = str.data
     # handle zero length string quickly
@@ -174,15 +156,6 @@ function convert(::Type{UTF16String}, str::UTF8String)
     UTF16String(buf)
 end
 
-"""
-Converts a `UTF16String` to a `UTF8String`
-
-### Returns:
-*   `UTF8String`
-
-### Throws:
-*   `UnicodeError`
-"""
 function convert(::Type{UTF8String}, str::UTF16String)
     dat = str.data
     len = sizeof(dat) >>> 1
@@ -197,12 +170,14 @@ end
 """
 Converts an already validated UTF-32 encoded vector of `UInt32` to a `UTF16String`
 
-### Input Arguments:
-*   `dat::Vector{UInt32}` UTF-32 encoded data
-*   `len`                 length of output in 16-bit words
+Input Arguments:
 
-### Returns:
-*   `::UTF16String`
+*   `dat` `Vector{UInt32}` of UTF-32 encoded data
+*   `len` length of output in 16-bit words
+
+Returns:
+
+*   `UTF16String`
 """
 function encode_to_utf16(dat, len)
     buf = Vector{UInt16}(len)
@@ -267,8 +242,6 @@ function convert(T::Type{UTF16String}, bytes::AbstractArray{UInt8})
     UTF16String(d)
 end
 
-convert(::Type{UTF16String}, str::UTF16String)    = str
-
 utf16(x) = convert(UTF16String, x)
 utf16(p::Ptr{UInt16}, len::Integer) = utf16(pointer_to_array(p, len))
 utf16(p::Ptr{Int16}, len::Integer) = utf16(convert(Ptr{UInt16}, p), len)
@@ -286,7 +259,7 @@ function map(fun, str::UTF16String)
         if !isa(c2, Char)
             throw(UnicodeError(UTF_ERR_MAP_CHAR, 0, 0))
         end
-        uc = reinterpret(UInt32, c2)
+        uc = UInt32(c2)
         if uc < 0x10000
             if is_surrogate_codeunit(UInt16(uc))
                 throw(UnicodeError(UTF_ERR_INVALID_CHAR, 0, uc))

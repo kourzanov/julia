@@ -100,8 +100,8 @@ exception is thrown, otherwise, the left-hand value is returned:
 
 .. doctest::
 
-    julia> (1+2)::FloatingPoint
-    ERROR: TypeError: typeassert: expected FloatingPoint, got Int64
+    julia> (1+2)::AbstractFloat
+    ERROR: TypeError: typeassert: expected AbstractFloat, got Int64
 
     julia> (1+2)::Int
     3
@@ -206,7 +206,7 @@ hierarchy::
 
     abstract Number
     abstract Real     <: Number
-    abstract FloatingPoint <: Real
+    abstract AbstractFloat <: Real
     abstract Integer  <: Real
     abstract Signed   <: Integer
     abstract Unsigned <: Integer
@@ -214,10 +214,10 @@ hierarchy::
 The :obj:`Number` type is a direct child type of :obj:`Any`, and :obj:`Real` is
 its child. In turn, :obj:`Real` has two children (it has more, but only two
 are shown here; we'll get to the others later): :class:`Integer` and
-:class:`FloatingPoint`, separating the world into representations of integers and
+:class:`AbstractFloat`, separating the world into representations of integers and
 representations of real numbers. Representations of real numbers
 include, of course, floating-point types, but also include other types,
-such as rationals. Hence, :class:`FloatingPoint` is a proper subtype of
+such as rationals. Hence, :class:`AbstractFloat` is a proper subtype of
 :obj:`Real`, including only floating-point representations of real numbers.
 Integers are further subdivided into :obj:`Signed` and :obj:`Unsigned`
 varieties.
@@ -233,7 +233,7 @@ subtype of its right operand:
     julia> Integer <: Number
     true
 
-    julia> Integer <: FloatingPoint
+    julia> Integer <: AbstractFloat
     false
 
 An important use of abstract types is to provide default implementations for
@@ -281,9 +281,9 @@ Unlike most languages, Julia lets you declare your own bits types,
 rather than providing only a fixed set of built-in bits types. In fact,
 the standard bits types are all defined in the language itself::
 
-    bitstype 16 Float16 <: FloatingPoint
-    bitstype 32 Float32 <: FloatingPoint
-    bitstype 64 Float64 <: FloatingPoint
+    bitstype 16 Float16 <: AbstractFloat
+    bitstype 32 Float32 <: AbstractFloat
+    bitstype 64 Float64 <: AbstractFloat
 
     bitstype 8  Bool <: Integer
     bitstype 32 Char
@@ -623,9 +623,9 @@ surrounded by curly braces::
 This declaration defines a new parametric type, ``Point{T}``, holding
 two "coordinates" of type ``T``. What, one may ask, is ``T``? Well,
 that's precisely the point of parametric types: it can be any type at
-all (or any bits type, actually, although here it's clearly used as a
-type). ``Point{Float64}`` is a concrete type equivalent to the type
-defined by replacing ``T`` in the definition of ``Point`` with
+all (or a value of any bits type, actually, although here it's clearly
+used as a type). ``Point{Float64}`` is a concrete type equivalent to the
+type defined by replacing ``T`` in the definition of ``Point`` with
 :class:`Float64`. Thus, this single declaration actually declares an
 unlimited number of types: ``Point{Float64}``, ``Point{AbstractString}``,
 ``Point{Int64}``, etc. Each of these is now a usable concrete type:
@@ -985,16 +985,16 @@ which denotes any number of trailing elements:
 
 .. doctest::
 
-    julia> isa(("1",), Tuple{String,Vararg{Int}})
+    julia> isa(("1",), Tuple{AbstractString,Vararg{Int}})
     true
 
-    julia> isa(("1",1), Tuple{String,Vararg{Int}})
+    julia> isa(("1",1), Tuple{AbstractString,Vararg{Int}})
     true
 
-    julia> isa(("1",1,2), Tuple{String,Vararg{Int}})
+    julia> isa(("1",1,2), Tuple{AbstractString,Vararg{Int}})
     true
 
-    julia> isa(("1",1,2,3.0), Tuple{String,Vararg{Int}})
+    julia> isa(("1",1,2,3.0), Tuple{AbstractString,Vararg{Int}})
     false
 
 Notice that ``Vararg{T}`` matches zero or more elements of type ``T``.
@@ -1181,7 +1181,7 @@ true or false:
     julia> isa(1,Int)
     true
 
-    julia> isa(1,FloatingPoint)
+    julia> isa(1,AbstractFloat)
     false
 
 The :func:`typeof` function, already used throughout the manual in examples,
@@ -1220,7 +1220,7 @@ Only declared types (:obj:`DataType`) have unambiguous supertypes:
 .. doctest::
 
     julia> super(Float64)
-    FloatingPoint
+    AbstractFloat
 
     julia> super(Number)
     Any
@@ -1346,7 +1346,7 @@ You can safely access the value of an :obj:`Nullable` object using :func:`get`:
 
     julia> get(Nullable{Float64}())
     ERROR: NullException()
-     in get at nullable.jl:28
+     in get at nullable.jl:30
 
     julia> get(Nullable(1.0))
     1.0

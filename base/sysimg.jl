@@ -28,11 +28,9 @@ end
 
 ## Load essential files and libraries
 include("essentials.jl")
+include("docs/bootstrap.jl")
 include("base.jl")
 include("reflection.jl")
-include("build_h.jl")
-include("version_git.jl")
-include("c.jl")
 include("options.jl")
 
 # core operations & types
@@ -55,9 +53,6 @@ include("functors.jl")
 include("abstractarray.jl")
 include("subarray.jl")
 include("array.jl")
-
-include("docs/bootstrap.jl")
-using .DocBootstrap
 
 # numeric operations
 include("hashing.jl")
@@ -83,7 +78,10 @@ include("dict.jl")
 include("set.jl")
 include("iterator.jl")
 
-# For OS specific stuff in I/O
+# For OS specific stuff
+include(UTF8String(vcat(length(Core.ARGS)>=2?Core.ARGS[2].data:"".data, "build_h.jl".data))) # include($BUILDROOT/base/build_h.jl)
+include(UTF8String(vcat(length(Core.ARGS)>=2?Core.ARGS[2].data:"".data, "version_git.jl".data))) # include($BUILDROOT/base/version_git.jl)
+include("c.jl")
 include("osutils.jl")
 
 # strings & printing
@@ -177,7 +175,7 @@ importall .GMP
 include("mpfr.jl")
 importall .MPFR
 big(n::Integer) = convert(BigInt,n)
-big(x::FloatingPoint) = convert(BigFloat,x)
+big(x::AbstractFloat) = convert(BigFloat,x)
 big(q::Rational) = big(num(q))//big(den(q))
 
 include("combinatorics.jl")
@@ -227,10 +225,7 @@ include("interactiveutil.jl")
 include("replutil.jl")
 include("test.jl")
 include("i18n.jl")
-include("help.jl")
 using .I18n
-using .Help
-push!(I18n.CALLBACKS, Help.clear_cache)
 
 # frontend
 include("Terminals.jl")
@@ -301,6 +296,7 @@ import .Dates: Date, DateTime, now
 include("deprecated.jl")
 
 # Some basic documentation
+include("docs/helpdb.jl")
 include("docs/basedocs.jl")
 
 function __init__()

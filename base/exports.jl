@@ -23,6 +23,7 @@ export
     Markdown,
 
 # Types
+    AbstractChannel,
     AbstractMatrix,
     AbstractSparseArray,
     AbstractSparseMatrix,
@@ -156,15 +157,19 @@ export
 # Exceptions
     ArgumentError,
     DimensionMismatch,
+    CapturedException,
+    CompositeException,
     EOFError,
     ErrorException,
     InvalidStateException,
     KeyError,
     LoadError,
+    InitError,
     MethodError,
     NullException,
     ParseError,
     ProcessExitedException,
+    RemoteException,
     SystemError,
     TypeError,
     AssertionError,
@@ -411,6 +416,7 @@ export
     prevpow2,
     prevprod,
     primes,
+    primesmask,
     rad2deg,
     rationalize,
     real,
@@ -450,6 +456,8 @@ export
     zero,
     √,
     ∛,
+    ≈,
+    ≉,
 
 # specfun
     airy,
@@ -491,11 +499,11 @@ export
     broadcast_function,
     broadcast_getindex,
     broadcast_setindex!,
-    cartesianmap,
     cat,
     cell,
     checkbounds,
     circshift,
+    clamp!,
     colon,
     conj!,
     copy!,
@@ -770,6 +778,7 @@ export
     isempty,
     issubset,
     keys,
+    keytype,
     length,
     map!,
     map,
@@ -794,6 +803,7 @@ export
     union,
     unique,
     values,
+    valtype,
     ∈,
     ∉,
     ∋,
@@ -911,6 +921,7 @@ export
     randexp,
     srand,
     bitrand,
+    randjump,
 
 # bigfloat & precision
     precision,
@@ -1083,7 +1094,6 @@ export
     code_native,
     fullname,
     functionloc,
-    help,
     isconst,
     isgeneric,
     isinteractive,
@@ -1099,9 +1109,12 @@ export
     workspace,
 
 # loading source files
+    __precompile__,
     evalfile,
     include,
     include_string,
+    include_dependency,
+    reload,
 
 # RTS internals
     finalizer,
@@ -1151,7 +1164,8 @@ export
     nb_available,
     ntoh,
     open,
-    pipe,
+    pipeline,
+    Pipe,
     PipeBuffer,
     poll_fd,
     poll_file,
@@ -1240,6 +1254,7 @@ export
 # shared arrays
     sdata,
     indexpids,
+    localindexes,
 
 # paths and file names
     abspath,

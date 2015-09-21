@@ -88,7 +88,7 @@ Function                                            Description
 :func:`reinterpret(type, A) <reinterpret>`          an array with the same binary data as the given array, but with the
                                                     specified element type
 :func:`rand(dims) <rand>`                           `:obj:`Array` of ``Float64``\ s with random, iid[#]_ and uniformly
-                                                    distributed values in the half-open interval [0, 1)
+                                                    distributed values in the half-open interval :math:`[0, 1)`
 :func:`randn(dims) <randn>`                         `:obj:`Array` of ``Float64``\ s with random, iid and standard normally
                                                     distributed random values
 :func:`eye(n) <eye>`                                ``n``-by-``n`` identity matrix
@@ -520,7 +520,7 @@ expecting this memory layout.  Subtypes should provide a method
 :func:`stride(A,k) <stride>` that returns the "stride" of dimension ``k``:
 increasing the index of dimension ``k`` by ``1`` should increase the
 index ``i`` of :func:`getindex(A,i) <getindex>` by :func:`stride(A,k) <stride>`.  If a
-pointer conversion method :func:`convert(Ptr{T}, A) <convert>` is provided, the
+pointer conversion method :func:`Base.unsafe_convert(Ptr{T}, A) <unsafe_convert>` is provided, the
 memory layout should correspond in the same way to these strides.
 
 The :obj:`Array` type is a specific instance of :obj:`DenseArray`
@@ -751,7 +751,7 @@ reference.
 | :func:`sprand(m,n,d) <sprand>`         | :func:`rand(m,n) <rand>`         | Creates a *m*-by-*n* random matrix (of     |
 |                                        |                                  | density *d*) with iid non-zero elements    |
 |                                        |                                  | distributed uniformly on the               |
-|                                        |                                  | half-open interval [0, 1).                 |
+|                                        |                                  | half-open interval :math:`[0, 1)`.         |
 +----------------------------------------+----------------------------------+--------------------------------------------+
 | :func:`sprandn(m,n,d) <sprandn>`       | :func:`randn(m,n) <randn>`       | Creates a *m*-by-*n* random matrix (of     |
 |                                        |                                  | density *d*) with iid non-zero elements    |

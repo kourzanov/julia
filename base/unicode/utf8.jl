@@ -26,10 +26,6 @@ const utf8_trailing = [
     2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2, 3,3,3,3,3,3,3,3,4,4,4,4,5,5,5,5,
 ]
 
-# Retained because although undocumented and unexported, used in a package (MutableStrings)
-# should be deprecated
-is_utf8_start(byte::UInt8) = ((byte&0xc0)!=0x80)
-
 ## required core functionality ##
 
 function endof(s::UTF8String)
@@ -83,7 +79,7 @@ function next(s::UTF8String, i::Int)
 end
 
 function first_utf8_byte(ch::Char)
-    c = reinterpret(UInt32, ch)
+    c = UInt32(ch)
     c < 0x80    ? c%UInt8 :
     c < 0x800   ? ((c>>6)  | 0xc0)%UInt8 :
     c < 0x10000 ? ((c>>12) | 0xe0)%UInt8 :
@@ -117,7 +113,7 @@ function getindex(s::UTF8String, r::UnitRange{Int})
     if i < 1 || i > length(s.data)
         throw(BoundsError(s, i))
     end
-    if !is_utf8_start(d[i])
+    if is_valid_continuation(d[i])
         throw(UnicodeError(UTF_ERR_INVALID_INDEX, i, d[i]))
     end
     if j > length(d)
@@ -170,7 +166,7 @@ function string(a::Union{ByteString,Char}...)
     s = Array(UInt8,0)
     for d in a
         if isa(d,Char)
-            c = reinterpret(UInt32, d::Char)
+            c = UInt32(d::Char)
             if c < 0x80
                 push!(s, c%UInt8)
             elseif c < 0x800
@@ -197,15 +193,38 @@ function string(a::Union{ByteString,Char}...)
 end
 
 function reverse(s::UTF8String)
-    out = similar(s.data)
-    if ccall(:u8_reverse, Cint, (Ptr{UInt8}, Ptr{UInt8}, Csize_t),
-             out, s.data, length(out)) == 1
-        throw(UnicodeError(UTF_ERR_INVALID_8,0,0))
+    dat = s.data
+    n = length(dat)
+    n <= 1 && return s
+    buf = Vector{UInt8}(n)
+    out = n
+    pos = 1
+    @inbounds while out > 0
+        ch = dat[pos]
+        if ch > 0xdf
+            if ch < 0xf0
+                (out -= 3) < 0 && throw(UnicodeError(UTF_ERR_SHORT, pos, ch))
+                buf[out + 1], buf[out + 2], buf[out + 3] = ch, dat[pos + 1], dat[pos + 2]
+                pos += 3
+            else
+                (out -= 4) < 0 && throw(UnicodeError(UTF_ERR_SHORT, pos, ch))
+                buf[out+1], buf[out+2], buf[out+3], buf[out+4] = ch, dat[pos+1], dat[pos+2], dat[pos+3]
+                pos += 4
+            end
+        elseif ch > 0x7f
+            (out -= 2) < 0 && throw(UnicodeError(UTF_ERR_SHORT, pos, ch))
+            buf[out + 1], buf[out + 2] = ch, dat[pos + 1]
+            pos += 2
+        else
+            buf[out] = ch
+            out -= 1
+            pos += 1
+        end
     end
-    UTF8String(out)
+    UTF8String(buf)
 end
 
-## outputing UTF-8 strings ##
+## outputting UTF-8 strings ##
 
 write(io::IO, s::UTF8String) = write(io, s.data)
 
@@ -217,15 +236,6 @@ convert(::Type{UTF8String}, s::ASCIIString) = UTF8String(s.data)
 convert(::Type{SubString{UTF8String}}, s::SubString{ASCIIString}) =
     SubString(utf8(s.string), s.offset+1, s.endof+s.offset)
 
-"""
-Converts a UTF-8 encoded vector of `UInt8` to a `UTF8String`
-
-### Returns:
-*   `UTF8String`
-
-### Throws:
-*   `UnicodeError`
-"""
 function convert(::Type{UTF8String}, dat::Vector{UInt8})
     # handle zero length string quickly
     isempty(dat) && return empty_utf8
@@ -305,11 +315,13 @@ convert(::Type{UTF8String}, s::AbstractString) = utf8(bytestring(s))
 """
 Converts an already validated vector of `UInt16` or `UInt32` to a `UTF8String`
 
-### Input Arguments:
+Input Arguments:
+
 * `dat` Vector of code units (`UInt16` or `UInt32`), explicit `\0` is not converted
 * `len` length of output in bytes
 
-### Returns:
+Returns:
+
 * `UTF8String`
 """
 function encode_to_utf8{T<:Union{UInt16, UInt32}}(::Type{T}, dat, len)
@@ -345,6 +357,3 @@ end
 
 utf8(p::Ptr{UInt8}) = UTF8String(bytestring(p))
 utf8(p::Ptr{UInt8}, len::Integer) = utf8(pointer_to_array(p, len))
-
-# The last case is the replacement character 0xfffd (3 bytes)
-utf8sizeof(c::Char) = c < Char(0x80) ? 1 : c < Char(0x800) ? 2 : c < Char(0x10000) ? 3 : c < Char(0x110000) ? 4 : 3

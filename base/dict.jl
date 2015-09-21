@@ -8,14 +8,15 @@ const secret_table_token = :__c782dbf1cf4d6a2e5e3865d7e95634f2e09b5902__
 
 haskey(d::Associative, k) = in(k,keys(d))
 
-function in(p, a::Associative)
-    if !isa(p,Pair)
-        error("""Associative collections only contain Pairs;
-                 Either look for e.g. A=>B instead, or use the `keys` or `values`
-                 function if you are looking for a key or value respectively.""")
-    end
+function in(p::Pair, a::Associative)
     v = get(a,p[1],secret_table_token)
     !is(v, secret_table_token) && (v == p[2])
+end
+
+function in(p, a::Associative)
+    error("""Associative collections only contain Pairs;
+             Either look for e.g. A=>B instead, or use the `keys` or `values`
+             function if you are looking for a key or value respectively.""")
 end
 
 function summary(t::Associative)
@@ -52,7 +53,7 @@ showdict(t::Associative; kw...) = showdict(STDOUT, t; kw...)
 function showdict{K,V}(io::IO, t::Associative{K,V}; limit::Bool = false, compact = false,
                        sz=(s = tty_size(); (s[1]-3, s[2])))
     shown_set = get(task_local_storage(), :SHOWNSET, nothing)
-    if shown_set == nothing
+    if shown_set === nothing
         shown_set = ObjectIdDict()
         task_local_storage(:SHOWNSET, shown_set)
     end
@@ -379,10 +380,11 @@ type Dict{K,V} <: Associative{K,V}
     ndel::Int
     count::Int
     dirty::Bool
+    idxfloor::Int  # an index <= the indexes of all used slots
 
     function Dict()
         n = 16
-        new(zeros(UInt8,n), Array(K,n), Array(V,n), 0, 0, false)
+        new(zeros(UInt8,n), Array(K,n), Array(V,n), 0, 0, false, 1)
     end
     function Dict(kv)
         h = Dict{K,V}()
@@ -405,7 +407,7 @@ type Dict{K,V} <: Associative{K,V}
             rehash!(d)
         end
         @assert d.ndel == 0
-        new(copy(d.slots), copy(d.keys), copy(d.vals), 0, d.count)
+        new(copy(d.slots), copy(d.keys), copy(d.vals), 0, d.count, d.dirty, d.idxfloor)
     end
 end
 Dict() = Dict{Any,Any}()
@@ -432,7 +434,19 @@ Dict{K  }(ps::Pair{K}...,)             = Dict{K,Any}(ps)
 Dict{V  }(ps::Pair{TypeVar(:K),V}...,) = Dict{Any,V}(ps)
 Dict(     ps::Pair...)                 = Dict{Any,Any}(ps)
 
-Dict(kv) = dict_with_eltype(kv, eltype(kv))
+function Dict(kv)
+    try
+        Base.dict_with_eltype(kv, eltype(kv))
+    catch e
+        if any(x->isempty(methods(x, (typeof(kv),))), [start, next, done]) ||
+            !all(x->isa(x,Union{Tuple,Pair}),kv)
+            throw(ArgumentError("Dict(kv): kv needs to be an iterator of tuples or pairs"))
+        else
+            rethrow(e)
+        end
+    end
+end
+
 dict_with_eltype{K,V}(kv, ::Type{Tuple{K,V}}) = Dict{K,V}(kv)
 dict_with_eltype{K,V}(kv, ::Type{Pair{K,V}}) = Dict{K,V}(kv)
 dict_with_eltype(kv, t) = Dict{Any,Any}(kv)
@@ -467,6 +481,7 @@ function rehash!{K,V}(h::Dict{K,V}, newsz = length(h.keys))
     sz = length(olds)
     newsz = _tablesz(newsz)
     h.dirty = true
+    h.idxfloor = 1
     if h.count == 0
         resize!(h.slots, newsz)
         fill!(h.slots, 0)
@@ -534,6 +549,7 @@ function empty!{K,V}(h::Dict{K,V})
     h.ndel = 0
     h.count = 0
     h.dirty = true
+    h.idxfloor = 1
     return h
 end
 
@@ -606,6 +622,9 @@ function _setindex!(h::Dict, v, key, index)
     h.vals[index] = v
     h.count += 1
     h.dirty = true
+    if index < h.idxfloor
+        h.idxfloor = index
+    end
 
     sz = length(h.keys)
     # Rehash now if necessary
@@ -620,7 +639,7 @@ function setindex!{K,V}(h::Dict{K,V}, v0, key0)
     if !isequal(key,key0)
         throw(ArgumentError("$key0 is not a valid key for type $K"))
     end
-    v = convert(V,  v0)
+    v = convert(V, v0)
 
     index = ht_keyindex2(h, key)
 
@@ -758,7 +777,11 @@ function skip_deleted(h::Dict, i)
     return i
 end
 
-start(t::Dict) = skip_deleted(t, 1)
+function start(t::Dict)
+    i = skip_deleted(t, t.idxfloor)
+    t.idxfloor = i
+    return i
+end
 done(t::Dict, i) = i > length(t.vals)
 next{K,V}(t::Dict{K,V}, i) = (Pair{K,V}(t.keys[i],t.vals[i]), skip_deleted(t,i+1))
 

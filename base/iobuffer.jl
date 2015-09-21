@@ -52,6 +52,7 @@ show(io::IO, b::AbstractIOBuffer) = print(io, "IOBuffer(data=UInt8[...], ",
                                       "ptr=",      b.ptr, ", ",
                                       "mark=",     b.mark, ")")
 
+read!(from::AbstractIOBuffer, a::Vector{UInt8}) = read_sub(from, a, 1, length(a))
 read!(from::AbstractIOBuffer, a::Array) = read_sub(from, a, 1, length(a))
 
 function read_sub{T}(from::AbstractIOBuffer, a::AbstractArray{T}, offs, nel)
@@ -343,7 +344,8 @@ readbytes(io::AbstractIOBuffer, nb) = read!(io, Array(UInt8, min(nb, nb_availabl
 function search(buf::IOBuffer, delim::UInt8)
     p = pointer(buf.data, buf.ptr)
     q = ccall(:memchr,Ptr{UInt8},(Ptr{UInt8},Int32,Csize_t),p,delim,nb_available(buf))
-    nb = (q == C_NULL ? 0 : q-p+1)
+    nb::Int = (q == C_NULL ? 0 : q-p+1)
+    return nb
 end
 
 function search(buf::AbstractIOBuffer, delim::UInt8)

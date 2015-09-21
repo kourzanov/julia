@@ -231,12 +231,6 @@ modern computers. In applications where overflow is possible, explicit checking
 for wraparound produced by overflow is essential; otherwise, the ``BigInt`` type
 in :ref:`man-arbitrary-precision-arithmetic` is recommended instead.
 
-To minimize the practical impact of this overflow, integer addition,
-subtraction, multiplication, and exponentiation operands are promoted
-to ``Int`` or ``UInt`` from narrower integer types.  (However,
-divisions, remainders, and bitwise operations do not promote narrower
-types.)
-
 Division errors
 ~~~~~~~~~~~~~~~
 
@@ -621,7 +615,7 @@ However, type promotion between the primitive types above and
     -9223372036854775809
 
     julia> typeof(y)
-    Base.GMP.BigInt
+    BigInt
 
 The default precision (in number of bits of the significand) and
 rounding mode of :class:`BigFloat` operations can be changed globally

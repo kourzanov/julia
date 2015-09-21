@@ -96,8 +96,6 @@ static void _infer_stack_direction(void)
 }
 
 static int mangle_pointers;
-extern char *jl_stack_lo;
-extern char *jl_stack_hi;
 
 static void _probe_arch(void)
 {
@@ -210,6 +208,7 @@ static void NORETURN finish_task(jl_task_t *t, jl_value_t *resultval)
     else
         t->state = done_sym;
     t->result = resultval;
+    jl_gc_wb(t, t->result);
     // TODO: early free of t->stkbuf
 #ifdef COPY_STACKS
     t->stkbuf = NULL;
@@ -224,12 +223,21 @@ static void NORETURN finish_task(jl_task_t *t, jl_value_t *resultval)
     abort();
 }
 
+static void throw_if_exception_set(jl_task_t *t)
+{
+    if (t->exception != NULL && t->exception != jl_nothing) {
+        jl_value_t *exc = t->exception;
+        t->exception = jl_nothing;
+        jl_throw(exc);
+    }
+}
+
 static void NOINLINE NORETURN start_task()
 {
     // this runs the first time we switch to a task
     jl_task_t *t = jl_current_task;
-    jl_value_t *res;
-    res = jl_apply(t->start, NULL, 0);
+    throw_if_exception_set(t);
+    jl_value_t *res = jl_apply(t->start, NULL, 0);
     finish_task(t, res);
     abort();
 }
@@ -294,6 +302,7 @@ static void ctx_switch(jl_task_t *t, jl_jmp_buf *where)
     */
     //JL_SIGATOMIC_BEGIN();
     if (!jl_setjmp(jl_current_task->ctx, 0)) {
+        bt_size = 0;  // backtraces don't survive task switches, see e.g. issue #12485
 #ifdef COPY_STACKS
         jl_task_t *lastt = jl_current_task;
         save_stack(lastt);
@@ -359,7 +368,9 @@ JL_THREAD jl_value_t * volatile jl_task_arg_in_transit;
 extern int jl_in_gc;
 DLLEXPORT jl_value_t *jl_switchto(jl_task_t *t, jl_value_t *arg)
 {
-    if (t->state == done_sym || t->state == failed_sym) {
+    if (t->state == done_sym || t->state == failed_sym ||
+        // task started but stkbuf NULL'd => finish_task ran
+        (t->last != NULL && t->stkbuf == NULL && t != jl_current_task)) {
         if (t->exception != jl_nothing)
             jl_throw(t->exception);
         return t->result;
@@ -370,12 +381,7 @@ DLLEXPORT jl_value_t *jl_switchto(jl_task_t *t, jl_value_t *arg)
     ctx_switch(t, &t->ctx);
     jl_value_t *val = jl_task_arg_in_transit;
     jl_task_arg_in_transit = jl_nothing;
-    if (jl_current_task->exception != NULL &&
-        jl_current_task->exception != jl_nothing) {
-        jl_value_t *exc = jl_current_task->exception;
-        jl_current_task->exception = jl_nothing;
-        jl_throw(exc);
-    }
+    throw_if_exception_set(jl_current_task);
     return val;
 }
 
@@ -463,29 +469,23 @@ static void rebase_state(jl_jmp_buf *ctx, intptr_t local_sp, intptr_t new_sp)
 ptrint_t bt_data[MAX_BT_SIZE+1];
 size_t bt_size = 0;
 
-void jl_getFunctionInfo(
-    const char **name,
-    size_t *line,
-    const char **filename,
-    size_t pointer,
-    int *fromC,
-    int skipC);
-
-static int frame_info_from_ip(
-    const char **func_name,
-    size_t *line_num,
-    const char **file_name,
-    size_t ip,
-    int skipC)
+// Always Set *func_name and *file_name to malloc'd pointers (non-NULL)
+static int frame_info_from_ip(char **func_name,
+                              char **file_name, size_t *line_num,
+                              char **inlinedat_file, size_t *inlinedat_line,
+                              size_t ip, int skipC, int skipInline)
 {
     static const char *name_unknown = "???";
     int fromC = 0;
 
-    jl_getFunctionInfo(func_name, line_num, file_name, ip, &fromC, skipC);
+    jl_getFunctionInfo(func_name, file_name, line_num, inlinedat_file, inlinedat_line, ip, &fromC,
+                       skipC, skipInline);
     if (!*func_name) {
-        *func_name = name_unknown;
-        *file_name = name_unknown;
+        *func_name = strdup(name_unknown);
         *line_num = ip;
+    }
+    if (!*file_name) {
+        *file_name = strdup(name_unknown);
     }
     return fromC;
 }
@@ -709,22 +709,27 @@ DLLEXPORT jl_value_t *jl_backtrace_from_here(void)
 
 DLLEXPORT jl_value_t *jl_lookup_code_address(void *ip, int skipC)
 {
-    const char *func_name;
+    char *func_name;
     size_t line_num;
-    const char *file_name;
-    int fromC = frame_info_from_ip(&func_name, &line_num, &file_name, (size_t)ip, skipC);
-    if (func_name != NULL) {
-        jl_value_t *r = (jl_value_t*)jl_alloc_svec(5);
-        JL_GC_PUSH1(&r);
-        jl_svecset(r, 0, jl_symbol(func_name));
-        jl_svecset(r, 1, jl_symbol(file_name));
-        jl_svecset(r, 2, jl_box_long(line_num));
-        jl_svecset(r, 3, jl_box_bool(fromC));
-        jl_svecset(r, 4, jl_box_long((intptr_t)ip));
-        JL_GC_POP();
-        return r;
-    }
-    return jl_nothing;
+    char *file_name;
+    size_t inlinedat_line;
+    char *inlinedat_file;
+    int fromC = frame_info_from_ip(&func_name, &file_name, &line_num,
+                                   &inlinedat_file, &inlinedat_line, (size_t)ip, skipC, 0);
+    jl_value_t *r = (jl_value_t*)jl_alloc_svec(7);
+    JL_GC_PUSH1(&r);
+    jl_svecset(r, 0, jl_symbol(func_name));
+    jl_svecset(r, 1, jl_symbol(file_name));
+    jl_svecset(r, 2, jl_box_long(line_num));
+    jl_svecset(r, 3, jl_symbol(inlinedat_file ? inlinedat_file : ""));
+    jl_svecset(r, 4, jl_box_long(inlinedat_file ? inlinedat_line : -1));
+    jl_svecset(r, 5, jl_box_bool(fromC));
+    jl_svecset(r, 6, jl_box_long((intptr_t)ip));
+    free(func_name);
+    free(file_name);
+    free(inlinedat_file);
+    JL_GC_POP();
+    return r;
 }
 
 DLLEXPORT jl_value_t *jl_get_backtrace(void)
@@ -745,19 +750,26 @@ DLLEXPORT jl_value_t *jl_get_backtrace(void)
 //for looking up functions from gdb:
 DLLEXPORT void gdblookup(ptrint_t ip)
 {
-    const char *func_name;
+    char *func_name;
     size_t line_num;
-    const char *file_name;
-    frame_info_from_ip(&func_name, &line_num, &file_name, ip, 0);
-    if (func_name != NULL) {
-        if (line_num == ip)
-            jl_safe_printf("unknown function (ip: %p)\n", (void*)ip);
-        else if (line_num == -1)
-            jl_safe_printf("%s at %s (unknown line)\n", func_name, file_name);
-        else
-            jl_safe_printf("%s at %s:%" PRIuPTR "\n", func_name, file_name,
-                           (uintptr_t)line_num);
+    char *file_name;
+    size_t inlinedat_line;
+    char *inlinedat_file;
+    frame_info_from_ip(&func_name, &file_name, &line_num, &inlinedat_file, &inlinedat_line, ip,
+                      /* skipC */ 0, /* skipInline */ 1);
+    if (line_num == ip) {
+        jl_safe_printf("unknown function (ip: %p)\n", (void*)ip);
     }
+    else if (line_num == -1) {
+        jl_safe_printf("%s at %s (unknown line)\n", func_name, file_name);
+    }
+    else {
+        jl_safe_printf("%s at %s:%" PRIuPTR "\n", func_name, file_name,
+                       (uintptr_t)line_num);
+    }
+    free(func_name);
+    free(file_name);
+    free(inlinedat_file);
 }
 
 DLLEXPORT void jlbacktrace()
@@ -791,6 +803,7 @@ void NORETURN throw_internal(jl_value_t *e)
             jl_exit(1);
         }
         jl_current_task->exception = e;
+        jl_gc_wb(jl_current_task, e);
         finish_task(jl_current_task, e);
         assert(0);
     }
@@ -837,6 +850,7 @@ DLLEXPORT jl_task_t *jl_new_task(jl_function_t *start, size_t ssize)
     t->result = jl_nothing;
     t->donenotify = jl_nothing;
     t->exception = jl_nothing;
+    t->backtrace = jl_nothing;
     // there is no active exception handler available on this stack yet
     t->eh = NULL;
     t->gcstack = NULL;
@@ -890,7 +904,7 @@ void jl_init_tasks(void)
     jl_task_type = jl_new_datatype(jl_symbol("Task"),
                                    jl_any_type,
                                    jl_emptysvec,
-                                   jl_svec(9,
+                                   jl_svec(10,
                                             jl_symbol("parent"),
                                             jl_symbol("last"),
                                             jl_symbol("storage"),
@@ -899,12 +913,14 @@ void jl_init_tasks(void)
                                             jl_symbol("donenotify"),
                                             jl_symbol("result"),
                                             jl_symbol("exception"),
+                                            jl_symbol("backtrace"),
                                             jl_symbol("code")),
-                                   jl_svec(9,
+                                   jl_svec(10,
                                             jl_any_type, jl_any_type,
                                             jl_any_type, jl_sym_type,
                                             jl_any_type, jl_any_type,
-                                            jl_any_type, jl_any_type, jl_function_type),
+                                            jl_any_type, jl_any_type,
+                                            jl_any_type, jl_function_type),
                                    0, 1, 0);
     jl_svecset(jl_task_type->types, 0, (jl_value_t*)jl_task_type);
 
@@ -932,12 +948,13 @@ void jl_init_root_task(void *stack, size_t ssize)
     jl_current_task->current_module = jl_current_module;
     jl_current_task->last = jl_current_task;
     jl_current_task->tls = NULL;
-    jl_current_task->consumers = NULL;
+    jl_current_task->consumers = jl_nothing;
     jl_current_task->state = runnable_sym;
     jl_current_task->start = NULL;
-    jl_current_task->result = NULL;
-    jl_current_task->donenotify = NULL;
-    jl_current_task->exception = NULL;
+    jl_current_task->result = jl_nothing;
+    jl_current_task->donenotify = jl_nothing;
+    jl_current_task->exception = jl_nothing;
+    jl_current_task->backtrace = jl_nothing;
     jl_current_task->eh = NULL;
     jl_current_task->gcstack = NULL;
 

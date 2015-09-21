@@ -76,6 +76,7 @@ static jl_binding_t *new_binding(jl_sym_t *name)
     b->constp = 0;
     b->exportp = 0;
     b->imported = 0;
+    b->deprecated = 0;
     return b;
 }
 
@@ -232,11 +233,15 @@ DLLEXPORT jl_binding_t *jl_get_binding(jl_module_t *m, jl_sym_t *var)
     return jl_get_binding_(m, var, NULL);
 }
 
+void jl_binding_deprecation_warning(jl_binding_t *b);
+
 DLLEXPORT jl_binding_t *jl_get_binding_or_error(jl_module_t *m, jl_sym_t *var)
 {
     jl_binding_t *b = jl_get_binding_(m, var, NULL);
     if (b == NULL)
         jl_undefined_var_error(var);
+    if (b->deprecated)
+        jl_binding_deprecation_warning(b);
     return b;
 }
 
@@ -324,6 +329,7 @@ static void module_import_(jl_module_t *to, jl_module_t *from, jl_sym_t *s,
             jl_binding_t *nb = new_binding(s);
             nb->owner = b->owner;
             nb->imported = (explici!=0);
+            nb->deprecated = b->deprecated;
             *bp = nb;
             jl_gc_wb_buf(to, nb);
         }
@@ -413,6 +419,13 @@ int jl_defines_or_exports_p(jl_module_t *m, jl_sym_t *var)
     return (*bp)->exportp || (*bp)->owner==m;
 }
 
+DLLEXPORT int jl_module_exports_p(jl_module_t *m, jl_sym_t *var)
+{
+    jl_binding_t **bp = (jl_binding_t**)ptrhash_bp(&m->bindings, var);
+    if (*bp == HT_NOTFOUND) return 0;
+    return (*bp)->exportp;
+}
+
 int jl_binding_resolved_p(jl_module_t *m, jl_sym_t *var)
 {
     jl_binding_t **bp = (jl_binding_t**)ptrhash_bp(&m->bindings, var);
@@ -424,6 +437,7 @@ jl_value_t *jl_get_global(jl_module_t *m, jl_sym_t *var)
 {
     jl_binding_t *b = jl_get_binding(m, var);
     if (b == NULL) return NULL;
+    if (b->deprecated) jl_binding_deprecation_warning(b);
     return b->value;
 }
 
@@ -451,6 +465,35 @@ DLLEXPORT int jl_is_const(jl_module_t *m, jl_sym_t *var)
     if (m == NULL) m = jl_current_module;
     jl_binding_t *b = jl_get_binding(m, var);
     return b && b->constp;
+}
+
+DLLEXPORT void jl_deprecate_binding(jl_module_t *m, jl_sym_t *var)
+{
+    jl_binding_t *b = jl_get_binding(m, var);
+    if (b) b->deprecated = 1;
+}
+
+DLLEXPORT int jl_is_binding_deprecated(jl_module_t *m, jl_sym_t *var)
+{
+    jl_binding_t *b = jl_get_binding(m, var);
+    return b && b->deprecated;
+}
+
+void jl_binding_deprecation_warning(jl_binding_t *b)
+{
+    if (b->deprecated) {
+        if (b->owner)
+            jl_printf(JL_STDERR, "WARNING: %s.%s is deprecated", b->owner->name->name, b->name->name);
+        else
+            jl_printf(JL_STDERR, "WARNING: %s is deprecated", b->name->name);
+        jl_value_t *v = b->value;
+        if (v && (jl_is_type(v) || (jl_is_function(v) && jl_is_gf(v)))) {
+            jl_printf(JL_STDERR, ", use ");
+            jl_static_show(JL_STDERR, v);
+            jl_printf(JL_STDERR, " instead");
+        }
+        jl_printf(JL_STDERR, ".\n");
+    }
 }
 
 DLLEXPORT void jl_checked_assignment(jl_binding_t *b, jl_value_t *rhs)
@@ -510,7 +553,8 @@ DLLEXPORT jl_value_t *jl_module_names(jl_module_t *m, int all, int imported)
     for(i=1; i < m->bindings.size; i+=2) {
         if (table[i] != HT_NOTFOUND) {
             jl_binding_t *b = (jl_binding_t*)table[i];
-            if (b->exportp || ((imported || b->owner == m) && (all || m == jl_main_module))) {
+            if ((b->exportp || ((imported || b->owner == m) && (all || m == jl_main_module))) &&
+                !b->deprecated) {
                 jl_array_grow_end(a, 1);
                 //XXX: change to jl_arrayset if array storage allocation for Array{Symbols,1} changes:
                 jl_cellset(a, jl_array_dim0(a)-1, (jl_value_t*)b->name);
@@ -542,9 +586,13 @@ void jl_module_run_initializer(jl_module_t *m)
         jl_apply(f, NULL, 0);
     }
     JL_CATCH {
-        jl_printf(JL_STDERR, "WARNING: error initializing module %s:\n", m->name->name);
-        jl_static_show(JL_STDERR, jl_exception_in_transit);
-        jl_printf(JL_STDERR, "\n");
+        if (jl_initerror_type == NULL) {
+            jl_rethrow();
+        }
+        else {
+            jl_rethrow_other(jl_new_struct(jl_initerror_type, m->name,
+                                           jl_exception_in_transit));
+        }
     }
 }
 
@@ -552,7 +600,7 @@ jl_function_t *jl_module_call_func(jl_module_t *m)
 {
     if (m->call_func == NULL) {
         jl_function_t *cf = (jl_function_t*)jl_get_global(m, call_sym);
-        if (cf == NULL || !jl_is_function(cf))
+        if (cf == NULL || !jl_is_function(cf) || !jl_is_gf(cf))
             cf = jl_bottom_func;
         m->call_func = cf;
     }

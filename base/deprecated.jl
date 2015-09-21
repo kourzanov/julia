@@ -32,6 +32,7 @@ macro deprecate(old,new)
                   $(esc(new))(args...)
               end))
     elseif isa(old,Expr) && old.head == :call
+        remove_linenums!(new)
         oldcall = sprint(io->show_unquoted(io,old))
         newcall = sprint(io->show_unquoted(io,new))
         oldsym = if isa(old.args[1],Symbol)
@@ -53,6 +54,15 @@ macro deprecate(old,new)
     else
         error("invalid usage of @deprecate")
     end
+end
+
+remove_linenums!(ex) = ex
+function remove_linenums!(ex::Expr)
+    filter!(x->!((isa(x,Expr) && is(x.head,:line)) || isa(x,LineNumberNode)), ex.args)
+    for subex in ex.args
+        remove_linenums!(subex)
+    end
+    ex
 end
 
 function depwarn(msg, funcsym)
@@ -80,7 +90,7 @@ function firstcaller(bt::Array{Ptr{Void},1}, funcsym::Symbol)
         if lkup === ()
             continue
         end
-        fname, file, line, fromC = lkup
+        fname, file, line, inlinedat_file, inlinedat_line, fromC = lkup
         if fname == funcsym
             break
         end
@@ -89,6 +99,16 @@ function firstcaller(bt::Array{Ptr{Void},1}, funcsym::Symbol)
         return bt[i]
     end
     return C_NULL
+end
+
+deprecate(s::Symbol) = deprecate(current_module(), s)
+deprecate(m::Module, s::Symbol) = ccall(:jl_deprecate_binding, Void, (Any, Any), m, s)
+
+macro deprecate_binding(old, new)
+    Expr(:toplevel,
+         Expr(:export, esc(old)),
+         Expr(:const, Expr(:(=), esc(old), esc(new))),
+         Expr(:call, :deprecate, Expr(:quote, old)))
 end
 
 # 0.4 deprecations
@@ -101,22 +121,20 @@ end
 @deprecate rsplit(x,y,l::Integer) rsplit(x,y;limit=l)
 @deprecate rsplit(x,y,k::Bool) rsplit(x,y;keep=k)
 
-export UdpSocket
 const TcpSocket = TCPSocket
-const UdpSocket = UDPSocket
+deprecate(:TcpSocket)
 const IpAddr = IPAddr
+deprecate(:IpAddr)
+@deprecate_binding UdpSocket UDPSocket
 
 @deprecate isblank(c::Char) c == ' ' || c == '\t'
 @deprecate isblank(s::AbstractString) all(c -> c == ' ' || c == '\t', s)
 
-export Nothing
-const Nothing = Void
-
-export None
-const None = Union{}
+@deprecate_binding Nothing Void
+@deprecate_binding None Union{}
 
 export apply
-function apply(f, args...)
+@noinline function apply(f, args...)
     depwarn("apply(f, x) is deprecated, use `f(x...)` instead", :apply)
     return Core._apply(call, f, args...)
 end
@@ -135,21 +153,19 @@ end
 
 @deprecate oftype{T}(::Type{T},c)  convert(T,c)
 
-@deprecate inf(x::FloatingPoint)  oftype(x,Inf)
-@deprecate nan(x::FloatingPoint)  oftype(x,NaN)
-@deprecate inf{T<:FloatingPoint}(::Type{T})  convert(T,Inf)
-@deprecate nan{T<:FloatingPoint}(::Type{T})  convert(T,NaN)
+@deprecate inf(x::AbstractFloat)  oftype(x,Inf)
+@deprecate nan(x::AbstractFloat)  oftype(x,NaN)
+@deprecate inf{T<:AbstractFloat}(::Type{T})  convert(T,Inf)
+@deprecate nan{T<:AbstractFloat}(::Type{T})  convert(T,NaN)
 
-export String
-const String = AbstractString
+@deprecate_binding String AbstractString
 
-export Uint, Uint8, Uint16, Uint32, Uint64, Uint128
-const Uint = UInt
-const Uint8 = UInt8
-const Uint16 = UInt16
-const Uint32 = UInt32
-const Uint64 = UInt64
-const Uint128 = UInt128
+@deprecate_binding Uint    UInt
+@deprecate_binding Uint8   UInt8
+@deprecate_binding Uint16  UInt16
+@deprecate_binding Uint32  UInt32
+@deprecate_binding Uint64  UInt64
+@deprecate_binding Uint128 UInt128
 
 @deprecate zero{T}(::Type{Ptr{T}}) Ptr{T}(0)
 @deprecate zero{T}(x::Ptr{T})      Ptr{T}(0)
@@ -168,8 +184,7 @@ const Uint128 = UInt128
 @deprecate iround(x)              round(Integer,x)
 @deprecate iround{T}(::Type{T},x) round(T,x)
 
-export Base64Pipe
-const Base64Pipe = Base64EncodePipe
+@deprecate_binding Base64Pipe Base64EncodePipe
 @deprecate base64 base64encode
 
 @deprecate prevind(a::Any, i::Integer)   i-1
@@ -198,8 +213,7 @@ const Base64Pipe = Base64EncodePipe
 @deprecate error(ex::Exception) throw(ex)
 @deprecate error{E<:Exception}(::Type{E}) throw(E())
 
-export MemoryError
-const MemoryError = OutOfMemoryError
+@deprecate_binding MemoryError OutOfMemoryError
 
 @deprecate map!(f::Callable, dest::StridedArray, A::StridedArray, B::Number) broadcast!(f, dest, A, B)
 @deprecate map!(f::Callable, dest::StridedArray, A::Number, B::StridedArray) broadcast!(f, dest, A, B)
@@ -207,16 +221,17 @@ const MemoryError = OutOfMemoryError
 #9295
 @deprecate push!(t::Associative, key, v)  setindex!(t, v, key)
 
-@deprecate (|>)(src::AbstractCmd,    dest::AbstractCmd)    pipe(src, dest)
-@deprecate (.>)(src::AbstractCmd,    dest::AbstractCmd)    pipe(src, stderr=dest)
-@deprecate (|>)(src::Redirectable,   dest::AbstractCmd)    pipe(src, dest)
-@deprecate (|>)(src::AbstractCmd,    dest::Redirectable)   pipe(src, dest)
-@deprecate (.>)(src::AbstractCmd,    dest::Redirectable)   pipe(src, stderr=dest)
-@deprecate (|>)(src::AbstractCmd,    dest::AbstractString) pipe(src, dest)
-@deprecate (|>)(src::AbstractString, dest::AbstractCmd)    pipe(src, dest)
-@deprecate (.>)(src::AbstractCmd,    dest::AbstractString) pipe(src, stderr=dest)
-@deprecate (>>)(src::AbstractCmd,    dest::AbstractString) pipe(src, stdout=dest, append=true)
-@deprecate (.>>)(src::AbstractCmd,   dest::AbstractString) pipe(src, stderr=dest, append=true)
+@deprecate (|>)(src::AbstractCmd,    dest::AbstractCmd)    pipeline(src, dest)
+@deprecate (.>)(src::AbstractCmd,    dest::AbstractCmd)    pipeline(src, stderr=dest)
+@deprecate (|>)(src::Redirectable,   dest::AbstractCmd)    pipeline(src, dest)
+@deprecate (|>)(src::AbstractCmd,    dest::Redirectable)   pipeline(src, dest)
+@deprecate (.>)(src::AbstractCmd,    dest::Redirectable)   pipeline(src, stderr=dest)
+@deprecate (|>)(src::AbstractCmd,    dest::AbstractString) pipeline(src, dest)
+@deprecate (|>)(src::AbstractString, dest::AbstractCmd)    pipeline(src, dest)
+@deprecate (.>)(src::AbstractCmd,    dest::AbstractString) pipeline(src, stderr=dest)
+@deprecate (>>)(src::AbstractCmd,    dest::AbstractString) pipeline(src, stdout=dest, append=true)
+@deprecate (.>>)(src::AbstractCmd,   dest::AbstractString) pipeline(src, stderr=dest, append=true)
+@deprecate pipe pipeline
 
 # 10314
 @deprecate filter!(r::Regex, d::Dict) filter!((k,v)->ismatch(r,k), d)
@@ -239,13 +254,35 @@ const MemoryError = OutOfMemoryError
 @deprecate float64(s::AbstractString)   parse(Float64,s)
 @deprecate float32(s::AbstractString)   parse(Float32,s)
 
-for (f,t) in ((:integer, Integer), (:signed, Signed),
-              (:unsigned, Unsigned), (:int, Int), (:int8, Int8), (:int16, Int16),
-              (:int32, Int32), (:int64, Int64), (:int128, Int128), (:uint, UInt),
-              (:uint8, UInt8), (:uint16, UInt16), (:uint32, UInt32), (:uint64, UInt64),
-              (:uint128, UInt128))
+for (f,t) in ((:integer, Integer), (:signed, Signed), (:unsigned, Unsigned))
     @eval begin
         @deprecate $f(x::AbstractArray) round($t, x)
+    end
+end
+
+for (f,t) in ((:int,    Int), (:int8,   Int8), (:int16,  Int16), (:int32,  Int32),
+              (:int64,  Int64), (:int128, Int128), (:uint,   UInt), (:uint8,  UInt8),
+              (:uint16, UInt16), (:uint32, UInt32), (:uint64, UInt64), (:uint128,UInt128))
+    ex1 = sprint(io->show_unquoted(io,:([parse($t,s) for s in a])))
+    ex2 = sprint(io->show_unquoted(io,:(round($t, a))))
+    name = Expr(:quote,f)
+    @eval begin
+        function ($f)(x::AbstractArray)
+            if all(y->isa(y,AbstractString), x)
+                depwarn(string($name,"(a::AbstractArray) is deprecated, use ", $ex1, " instead."), $name)
+                return [parse($t,s) for s in x]
+            elseif all(y->isa(y,Number), x)
+                depwarn(string($name,"(a::AbstractArray) is deprecated, use ", $ex2, " instead."), $name)
+                return round($t, x)
+            end
+            y = similar(x,$t)
+            i = 1
+            for e in x
+                y[i] = ($f)(e)
+                i += 1
+            end
+            y
+        end
     end
 end
 
@@ -281,7 +318,7 @@ end
 @deprecate bool(x::Number)  x!=0
 
 @deprecate char(x)                 Char(x)
-@deprecate char(x::FloatingPoint)  Char(round(UInt32,x))
+@deprecate char(x::AbstractFloat)  Char(round(UInt32,x))
 @deprecate integer(x::Char)        Int(x)
 
 @deprecate complex128(r::Real, i::Real)  Complex128(r, i)
@@ -323,7 +360,7 @@ for (f,t) in ((:uint8,:UInt8), (:uint16,:UInt16), (:uint32,:UInt32), (:uint64,:U
               (:int128,:Int128), (:uint128,:UInt128), (:signed,:Int), (:unsigned,:UInt),
               (:integer,:Int), (:int,:Int), (:uint,:UInt))
     @eval begin
-        @deprecate ($f)(x::FloatingPoint)  round($t,x)
+        @deprecate ($f)(x::AbstractFloat)  round($t,x)
         @deprecate ($f)(x::Rational)       round($t,x)
     end
 end
@@ -331,13 +368,6 @@ end
 @deprecate integer(x::Ptr)   convert(UInt, x)
 @deprecate unsigned(x::Ptr)  convert(UInt, x)
 
-for (f,t) in ((:int,    Int), (:int8,   Int8), (:int16,  Int16), (:int32,  Int32),
-              (:int64,  Int64), (:int128, Int128), (:uint,   UInt), (:uint8,  UInt8),
-              (:uint16, UInt16), (:uint32, UInt32), (:uint64, UInt64), (:uint128,UInt128))
-    @eval begin
-        @deprecate ($f){S<:AbstractString}(a::AbstractArray{S}) [parse($t,s) for s in a]
-    end
-end
 for (f,t) in ((:float32, Float32), (:float64, Float64))
     @eval begin
         @deprecate ($f){S<:AbstractString}(a::AbstractArray{S}) [parse($t,s) for s in a]
@@ -404,7 +434,7 @@ end
 @deprecate names(t::DataType) fieldnames(t)
 @deprecate names(v) fieldnames(v)
 
-function push!(A)
+@noinline function push!(A)
     depwarn("push!(A) has been deprecated", :push!)
     A
 end
@@ -412,34 +442,38 @@ end
 # 10458
 to_index_nodep(i::Real) = convert(Int,i)::Int
 
-function to_index(i::Real)
+@noinline function to_index(i::Real)
     depwarn("indexing with non Integer Reals is deprecated", :to_index)
     to_index_nodep(i)
 end
 
 to_index{T<:Integer}(A::AbstractArray{T}) = A
-function to_index{T<:Real}(A::AbstractArray{T})
+@noinline function to_index{T<:Real}(A::AbstractArray{T})
     depwarn("indexing with non Integer AbstractArrays is deprecated", :to_index)
     Int[to_index_nodep(x) for x in A]
 end
 
-function to_index(I::Tuple)
+@noinline function to_index(I::Tuple)
     depwarn("to_index(I::Tuple) is deprecated, use to_indexes(I...) instead.", :to_index)
     to_indexes(I...)
 end
 
-function float_isvalid{T<:Union{Float32,Float64}}(s::AbstractString, out::Array{T,1})
+@deprecate getindex(c::Char, I::Real...) getindex(c, map(Int, I)...)
+@deprecate getindex(s::AbstractString, x::Real) getindex(s, Int(x))
+@deprecate checkbounds(s::AbstractString, i::Real) checkbounds(s, Int(i))
+
+@noinline function float_isvalid{T<:Union{Float32,Float64}}(s::AbstractString, out::Array{T,1})
     tf = tryparse(T, s)
     isnull(tf) || (out[1] = get(tf))
     !isnull(tf)
 end
 
-function float32_isvalid(s::AbstractString, out::Array{Float32,1})
+@noinline function float32_isvalid(s::AbstractString, out::Array{Float32,1})
     depwarn("float32_isvalid is deprecated, use tryparse(Float32,s) instead", :float32_isvalid)
     float_isvalid(s, out)
 end
 
-function float64_isvalid(s::AbstractString, out::Array{Float64,1})
+@noinline function float64_isvalid(s::AbstractString, out::Array{Float64,1})
     depwarn("float64_isvalid is deprecated, use tryparse(Float64,s) instead", :float64_isvalid)
     float_isvalid(s, out)
 end
@@ -492,7 +526,7 @@ end
 
 # 10862
 
-function chol(A::AbstractMatrix, uplo::Symbol)
+@noinline function chol(A::AbstractMatrix, uplo::Symbol)
     depwarn(string("chol(a::AbstractMatrix, uplo::Symbol) is deprecated, ",
         "use chol(a::AbstractMatrix, uplo::Union{Val{:L},Val{:U}}) instead"), :chol)
     chol(A, Val{uplo})
@@ -527,17 +561,15 @@ function start_timer(t, d, r)
     error("start_timer is deprecated. Use Timer(callback, delay, repeat) instead.")
 end
 
-const UnionType = Union
-export UnionType
+@deprecate_binding UnionType Union
 
-const MathConst = Irrational
+@deprecate_binding MathConst Irrational
 
 macro math_const(sym, val, def)
     depwarn("@math_const is deprecated and renamed to @irrational.", symbol("@math_const"))
     :(@irrational $(esc(sym)) $(esc(val)) $(esc(def)))
 end
-
-export MathConst, @math_const
+export @math_const
 
 # 11280, mmap
 
@@ -547,7 +579,7 @@ msync(B::BitArray) = msync(pointer(B.chunks), length(B.chunks)*sizeof(UInt64))
 
 @unix_only begin
 export mmap
-function mmap(len::Integer, prot::Integer, flags::Integer, fd, offset::Integer)
+@noinline function mmap(len::Integer, prot::Integer, flags::Integer, fd, offset::Integer)
     depwarn("`mmap` is deprecated, use `Mmap.mmap(io, Array{T,N}, dims, offset)` instead to return an mmapped-array", :mmap)
     const pagesize::Int = ccall(:jl_getpagesize, Clong, ())
     # Check that none of the computations will overflow
@@ -567,7 +599,7 @@ function mmap(len::Integer, prot::Integer, flags::Integer, fd, offset::Integer)
     return p, Int(offset-offset_page)
 end
 
-function munmap(p::Ptr,len::Integer)
+@noinline function munmap(p::Ptr,len::Integer)
     depwarn("`munmap` is deprecated, `mmap` Arrays are automatically munmapped when finalized", :munmap)
     systemerror("munmap", ccall(:munmap,Cint,(Ptr{Void},Int),p,len) != 0)
 end
@@ -575,7 +607,7 @@ end
 const MS_ASYNC = 1
 const MS_INVALIDATE = 2
 const MS_SYNC = 4
-function msync(p::Ptr, len::Integer, flags::Integer=MS_SYNC)
+@noinline function msync(p::Ptr, len::Integer, flags::Integer=MS_SYNC)
     depwarn("`msync` is deprecated, use `Mmap.sync!(array)` instead", :msync)
     systemerror("msync", ccall(:msync, Cint, (Ptr{Void}, Csize_t, Cint), p, len, flags) != 0)
 end
@@ -583,7 +615,7 @@ end
 
 
 @windows_only begin
-function munmap(viewhandle::Ptr, mmaphandle::Ptr)
+@noinline function munmap(viewhandle::Ptr, mmaphandle::Ptr)
     depwarn("`munmap` is deprecated, `mmap` Arrays are automatically munmapped when finalized", :munmap)
     status = ccall(:UnmapViewOfFile, stdcall, Cint, (Ptr{Void},), viewhandle)!=0
     status |= ccall(:CloseHandle, stdcall, Cint, (Ptr{Void},), mmaphandle)!=0
@@ -592,7 +624,7 @@ function munmap(viewhandle::Ptr, mmaphandle::Ptr)
     end
 end
 
-function msync(p::Ptr, len::Integer)
+@noinline function msync(p::Ptr, len::Integer)
     depwarn("`msync` is deprecated, use `Mmap.sync!(array)` instead", :msync)
     status = ccall(:FlushViewOfFile, stdcall, Cint, (Ptr{Void}, Csize_t), p, len)!=0
     if !status
@@ -611,7 +643,7 @@ type SharedMemSpec
     create :: Bool
 end
 export mmap_array
-function mmap_array{T,N}(::Type{T}, dims::NTuple{N,Integer}, s::Union(IO,SharedMemSpec), offset::FileOffset)
+@noinline function mmap_array{T,N}(::Type{T}, dims::NTuple{N,Integer}, s::Union{IO,SharedMemSpec}, offset::FileOffset)
     depwarn("`mmap_array` is deprecated, use `Mmap.mmap(io, Array{T,N}, dims, offset)` instead to return an mmapped-array", :mmap_array)
     if isa(s,SharedMemSpec)
         a = Mmap.Anonymous(s.name, s.readonly, s.create)
@@ -631,7 +663,7 @@ end
     copy!(Array(T,length(r)), r)
 end
 
-function getindex{T<:Union{Char,Number}}(::Type{T}, r1::Range, rs::Range...)
+@noinline function getindex{T<:Union{Char,Number}}(::Type{T}, r1::Range, rs::Range...)
     depwarn("T[a:b,...] concatenation is deprecated; use T[a:b;...] instead", :getindex)
     a = Array(T,length(r1)+sum(length,rs))
     o = 1
@@ -644,36 +676,46 @@ function getindex{T<:Union{Char,Number}}(::Type{T}, r1::Range, rs::Range...)
     return a
 end
 
-function require(mod::AbstractString)
-    depwarn("`require` is deprecated, use `using` or `import` instead", :require)
-    require(symbol(require_filename(mod)))
+## require ##
+
+function maybe_require_file(name::AbstractString)
+    isabspath(name) && return name
+    isfile(name) && return abspath(name)
+    if !endswith(name,".jl")
+        fname = string(name,".jl")
+        isfile(fname) && return abspath(fname)
+    end
+    return name
 end
-function require(f::AbstractString, fs::AbstractString...)
+
+include("require.jl")
+@noinline function require(f::AbstractString)
+    depwarn("`require` is deprecated, use `using` or `import` instead", :require)
+    if endswith(f,".jl") || contains(f,path_separator)
+        # specifying file path
+        OldRequire.require(f)
+    else
+        # require("Foo") --- ambiguous. might be file or package
+        filename = maybe_require_file(f)
+        if filename == f
+            mod = symbol(require_modname(f))
+            M = current_module()
+            if isdefined(M,mod) && isa(eval(M,mod),Module)
+                return
+            end
+            require(mod)
+        else
+            OldRequire.require(f)
+        end
+    end
+end
+@noinline function require(f::AbstractString, fs::AbstractString...)
     require(f)
     for fn in fs
         require(fn)
     end
 end
 export require
-function require_filename(name::AbstractString)
-    # This function can be deleted when the deprecation for `require`
-    # is deleted.
-    # While we could also strip off the absolute path, the user may be
-    # deliberately directing to a different file than what got
-    # cached. So this takes a conservative approach.
-    if endswith(name, ".jl")
-        tmp = name[1:end-3]
-        for prefix in LOAD_CACHE_PATH
-            path = joinpath(prefix, tmp*".ji")
-            if isfile(path)
-                return tmp
-            end
-        end
-    end
-    name
-end
-const reload = require
-export reload
 
 ## ropes for efficient concatenation, etc. ##
 
@@ -683,27 +725,27 @@ immutable RopeString <: AbstractString
     depth::Int32
     endof::Int
 
-    function _new(h, t, d, e)
+    @inline function _new(h, t, d, e)
         depwarn("`RopeString` is deprecated, use `string` instead", :RopeString)
         new(h, t, d, e)
     end
 
-    RopeString(h::RopeString, t::RopeString) =
+    @noinline RopeString(h::RopeString, t::RopeString) =
         strdepth(h.tail) + strdepth(t) < strdepth(h.head) ?
             RopeString(h.head, RopeString(h.tail, t)) :
             _new(h, t, max(h.depth,t.depth)+1, endof(h)+endof(t))
 
-    RopeString(h::RopeString, t::AbstractString) =
+    @noinline RopeString(h::RopeString, t::AbstractString) =
         strdepth(h.tail) < strdepth(h.head) ?
             RopeString(h.head, RopeString(h.tail, t)) :
             _new(h, t, h.depth+1, endof(h)+endof(t))
 
-    RopeString(h::AbstractString, t::RopeString) =
+    @noinline RopeString(h::AbstractString, t::RopeString) =
         strdepth(t.head) < strdepth(t.tail) ?
             RopeString(RopeString(h, t.head), t.tail) :
             _new(h, t, t.depth+1, endof(h)+endof(t))
 
-    RopeString(h::AbstractString, t::AbstractString) =
+    @noinline RopeString(h::AbstractString, t::AbstractString) =
         _new(h, t, 1, endof(h)+endof(t))
 end
 RopeString(s::AbstractString) = RopeString(s,"")
@@ -728,7 +770,7 @@ sizeof(s::RopeString) = sizeof(s.head) + sizeof(s.tail)
 
 export RopeString
 
-function complement!(s::IntSet)
+@noinline function complement!(s::IntSet)
     depwarn("complement IntSets are deprecated", :complement!);
     for n = 1:length(s.bits)
         s.bits[n] = ~s.bits[n]
@@ -736,7 +778,7 @@ function complement!(s::IntSet)
     s.fill1s = !s.fill1s
     s
 end
-complement(s::IntSet) = complement!(copy(s))
+@noinline complement(s::IntSet) = complement!(copy(s))
 export complement, complement!
 
 
@@ -750,16 +792,44 @@ nonboolean_warning(f, op, status) = """
 """
 
 
-function nonboolean_any(itr)
+@noinline function nonboolean_any(itr)
     depwarn(nonboolean_warning(:any, :|, "deprecated"), :nonboolean_any)
     #throw(ArgumentError(nonboolean_warning(:any, :|, "not supported")))
     reduce(|, itr)
 end
 
-function nonboolean_all(itr)
+@noinline function nonboolean_all(itr)
     depwarn(nonboolean_warning(:all, :&, "deprecated"), :nonboolean_all)
     #throw(ArgumentError(nonboolean_warning(:all, :&, "not supported")))
     reduce(&, itr)
 end
 
 @deprecate iseltype(x,T)  eltype(x) <: T
+
+@deprecate_binding FloatingPoint AbstractFloat
+
+# 11447
+
+@noinline function Regex(pattern::AbstractString, options::Integer)
+    flags = string([opt & options != 0? flag : ""
+        for (opt,flag) in [
+            (PCRE.CASELESS,  "i"),
+            (PCRE.MULTILINE, "m"),
+            (PCRE.DOTALL,    "s"),
+            (PCRE.EXTENDED,  "x")
+        ]
+    ]...)
+    depwarn("Constructing regexes with integer flags is deprecated, "*
+            "use string flags instead: Regex(\"$pattern\", \"$flags\").", :Regex)
+    Regex(pattern, flags)
+end
+
+@deprecate cartesianmap(f, dims) for idx in CartesianRange(dims); f(idx.I...); end
+
+@deprecate Union(args...) Union{args...}
+
+# 0.5 deprecations
+
+# 12839
+const AsyncStream = IO
+deprecate(:AsyncStream)

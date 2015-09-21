@@ -54,15 +54,17 @@ cx = Any[
 ]
 
 for i = 1:size(cx,1)
-    @test cx[i,1] == convert(UInt32, cx[i,2])
-    @test string(cx[i,2]) == unescape_string(cx[i,3])
-    if isascii(cx[i,2]) || !isprint(cx[i,2])
-        @test cx[i,3] == escape_string(string(cx[i,2]))
+    cp, ch, st = cx[i,:]
+    @test cp == convert(UInt32, ch)
+    @test string(ch) == unescape_string(st)
+    if isascii(ch) || !isprint(ch)
+        @test st == escape_string(string(ch))
     end
     for j = 1:size(cx,1)
-        str = string(cx[i,2], cx[j,2])
+        str = string(ch, cx[j,2])
         @test str == unescape_string(escape_string(str))
     end
+    @test repr(ch) == "'$(isprint(ch) ? ch : st)'"
 end
 
 for i = 0:0x7f, p = ["","\0","x","xxx","\x7f","\uFF","\uFFF",
@@ -155,7 +157,7 @@ else
     for encoding in ["UTF-32LE", "UTF-16BE", "UTF-16LE", "UTF-8"]
         output_path = joinpath(unicodedir, encoding*".unicode")
         f = Base.FS.open(output_path,Base.JL_O_WRONLY|Base.JL_O_CREAT,Base.S_IRUSR | Base.S_IWUSR | Base.S_IRGRP | Base.S_IROTH)
-        run(pipe(`iconv -f $primary_encoding -t $encoding $primary_path`, f))
+        run(pipeline(`iconv -f $primary_encoding -t $encoding $primary_path`, f))
         Base.FS.close(f)
     end
 
@@ -237,28 +239,16 @@ print_joined(myio, "", "", 1)
 # 11659
 # The indentation code was not correctly counting tab stops
 @test Base.indentation("      \t") == (8, true)
-@test Base.indentation("  \tfoob") == (4, false)
-@test Base.indentation(" \t \t")   == (8, true)
+@test Base.indentation("  \tfoob") == (8, false)
+@test Base.indentation(" \t \t")   == (16, true)
 
 @test Base.unindent("\tfoo",0) == "\tfoo"
-@test Base.unindent("\tfoo",2) == "  foo"
-@test Base.unindent("\tfoo",4) == "foo"
+@test Base.unindent("\tfoo",4) == "    foo"
 @test Base.unindent("    \tfoo",4) == "    foo"
-@test Base.unindent("\t\n    \tfoo",2) == "  \n      foo"
-@test Base.unindent("\t\n    \tfoo",4) == "\n    foo"
-@test Base.unindent("\t\n    \tfoo",6) == "\n  foo"
-@test Base.unindent("\t\n    \tfoo",8) == "\nfoo"
-@test Base.unindent("\tfoo\tbar",2) == "  foo bar"
-@test Base.unindent("\tfoo\tbar",4) == "foo bar"
-@test Base.unindent("\n\tfoo",2) == "\n  foo"
-@test Base.unindent("\n\tfoo",4) == "\nfoo"
-@test Base.unindent("\n    \tfoo",2) == "\n      foo"
+@test Base.unindent("\t\n    \tfoo",4) == "    \n    foo"
+@test Base.unindent("\tfoo\tbar",4) == "    foo     bar"
+@test Base.unindent("\n\tfoo",4) == "\n    foo"
 @test Base.unindent("\n    \tfoo",4) == "\n    foo"
-@test Base.unindent("\n    \tfoo",6) == "\n  foo"
-@test Base.unindent("\n    \tfoo",8) == "\nfoo"
-@test Base.unindent("\n\t\n    \tfoo",2) == "\n  \n      foo"
-@test Base.unindent("\n\t\n    \tfoo",4) == "\n\n    foo"
-@test Base.unindent("\n\t\n    \tfoo",6) == "\n\n  foo"
-@test Base.unindent("\n\t\n    \tfoo",8) == "\n\nfoo"
-@test Base.unindent("\n\tfoo\tbar",2) == "\n  foo bar"
-@test Base.unindent("\n\tfoo\tbar",4) == "\nfoo bar"
+@test Base.unindent("\n\t\n    \tfoo",4) == "\n    \n    foo"
+@test Base.unindent("\n\tfoo\tbar",4) == "\n    foo     bar"
+

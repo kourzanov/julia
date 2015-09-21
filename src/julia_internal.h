@@ -3,14 +3,16 @@
 #ifndef JULIA_INTERNAL_H
 #define JULIA_INTERNAL_H
 
-#include "options.h"
-#include "uv.h"
+#include <options.h>
+#include <uv.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 extern size_t jl_page_size;
+extern char *jl_stack_lo;
+extern char *jl_stack_hi;
 extern jl_function_t *jl_typeinf_func;
 
 STATIC_INLINE jl_value_t *newobj(jl_value_t *type, size_t nfields)
@@ -75,6 +77,7 @@ JL_CALLABLE(jl_f_no_function);
 JL_CALLABLE(jl_f_tuple);
 extern jl_function_t *jl_unprotect_stack_func;
 extern jl_function_t *jl_bottom_func;
+void jl_install_default_signal_handlers(void);
 
 extern jl_datatype_t *jl_box_type;
 extern jl_value_t *jl_box_any_type;
@@ -133,7 +136,7 @@ void _julia_init(JL_IMAGE_SEARCH rel);
 extern JL_THREAD void *jl_stackbase;
 #endif
 
-void jl_dump_bitcode(char *fname);
+void jl_dump_bitcode(char *fname, const char *sysimg_data, size_t sysimg_len);
 void jl_dump_objfile(char *fname, int jit_model, const char *sysimg_data, size_t sysimg_len);
 int32_t jl_get_llvm_gv(jl_value_t *p);
 void jl_idtable_rehash(jl_array_t **pa, size_t newsz);
@@ -173,6 +176,24 @@ DLLEXPORT void jl_raise_debugger(void);
 #ifdef _OS_DARWIN_
 DLLEXPORT void attach_exception_port(void);
 #endif
+// Set *name and *filename to either NULL or malloc'd string
+void jl_getFunctionInfo(char **name, char **filename, size_t *line,
+                        char **inlinedat_file, size_t *inlinedat_line,
+                        uintptr_t pointer, int *fromC, int skipC, int skipInline);
+
+// *to is NULL or malloc'd pointer, from is allowed to be NULL
+static inline char *jl_copy_str(char **to, const char *from)
+{
+    if (!from) {
+        free(*to);
+        *to = NULL;
+        return NULL;
+    }
+    size_t len = strlen(from) + 1;
+    *to = (char*)realloc(*to, len);
+    memcpy(*to, from, len);
+    return *to;
+}
 
 // timers
 // Returns time in nanosec
@@ -188,6 +209,9 @@ extern uv_lib_t *jl_kernel32_handle;
 extern uv_lib_t *jl_crtdll_handle;
 extern uv_lib_t *jl_winsock_handle;
 #endif
+
+// libuv wrappers:
+DLLEXPORT int jl_fs_rename(const char *src_path, const char *dst_path);
 
 #if defined(_CPU_X86_) || defined(_CPU_X86_64_)
 #define HAVE_CPUID

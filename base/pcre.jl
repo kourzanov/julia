@@ -4,7 +4,7 @@
 
 module PCRE
 
-include("pcre_h.jl")
+include(string(length(Core.ARGS)>=2?Core.ARGS[2]:"","pcre_h.jl"))  # include($BUILDROOT/base/pcre_h.jl)
 
 const PCRE_LIB = "libpcre2-8"
 
@@ -12,15 +12,20 @@ global JIT_STACK = C_NULL
 global MATCH_CONTEXT = C_NULL
 
 function __init__()
-    JIT_STACK_START_SIZE = 32768
-    JIT_STACK_MAX_SIZE = 1048576
-    global JIT_STACK = ccall((:pcre2_jit_stack_create_8, PCRE_LIB), Ptr{Void},
-                             (Cint, Cint, Ptr{Void}),
-                             JIT_STACK_START_SIZE, JIT_STACK_MAX_SIZE, C_NULL)
-    global MATCH_CONTEXT = ccall((:pcre2_match_context_create_8, PCRE_LIB),
-                                 Ptr{Void}, (Ptr{Void},), C_NULL)
-    ccall((:pcre2_jit_stack_assign_8, PCRE_LIB), Void,
-          (Ptr{Void}, Ptr{Void}, Ptr{Void}), MATCH_CONTEXT, C_NULL, JIT_STACK)
+    try
+        JIT_STACK_START_SIZE = 32768
+        JIT_STACK_MAX_SIZE = 1048576
+        global JIT_STACK = ccall((:pcre2_jit_stack_create_8, PCRE_LIB), Ptr{Void},
+                                 (Cint, Cint, Ptr{Void}),
+                                 JIT_STACK_START_SIZE, JIT_STACK_MAX_SIZE, C_NULL)
+        global MATCH_CONTEXT = ccall((:pcre2_match_context_create_8, PCRE_LIB),
+                                     Ptr{Void}, (Ptr{Void},), C_NULL)
+        ccall((:pcre2_jit_stack_assign_8, PCRE_LIB), Void,
+              (Ptr{Void}, Ptr{Void}, Ptr{Void}), MATCH_CONTEXT, C_NULL, JIT_STACK)
+    catch ex
+        Base.showerror_nostdio(ex,
+            "WARNING: Error during initialization of module PCRE")
+    end
 end
 
 # supported options for different use cases

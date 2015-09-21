@@ -11,13 +11,13 @@ super(T::DataType) = T.super
 ==(x,y) = x === y
 
 isequal(x, y) = x == y
-isequal(x::FloatingPoint, y::FloatingPoint) = (isnan(x) & isnan(y)) | (signbit(x) == signbit(y)) & (x == y)
-isequal(x::Real,          y::FloatingPoint) = (isnan(x) & isnan(y)) | (signbit(x) == signbit(y)) & (x == y)
-isequal(x::FloatingPoint, y::Real         ) = (isnan(x) & isnan(y)) | (signbit(x) == signbit(y)) & (x == y)
+isequal(x::AbstractFloat, y::AbstractFloat) = (isnan(x) & isnan(y)) | (signbit(x) == signbit(y)) & (x == y)
+isequal(x::Real,          y::AbstractFloat) = (isnan(x) & isnan(y)) | (signbit(x) == signbit(y)) & (x == y)
+isequal(x::AbstractFloat, y::Real         ) = (isnan(x) & isnan(y)) | (signbit(x) == signbit(y)) & (x == y)
 
-isless(x::FloatingPoint, y::FloatingPoint) = (!isnan(x) & isnan(y)) | (signbit(x) & !signbit(y)) | (x < y)
-isless(x::Real,          y::FloatingPoint) = (!isnan(x) & isnan(y)) | (signbit(x) & !signbit(y)) | (x < y)
-isless(x::FloatingPoint, y::Real         ) = (!isnan(x) & isnan(y)) | (signbit(x) & !signbit(y)) | (x < y)
+isless(x::AbstractFloat, y::AbstractFloat) = (!isnan(x) & isnan(y)) | (signbit(x) & !signbit(y)) | (x < y)
+isless(x::Real,          y::AbstractFloat) = (!isnan(x) & isnan(y)) | (signbit(x) & !signbit(y)) | (x < y)
+isless(x::AbstractFloat, y::Real         ) = (!isnan(x) & isnan(y)) | (signbit(x) & !signbit(y)) | (x < y)
 
 =={T}(::Type{T}, ::Type{T}) = true  # encourage more specialization on types (see #11425)
 ==(T::Type, S::Type)        = typeseq(T, S)
@@ -59,14 +59,14 @@ min(x,y) = ifelse(y < x, y, x)
 minmax(x,y) = y < x ? (y, x) : (x, y)
 
 scalarmax(x,y) = max(x,y)
-scalarmax(x::AbstractArray, y::AbstractArray) = error("ordering is not well-defined for arrays")
-scalarmax(x               , y::AbstractArray) = error("ordering is not well-defined for arrays")
-scalarmax(x::AbstractArray, y               ) = error("ordering is not well-defined for arrays")
+scalarmax(x::AbstractArray, y::AbstractArray) = throw(ArgumentError("ordering is not well-defined for arrays"))
+scalarmax(x               , y::AbstractArray) = throw(ArgumentError("ordering is not well-defined for arrays"))
+scalarmax(x::AbstractArray, y               ) = throw(ArgumentError("ordering is not well-defined for arrays"))
 
 scalarmin(x,y) = min(x,y)
-scalarmin(x::AbstractArray, y::AbstractArray) = error("ordering is not well-defined for arrays")
-scalarmin(x               , y::AbstractArray) = error("ordering is not well-defined for arrays")
-scalarmin(x::AbstractArray, y               ) = error("ordering is not well-defined for arrays")
+scalarmin(x::AbstractArray, y::AbstractArray) = throw(ArgumentError("ordering is not well-defined for arrays"))
+scalarmin(x               , y::AbstractArray) = throw(ArgumentError("ordering is not well-defined for arrays"))
+scalarmin(x::AbstractArray, y               ) = throw(ArgumentError("ordering is not well-defined for arrays"))
 
 ## definitions providing basic traits of arithmetic operators ##
 
@@ -88,8 +88,14 @@ function afoldl(op,a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,qs...)
     y
 end
 
+immutable ElementwiseMaxFun end
+call(::ElementwiseMaxFun, x, y) = max(x,y)
+
+immutable ElementwiseMinFun end
+call(::ElementwiseMinFun, x, y) = min(x, y)
+
 for (op,F) in ((:+,:(AddFun())), (:*,:(MulFun())), (:&,:(AndFun())), (:|,:(OrFun())),
-               (:$,:$), (:min,:(MinFun())), (:max,:(MaxFun())), (:kron,:kron))
+               (:$,:(XorFun())), (:min,:(ElementwiseMinFun())), (:max,:(ElementwiseMaxFun())), (:kron,:kron))
     @eval begin
         # note: these definitions must not cause a dispatch loop when +(a,b) is
         # not defined, and must only try to call 2-argument definitions, so
@@ -101,7 +107,7 @@ for (op,F) in ((:+,:(AddFun())), (:*,:(MulFun())), (:&,:(AndFun())), (:|,:(OrFun
     end
 end
 
-\(x::Number,y::Number) = y/x
+\(x,y) = (y'/x')'
 
 # .<op> defaults to <op>
 ./(x::Number,y::Number) = x/y
@@ -327,7 +333,7 @@ for f in (:+, :-)
             range($f(r1.start,r2.start), $f(step(r1),step(r2)), r1l)
         end
 
-        function $f{T<:FloatingPoint}(r1::FloatRange{T}, r2::FloatRange{T})
+        function $f{T<:AbstractFloat}(r1::FloatRange{T}, r2::FloatRange{T})
             len = r1.len
             (len == r2.len ||
              throw(DimensionMismatch("argument dimensions must match")))
@@ -346,7 +352,7 @@ for f in (:+, :-)
             end
         end
 
-        function $f{T<:FloatingPoint}(r1::LinSpace{T}, r2::LinSpace{T})
+        function $f{T<:AbstractFloat}(r1::LinSpace{T}, r2::LinSpace{T})
             len = r1.len
             (len == r2.len ||
              throw(DimensionMismatch("argument dimensions must match")))

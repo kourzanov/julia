@@ -13,7 +13,6 @@ export
     StreamREPL
 
 import Base:
-    AsyncStream,
     Display,
     display,
     writemime,
@@ -30,7 +29,8 @@ import ..LineEdit:
     history_prev,
     history_prev_prefix,
     history_search,
-    accept_result
+    accept_result,
+    terminal
 
 abstract AbstractREPL
 
@@ -57,10 +57,10 @@ function eval_user_input(ast::ANY, backend::REPLBackend)
                 ans = backend.ans
                 # note: value wrapped in a non-syntax value to avoid evaluating
                 # possibly-invalid syntax (issue #6763).
-                backend.in_eval = true
                 eval(Main, :(ans = $(Any[ans])[1]))
-                backend.in_eval = false
+                backend.in_eval = true
                 value = eval(Main, ast)
+                backend.in_eval = false
                 backend.ans = value
                 put!(backend.response_channel, (value, nothing))
             end
@@ -159,10 +159,11 @@ immutable REPLBackendRef
     response_channel::Channel
 end
 
-function run_repl(repl::AbstractREPL)
+function run_repl(repl::AbstractREPL, consumer = x->nothing)
     repl_channel = Channel(1)
     response_channel = Channel(1)
     backend = start_repl_backend(repl_channel, response_channel)
+    consumer(backend)
     run_frontend(repl, REPLBackendRef(repl_channel,response_channel))
     backend
 end
@@ -250,6 +251,7 @@ end
 outstream(r::LineEditREPL) = r.t
 specialdisplay(r::LineEditREPL) = r.specialdisplay
 specialdisplay(r::AbstractREPL) = nothing
+terminal(r::LineEditREPL) = r.t
 
 LineEditREPL(t::TextTerminal, envcolors = false) =  LineEditREPL(t,
                                               true,
@@ -341,7 +343,7 @@ function hist_from_file(hp, file)
             error(invalid_history_message, repr(line[1]), " at line ", countlines)
         while !isempty(line)
             m = match(r"^#\s*(\w+)\s*:\s*(.*?)\s*$", line)
-            m == nothing && break
+            m === nothing && break
             if m.captures[1] == "mode"
                 mode = symbol(m.captures[2])
             end
@@ -387,7 +389,7 @@ function add_history(hist::REPLHistoryProvider, s)
         mode == hist.modes[end] && str == hist.history[end] && return
     push!(hist.modes, mode)
     push!(hist.history, str)
-    hist.history_file == nothing && return
+    hist.history_file === nothing && return
     entry = """
     # time: $(Libc.strftime("%Y-%m-%d %H:%M:%S %Z", time()))
     # mode: $mode
@@ -609,20 +611,20 @@ function send_to_backend(ast, req, rep)
     val, bt = take!(rep)
 end
 
-function respond(f, repl, main)
+function respond(f, repl, main; pass_empty = false)
     (s,buf,ok)->begin
         if !ok
             return transition(s, :abort)
         end
         line = takebuf_string(buf)
-        if !isempty(line)
+        if !isempty(line) || pass_empty
             reset(repl)
             val, bt = send_to_backend(f(line), backend(repl))
             if !ends_with_semicolon(line) || bt !== nothing
                 print_response(repl, val, bt, true, Base.have_color)
             end
         end
-        println(repl.t)
+        prepare_next(repl)
         reset_state(s)
         s.current_mode.sticky || transition(s, main)
     end
@@ -631,6 +633,10 @@ end
 function reset(repl::LineEditREPL)
     raw!(repl.t, false)
     print(repl.t,Base.text_colors[:normal])
+end
+
+function prepare_next(repl::LineEditREPL)
+    println(terminal(repl))
 end
 
 function mode_keymap(julia_prompt)
@@ -784,15 +790,9 @@ function setup_interface(repl::LineEditREPL; hascolor = repl.hascolor, extra_rep
 
         # Bracketed Paste Mode
         "\e[200~" => (s,o...)->begin
-            ps = LineEdit.state(s, LineEdit.mode(s))
-            input = readuntil(ps.terminal, "\e[201~")[1:(end-6)]
-            input = replace(input, '\r', '\n')
-            if position(LineEdit.buffer(s)) == 0
-                indent = Base.indentation(input)[1]
-                input = Base.unindent(lstrip(input), indent)
-            end
+            input = LineEdit.bracketed_paste(s)
             buf = copy(LineEdit.buffer(s))
-            edit_insert(buf,input)
+            edit_insert(buf, input)
             string = takebuf_string(buf)
             curspos = position(LineEdit.buffer(s))
             pos = 0
@@ -884,7 +884,7 @@ end
 
 outstream(s::StreamREPL) = s.stream
 
-StreamREPL(stream::AsyncStream) = StreamREPL(stream, julia_green, Base.text_colors[:white], Base.answer_color())
+StreamREPL(stream::IO) = StreamREPL(stream, julia_green, Base.text_colors[:white], Base.answer_color())
 
 answer_color(r::LineEditREPL) = r.envcolors ? Base.answer_color() : r.answer_color
 answer_color(r::StreamREPL) = r.answer_color
@@ -892,7 +892,7 @@ input_color(r::LineEditREPL) = r.envcolors ? Base.input_color() : r.input_color
 input_color(r::StreamREPL) = r.input_color
 
 
-function run_repl(stream::AsyncStream)
+function run_repl(stream::IO)
     repl =
     @async begin
         repl_channel = Channel(1)

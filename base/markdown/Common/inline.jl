@@ -11,7 +11,7 @@ end
 @trigger '*' ->
 function asterisk_italic(stream::IO, md::MD)
     result = parse_inline_wrapper(stream, "*")
-    return result == nothing ? nothing : Italic(parseinline(result, md))
+    return result === nothing ? nothing : Italic(parseinline(result, md))
 end
 
 type Bold
@@ -21,7 +21,7 @@ end
 @trigger '*' ->
 function asterisk_bold(stream::IO, md::MD)
     result = parse_inline_wrapper(stream, "**")
-    return result == nothing ? nothing : Bold(parseinline(result, md))
+    return result === nothing ? nothing : Bold(parseinline(result, md))
 end
 
 # ––––
@@ -31,7 +31,7 @@ end
 @trigger '`' ->
 function inline_code(stream::IO, md::MD)
     result = parse_inline_wrapper(stream, "`"; rep=true)
-    return result == nothing ? nothing : Code(result)
+    return result === nothing ? nothing : Code(result)
 end
 
 # ––––––––––––––
@@ -96,7 +96,7 @@ function en_dash(stream::IO, md::MD)
     end
 end
 
-const escape_chars = "\\`*_#+-.!{[(\$"
+const escape_chars = "\\`*_#+-.!{}[]()\$"
 
 @trigger '\\' ->
 function escapes(stream::IO, md::MD)

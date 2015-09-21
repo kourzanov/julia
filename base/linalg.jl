@@ -5,7 +5,8 @@ module LinAlg
 importall Base
 importall ..Base.Operators
 import Base: USE_BLAS64, size, copy, copy_transpose!, power_by_squaring,
-             print_matrix, transpose!, unsafe_getindex, unsafe_setindex!
+             print_matrix, transpose!, unsafe_getindex, unsafe_setindex!,
+             isapprox
 
 export
 # Modules
@@ -66,7 +67,6 @@ export
     eigvals!,
     eigvecs,
     expm,
-    sqrtm,
     eye,
     factorize,
     givens,
@@ -106,6 +106,7 @@ export
     schur,
     schurfact!,
     schurfact,
+    sqrtm,
     svd,
     svdfact!,
     svdfact,
@@ -166,14 +167,14 @@ else
 end
 
 # Check that stride of matrix/vector is 1
-function chkstride1(A::StridedVecOrMat...)
+function chkstride1(A...)
     for a in A
         stride(a,1)== 1 || error("matrix does not have contiguous columns")
     end
 end
 
 # Check that matrix is square
-function chksquare(A::AbstractMatrix)
+function chksquare(A)
     m,n = size(A)
     m == n || throw(DimensionMismatch("matrix is not square"))
     m
@@ -185,7 +186,7 @@ function chksquare(A...)
         size(a,1)==size(a,2) || throw(DimensionMismatch("matrix is not square: dimensions are $(size(a))"))
         push!(sizes, size(a,1))
     end
-    length(A)==1 ? sizes[1] : sizes
+    return sizes
 end
 
 # Check that upper/lower (for special matrices) is correctly specified
@@ -235,9 +236,14 @@ include("linalg/arpack.jl")
 include("linalg/arnoldi.jl")
 
 function __init__()
-    Base.check_blas()
-    if Base.blas_vendor() == :mkl
-        ccall((:MKL_Set_Interface_Layer, Base.libblas_name), Void, (Cint,), USE_BLAS64 ? 1 : 0)
+    try
+        Base.check_blas()
+        if Base.blas_vendor() == :mkl
+            ccall((:MKL_Set_Interface_Layer, Base.libblas_name), Void, (Cint,), USE_BLAS64 ? 1 : 0)
+        end
+    catch ex
+        Base.showerror_nostdio(ex,
+            "WARNING: Error during initialization of module LinAlg")
     end
 end
 

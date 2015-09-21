@@ -835,8 +835,8 @@ close(f)
 f = open(file, "r")
 test_LibcFILE(convert(Libc.FILE, f))
 close(f)
-@unix_only f = RawFD(ccall(:open, Cint, (Ptr{Uint8}, Cint), file, Base.FS.JL_O_RDONLY))
-@windows_only f = RawFD(ccall(:_open, Cint, (Ptr{Uint8}, Cint), file, Base.FS.JL_O_RDONLY))
+@unix_only f = RawFD(ccall(:open, Cint, (Ptr{UInt8}, Cint), file, Base.FS.JL_O_RDONLY))
+@windows_only f = RawFD(ccall(:_open, Cint, (Ptr{UInt8}, Cint), file, Base.FS.JL_O_RDONLY))
 test_LibcFILE(Libc.FILE(f,Libc.modestr(true,false)))
 
 # issue #10994: pathnames cannot contain embedded NUL chars
@@ -887,3 +887,38 @@ let n = tempname()
     close(io); close(w)
     rm(n)
 end
+
+#issue #12992
+function test_12992()
+    pfw = PollingFileWatcher(@__FILE__, 0.01)
+    close(pfw)
+    pfw = PollingFileWatcher(@__FILE__, 0.01)
+    close(pfw)
+    pfw = PollingFileWatcher(@__FILE__, 0.01)
+    close(pfw)
+    gc()
+    gc()
+end
+
+# Make sure multiple close is fine
+function test2_12992()
+    pfw = PollingFileWatcher(@__FILE__, 0.01)
+    close(pfw)
+    close(pfw)
+    pfw = PollingFileWatcher(@__FILE__, 0.01)
+    close(pfw)
+    close(pfw)
+    pfw = PollingFileWatcher(@__FILE__, 0.01)
+    close(pfw)
+    close(pfw)
+    gc()
+    gc()
+end
+
+test_12992()
+test_12992()
+test_12992()
+
+test2_12992()
+test2_12992()
+test2_12992()

@@ -20,8 +20,8 @@ r_promote(op, x::WidenReduceResult) = widen(x)
 r_promote(op, x) = x
 r_promote(::AddFun, x::WidenReduceResult) = widen(x)
 r_promote(::MulFun, x::WidenReduceResult) = widen(x)
-r_promote(::AddFun, x::Number) = x + zero(x)
-r_promote(::MulFun, x::Number) = x * one(x)
+r_promote(::AddFun, x::Number) = oftype(x + zero(x), x)
+r_promote(::MulFun, x::Number) = oftype(x * one(x), x)
 r_promote(::AddFun, x) = x
 r_promote(::MulFun, x) = x
 r_promote(::MaxFun, x::WidenReduceResult) = x
@@ -131,7 +131,9 @@ mr_empty(::Abs2Fun, op::MaxFun, T) = abs2(zero(T)::T)
 mr_empty(f, op::AndFun, T) = true
 mr_empty(f, op::OrFun, T) = false
 
-function _mapreduce{T}(f, op, A::AbstractArray{T})
+_mapreduce(f, op, A::AbstractArray) = _mapreduce(f, op, linearindexing(A), A)
+
+function _mapreduce{T}(f, op, ::LinearFast, A::AbstractArray{T})
     n = Int(length(A))
     if n == 0
         return mr_empty(f, op, T)
@@ -152,7 +154,9 @@ function _mapreduce{T}(f, op, A::AbstractArray{T})
     end
 end
 
-mapreduce(f, op, A::AbstractArray) = _mapreduce(f, op, A)
+_mapreduce{T}(f, op, ::LinearSlow, A::AbstractArray{T}) = mapfoldl(f, op, A)
+
+mapreduce(f, op, A::AbstractArray) = _mapreduce(f, op, linearindexing(A), A)
 mapreduce(f, op, a::Number) = f(a)
 
 mapreduce(f, op::Function, A::AbstractArray) = mapreduce(f, specialized_binary(op), A)
@@ -206,7 +210,7 @@ mapreduce_sc(f::ReturnsBool, op, itr) = mapreduce_sc_impl(f, op, itr)
 mapreduce_sc(f::Func{1},     op, itr) = mapreduce_no_sc(f, op, itr)
 
 mapreduce_sc(f::IdFun, op, itr) =
-    eltype(itr) <: Bool?
+    eltype(itr) <: Bool ?
         mapreduce_sc_impl(f, op, itr) :
         mapreduce_no_sc(f, op, itr)
 
@@ -247,7 +251,7 @@ sumabs2(a) = mapreduce(Abs2Fun(), AddFun(), a)
 
 # Kahan (compensated) summation: O(1) error growth, at the expense
 # of a considerable increase in computational expense.
-function sum_kbn{T<:FloatingPoint}(A::AbstractArray{T})
+function sum_kbn{T<:AbstractFloat}(A::AbstractArray{T})
     n = length(A)
     c = r_promote(AddFun(), zero(T)::T)
     if n == 0
@@ -351,23 +355,20 @@ end
 
 ## all & any
 
-# make sure that the identity function is defined before `any` or `all` are used
-function identity end
-
 any(itr) = any(IdFun(), itr)
 all(itr) = all(IdFun(), itr)
 
-any(f::Any,       itr) = any(f === identity? IdFun() : Predicate(f), itr)
+any(f::Any,       itr) = any(Predicate(f), itr)
 any(f::Predicate, itr) = mapreduce_sc_impl(f, OrFun(), itr)
 any(f::IdFun,     itr) =
-    eltype(itr) <: Bool?
+    eltype(itr) <: Bool ?
         mapreduce_sc_impl(f, OrFun(), itr) :
         nonboolean_any(itr)
 
-all(f::Any,       itr) = all(f === identity? IdFun() : Predicate(f), itr)
+all(f::Any,       itr) = all(Predicate(f), itr)
 all(f::Predicate, itr) = mapreduce_sc_impl(f, AndFun(), itr)
 all(f::IdFun,     itr) =
-    eltype(itr) <: Bool?
+    eltype(itr) <: Bool ?
         mapreduce_sc_impl(f, AndFun(), itr) :
         nonboolean_all(itr)
 
@@ -398,12 +399,10 @@ function count(pred, itr)
     return n
 end
 
-function count(pred, a::AbstractArray)
+function count(pred, A::AbstractArray)
     n = 0
-    for i = 1:length(a)
-        @inbounds if pred(a[i])
-            n += 1
-        end
+    @inbounds for a in A
+        pred(a) && (n += 1)
     end
     return n
 end

@@ -85,6 +85,27 @@ for elty1 in (Float32, Float64, Complex64, Complex128, BigFloat, Int)
             @test !istril(A1)
         end
 
+        #tril/triu
+        if uplo1 == :L
+            @test tril(A1,0)  == A1
+            @test tril(A1,-1) == LowerTriangular(tril(full(A1),-1))
+            @test tril(A1,1)  == t1(tril(tril(full(A1),1)))
+            @test_throws ArgumentError tril!(A1,n+1)
+            @test triu(A1,0)  == t1(diagm(diag(A1)))
+            @test triu(A1,-1) == t1(tril(triu(A1.data,-1)))
+            @test triu(A1,1)  == LowerTriangular(zeros(A1.data))
+            @test_throws ArgumentError triu!(A1,n+1)
+        else
+            @test triu(A1,0)  == A1
+            @test triu(A1,1)  == UpperTriangular(triu(full(A1),1))
+            @test triu(A1,-1) == t1(triu(triu(full(A1),-1)))
+            @test_throws ArgumentError triu!(A1,n+1)
+            @test tril(A1,0)  == t1(diagm(diag(A1)))
+            @test tril(A1,1)  == t1(triu(tril(A1.data,1)))
+            @test tril(A1,-1) == UpperTriangular(zeros(A1.data))
+            @test_throws ArgumentError tril!(A1,n+1)
+        end
+
         # factorize
         @test factorize(A1) == A1
 
@@ -99,9 +120,59 @@ for elty1 in (Float32, Float64, Complex64, Complex128, BigFloat, Int)
 
         # real
         @test full(real(A1)) == real(full(A1))
+        @test full(imag(A1)) == imag(full(A1))
+        @test full(abs(A1)) == abs(full(A1))
 
         # Unary operations
         @test full(-A1) == -full(A1)
+
+        # copy
+        B = similar(A1)
+        copy!(B,A1)
+        @test B == A1
+        B = similar(A1.')
+        copy!(B, A1.')
+        @test B == A1.'
+
+        # scale
+        if (t1 == UpperTriangular || t1 == LowerTriangular)
+            unitt = istriu(A1) ? UnitUpperTriangular : UnitLowerTriangular
+            if elty1 == Int
+                cr = 2
+            else
+                cr = 0.5
+            end
+            ci = cr * im
+            if elty1 <: Real
+                A1tmp = copy(A1)
+                scale!(A1tmp,cr)
+                @test A1tmp == cr*A1
+                A1tmp = copy(A1)
+                scale!(cr,A1tmp)
+                @test A1tmp == cr*A1
+                A1tmp = copy(A1)
+                A2tmp = unitt(A1)
+                scale!(A1tmp,A2tmp,cr)
+                @test A1tmp == cr * A2tmp
+            else
+                A1tmp = copy(A1)
+                scale!(A1tmp,ci)
+                @test A1tmp == ci*A1
+                A1tmp = copy(A1)
+                scale!(ci,A1tmp)
+                @test A1tmp == ci*A1
+                A1tmp = copy(A1)
+                A2tmp = unitt(A1)
+                scale!(A1tmp,A2tmp,ci)
+                @test A1tmp == ci * A2tmp
+            end
+        end
+
+        @test scale(A1,0.5) == 0.5*A1
+        @test scale(0.5,A1) == 0.5*A1
+        @test scale(A1,0.5im) == 0.5im*A1
+        @test scale(0.5im,A1) == 0.5im*A1
+
 
         # Binary operations
         @test A1*0.5 == full(A1)*0.5
@@ -122,7 +193,7 @@ for elty1 in (Float32, Float64, Complex64, Complex128, BigFloat, Int)
         @test_approx_eq_eps det(A1) det(lufact(full(A1))) sqrt(eps(real(float(one(elty1)))))*n*n
 
         # Matrix square root
-        @test_approx_eq sqrtm(A1) |> t->t*t A1
+        @test sqrtm(A1) |> t->t*t ≈ A1
 
         # naivesub errors
         @test_throws DimensionMismatch naivesub!(A1,ones(elty1,n+1))
@@ -237,6 +308,14 @@ for elty1 in (Float32, Float64, Complex64, Complex128, BigFloat, Int)
         end
     end
 end
+
+# Matrix square root
+Atn = UpperTriangular([-1 1 2; 0 -2 2; 0 0 -3])
+Atp = UpperTriangular([1 1 2; 0 2 2; 0 0 3])
+@test sqrtm(Atn) |> t->t*t ≈ Atn
+@test typeof(sqrtm(Atn)[1,1]) <: Complex
+@test sqrtm(Atp) |> t->t*t ≈ Atp
+@test typeof(sqrtm(Atp)[1,1]) <: Real
 
 Areal   = randn(n, n)/2
 Aimg    = randn(n, n)/2

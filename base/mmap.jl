@@ -58,8 +58,8 @@ function grow!(io::IO, offset::Integer, len::Integer)
     pos = position(io)
     filelen = filesize(io)
     if filelen < offset + len
-        write(io, Base.zeros(UInt8,(offset + len) - filelen))
-        flush(io)
+        failure = ccall(:ftruncate, Cint, (Cint, Coff_t), fd(io), offset+len)
+        Base.systemerror(:ftruncate, failure != 0)
     end
     seek(io, pos)
     return
@@ -111,7 +111,7 @@ function mmap{T,N}(io::IO,
 
     file_desc = gethandle(io)
     # platform-specific mmapping
-     @unix_only begin
+    @unix_only begin
         prot, flags, iswrite = settings(file_desc, shared)
         iswrite && grow && grow!(io, offset, len)
         # mmap the file

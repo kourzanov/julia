@@ -607,6 +607,8 @@ built-in :exc:`Exception`\ s listed below all interrupt the normal flow of contr
 +------------------------------+
 | :exc:`BoundsError`           |
 +------------------------------+
+| :exc:`CompositeException`    |
++------------------------------+
 | :exc:`DivideError`           |
 +------------------------------+
 | :exc:`DomainError`           |
@@ -616,6 +618,8 @@ built-in :exc:`Exception`\ s listed below all interrupt the normal flow of contr
 | :exc:`ErrorException`        |
 +------------------------------+
 | :exc:`InexactError`          |
++------------------------------+
+| :exc:`InitError`             |
 +------------------------------+
 | :exc:`InterruptException`    |
 +------------------------------+
@@ -628,6 +632,8 @@ built-in :exc:`Exception`\ s listed below all interrupt the normal flow of contr
 | :exc:`OutOfMemoryError`      |
 +------------------------------+
 | :exc:`ReadOnlyMemoryError`   |
++------------------------------+
+| :exc:`RemoteException`       |
 +------------------------------+
 | :exc:`MethodError`           |
 +------------------------------+
@@ -654,9 +660,8 @@ negative real value:
 
     julia> sqrt(-1)
     ERROR: DomainError:
-    sqrt will only return a complex result if called with a complex argument.
-    try sqrt (complex(x))
-     in sqrt at math.jl:139
+    sqrt will only return a complex result if called with a complex argument. Try sqrt(complex(x)).
+     in sqrt at math.jl:146
 
 You may define your own exceptions in the following way:
 

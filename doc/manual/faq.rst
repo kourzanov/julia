@@ -495,7 +495,7 @@ case the natural solution is to use parameters. For example:
 
 .. doctest::
 
-    julia> type MyType{T<:FloatingPoint}
+    julia> type MyType{T<:AbstractFloat}
              a::T
            end
 
@@ -504,7 +504,7 @@ This is a better choice than
 .. doctest::
 
     julia> type MyStillAmbiguousType
-             a::FloatingPoint
+             a::AbstractFloat
            end
 
 because the first version specifies the type of ``a`` from the type of
@@ -561,8 +561,8 @@ an abstract type:
 
 .. doctest::
 
-    julia> m = MyType{FloatingPoint}(3.2)
-    MyType{FloatingPoint}(3.2)
+    julia> m = MyType{AbstractFloat}(3.2)
+    MyType{AbstractFloat}(3.2)
 
     julia> typeof(m.a)
     Float64
@@ -586,7 +586,7 @@ using
 ::
 
     code_llvm(func,(MyType{Float64},))
-    code_llvm(func,(MyType{FloatingPoint},))
+    code_llvm(func,(MyType{AbstractFloat},))
     code_llvm(func,(MyType,))
 
 For reasons of length the results are not shown here, but you may wish
@@ -656,7 +656,7 @@ separate function::
     end
 
     foo(x::Integer) = x
-    foo(x::FloatingPoint) = round(x)
+    foo(x::AbstractFloat) = round(x)
 
 This keeps things simple, while allowing the compiler to generate
 optimized code in all cases.
@@ -665,7 +665,7 @@ However, there are cases where you may need to declare different
 versions of the outer function for different element types of
 ``a``. You could do it like this::
 
-    function myfun{T<:FloatingPoint}(c::MySimpleContainer{Vector{T}})
+    function myfun{T<:AbstractFloat}(c::MySimpleContainer{Vector{T}})
         ...
     end
     function myfun{T<:Integer}(c::MySimpleContainer{Vector{T}})
@@ -699,7 +699,7 @@ With this approach, one can write functions such as::
     # the previous could have been written more succinctly as
     #     function myfunc{T<:Integer}(c::MyContainer{T})
 
-    function myfunc{T<:FloatingPoint}(c::MyContainer{T})
+    function myfunc{T<:AbstractFloat}(c::MyContainer{T})
         return c.a[1]+2
     end
 
@@ -748,7 +748,7 @@ To prevent this, we can add an inner constructor::
 
 The inner constructor requires that the element type of ``A`` be ``T``.
 
--- _man-packages:
+.. _faq-packages:
 
 Packages and Modules
 --------------------
@@ -770,7 +770,7 @@ want to accidentally extend a function that you didn't know existed, because tha
 easily cause a bug. This is most likely to happen with a method that takes a common type
 like a string or integer, because both you and the other module could define a method to
 handle such a common type. If you use ``importall``, then you'll replace the other module's
-implementation of ``bar(s::String)`` with your new implementation, which could easily do
+implementation of ``bar(s::AbstractString)`` with your new implementation, which could easily do
 something completely different (and break all/many future usages of the other functions
 in module Foo that depend on calling bar).
 
@@ -875,6 +875,7 @@ The following::
     end
 
 results in::
+
     123 Foo  Foo  Foo  Bar  Bar  Bar
 
 This is happening because, while ``print(i, " Foo ", " Bar ")`` is synchronous,
