@@ -98,7 +98,13 @@ julia-sysimg-release : julia-inference julia-ui-release
 julia-sysimg-debug : julia-inference julia-ui-debug
 	@$(MAKE) $(QUIET_MAKE) -C $(BUILDROOT) $(build_private_libdir)/sys-debug.$(SHLIB_EXT) JULIA_BUILD_MODE=debug
 
-julia-debug julia-release : julia-% : julia-ui-% julia-sysimg-% julia-symlink julia-libccalltest
+JULIA_ENABLE_DOCBUILD ?= 1
+julia-genstdlib : julia-sysimg-$(JULIA_BUILD_MODE)
+ifeq ($(JULIA_ENABLE_DOCBUILD), 1)
+	@$(call PRINT_JULIA, $(JULIA_EXECUTABLE) doc/genstdlib.jl)
+endif
+
+julia-debug julia-release : julia-% : julia-ui-% julia-sysimg-% julia-symlink julia-libccalltest julia-genstdlib
 
 debug release : % : julia-%
 
@@ -554,7 +560,7 @@ test: check-whitespace $(JULIA_BUILD_MODE)
 	@$(MAKE) $(QUIET_MAKE) -C $(BUILDROOT)/test default JULIA_BUILD_MODE=$(JULIA_BUILD_MODE)
 
 testall: check-whitespace $(JULIA_BUILD_MODE)
-	cp $(build_prefix)/lib/julia/sys$(JULIA_LIBSUFFIX).$(SHLIB_EXT) $(BUILDROOT)/local.$(SHLIB_EXT) && $(JULIA_EXECUTABLE) -J $(BUILDROOT)/local.$(SHLIB_EXT) -e 'true' && rm $(BUILDROOT)/local.$(SHLIB_EXT)
+	cp $(build_private_libdir)/sys$(JULIA_LIBSUFFIX).$(SHLIB_EXT) $(BUILDROOT)/local.$(SHLIB_EXT) && $(JULIA_EXECUTABLE) -J $(BUILDROOT)/local.$(SHLIB_EXT) -e 'true' && rm $(BUILDROOT)/local.$(SHLIB_EXT)
 	@$(MAKE) $(QUIET_MAKE) -C $(BUILDROOT)/test all JULIA_BUILD_MODE=$(JULIA_BUILD_MODE)
 
 testall1: check-whitespace $(JULIA_BUILD_MODE)

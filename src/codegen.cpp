@@ -35,6 +35,7 @@
 #include <llvm/Analysis/Passes.h>
 #include <llvm/Bitcode/ReaderWriter.h>
 #ifdef LLVM37
+#include <llvm/Analysis/TargetTransformInfo.h>
 #include <llvm/Analysis/TargetLibraryInfo.h>
 #else
 #include <llvm/Target/TargetLibraryInfo.h>
@@ -831,7 +832,7 @@ static Function *to_function(jl_lambda_info_t *li)
     JL_SIGATOMIC_END();
     if (dump_compiles_stream != NULL) {
         uint64_t this_time = jl_hrtime();
-        jl_printf(dump_compiles_stream, "%lu\t\"", this_time-last_time);
+        jl_printf(dump_compiles_stream, "%llu\t\"", (unsigned long long)(this_time-last_time));
         jl_static_show(dump_compiles_stream, (jl_value_t*)li);
         jl_printf(dump_compiles_stream, "\"\n");
         last_time = this_time;
@@ -4974,6 +4975,7 @@ static Function *emit_function(jl_lambda_info_t *lam)
             }
             if (do_coverage)
                 coverageVisitLine(filename, lno);
+            ctx.lineno = lno;
         }
         if (jl_is_labelnode(stmt)) {
             if (prevlabel) continue;
@@ -5751,7 +5753,9 @@ static void init_julia_llvm_env(Module *m)
     FPM->add(llvm::createMemorySanitizerPass(true));
 #   endif
 #endif
-#ifndef LLVM37
+#ifdef LLVM37
+    FPM->add(createTargetTransformInfoWrapperPass(jl_TargetMachine->getTargetIRAnalysis()));
+#else
     jl_TargetMachine->addAnalysisPasses(*FPM);
 #endif
 #ifdef LLVM38
@@ -6041,6 +6045,12 @@ extern "C" void jl_init_codegen(void)
         jl_ExecutionEngine->RegisterJITEventListener(
             JITEventListener::createIntelJITEventListener());
 #endif // JL_USE_INTEL_JITEVENTS
+
+#ifdef JL_USE_OPROFILE_JITEVENTS
+    if (jl_using_oprofile_jitevents)
+        jl_ExecutionEngine->RegisterJITEventListener(
+            JITEventListener::createOProfileJITEventListener());
+#endif // JL_USE_OPROFILE_JITEVENTS
 
     BOX_F(int8,int8);  UBOX_F(uint8,uint8);
     BOX_F(int16,int16); UBOX_F(uint16,uint16);

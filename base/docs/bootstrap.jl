@@ -4,6 +4,8 @@ macro doc(args...)
     DocBootstrap._expand_(args...)
 end
 
+macro __doc__(ex) esc(Expr(:block, symbol("#doc#"), ex)) end
+
 module DocBootstrap
 
 type List
@@ -19,7 +21,7 @@ setexpand!(f) = global _expand_ = f
 
 setexpand!() do str, obj
     global docs = List((ccall(:jl_get_current_module, Any, ()), str, obj), docs)
-    return esc(Expr(:toplevel, obj))
+    (isa(obj, Expr) && obj.head == :call) ? nothing : esc(Expr(:toplevel, obj))
 end
 
 """

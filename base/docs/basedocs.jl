@@ -137,12 +137,12 @@ keywords[:local] = doc"""
   `local` introduces a new local variable. For example:
 
       function foo(n)
-        x = 0
-        for i = 1:n
-          local x
-          x = i
-        end
-        x
+          x = 0
+          for i = 1:n
+              local x
+              x = i
+          end
+          x
       end
 
       julia> foo(10)
@@ -580,12 +580,12 @@ Construct a regex, such as `r"^[a-z]*$"`. The regex also accepts
 one or more flags, listed after the ending quote, to change its
 behaviour:
 
-  • `i` enables case-insensitive matching
-  • `m` treats the `^` and `$` tokens as matching the start and
-    and end of individual lines, as opposed to the whole string.
-  • `s` allows the `.` modifier to match newlines.
-  • `x` enables "comment mode": whitespace is enabled except when
-    escaped with `\`, and `#` is treated as starting a comment.
+• `i` enables case-insensitive matching
+• `m` treats the `^` and `$` tokens as matching the start and
+  end of individual lines, as opposed to the whole string.
+• `s` allows the `.` modifier to match newlines.
+• `x` enables "comment mode": whitespace is enabled except when
+  escaped with `\`, and `#` is treated as starting a comment.
 
 For example, this regex has all three flags enabled:
 
