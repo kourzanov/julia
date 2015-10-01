@@ -7,6 +7,8 @@ export
     Meta,
     Operators,
     Pkg,
+    Git,
+    LibGit2,
     Profile,
     Dates,
     Sys,
