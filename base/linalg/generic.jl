@@ -8,8 +8,8 @@ scale(s::Number, X::AbstractArray) = s*X
 # For better performance when input and output are the same array
 # See https://github.com/JuliaLang/julia/issues/8415#issuecomment-56608729
 function generic_scale!(X::AbstractArray, s::Number)
-    for i = 1:length(X)
-        @inbounds X[i] *= s
+    for I in eachindex(X)
+        @inbounds X[I] *= s
     end
     X
 end
@@ -18,8 +18,14 @@ function generic_scale!(C::AbstractArray, X::AbstractArray, s::Number)
     if length(C) != length(X)
         throw(DimensionMismatch("first array has length $(length(C)) which does not match the length of the second, $(length(X))."))
     end
-    for i = 1:length(X)
-        @inbounds C[i] = X[i]*s
+    if size(C) == size(X)
+        for I in eachindex(C, X)
+            @inbounds C[I] = X[I]*s
+        end
+    else
+        for (IC, IX) in zip(eachindex(C), eachindex(X))
+            @inbounds C[IC] = X[IX]*s
+        end
     end
     C
 end
@@ -236,17 +242,23 @@ end
 
 @inline norm(x::Number, p::Real=2) = vecnorm(x, p)
 
-function vecdot(x::AbstractVector, y::AbstractVector)
+function vecdot(x::AbstractArray, y::AbstractArray)
     lx = length(x)
     if lx != length(y)
-        throw(DimensionMismatch("vector x has length $lx, but vector y has length $(length(y))"))
+        throw(DimensionMismatch("first array has length $(lx) which does not match the length of the second, $(length(y))."))
     end
     if lx == 0
         return dot(zero(eltype(x)), zero(eltype(y)))
     end
-    s = dot(x[1], y[1])
-    @inbounds for i = 2:lx
-        s += dot(x[i], y[i])
+    s = zero(dot(x[1], y[1]))
+    if size(x) == size(y)
+        for I in eachindex(x, y)
+            @inbounds s += dot(x[I], y[I])
+        end
+    else
+        for (Ix, Iy) in zip(eachindex(x), eachindex(y))
+            @inbounds  s += dot(x[Ix], y[Iy])
+        end
     end
     s
 end
