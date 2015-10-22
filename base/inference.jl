@@ -2,7 +2,7 @@
 
 # parameters limiting potentially-infinite types
 const MAX_TYPEUNION_LEN = 3
-const MAX_TYPE_DEPTH = 5
+const MAX_TYPE_DEPTH = 7
 const MAX_TUPLETYPE_LEN  = 8
 const MAX_TUPLE_DEPTH = 4
 
@@ -105,6 +105,8 @@ function istopfunction(topmod, f, sym)
     end
     return false
 end
+
+isknownlength(t::DataType) = !isvatuple(t) && !(t.name===NTuple.name && !isa(t.parameters[1],Int))
 
 cmp_tfunc = (x,y)->Bool
 
@@ -781,8 +783,18 @@ function precise_container_types(args, types, vtypes, sv)
             end
         elseif ti === Union{}
             return nothing
-        elseif ti<:Tuple && (i==n || !isvatuple(ti))
-            result[i] = ti.parameters
+        elseif ti<:Tuple
+            if i == n
+                if ti.name === NTuple.name
+                    result[i] = Any[Vararg{ti.parameters[2]}]
+                else
+                    result[i] = ti.parameters
+                end
+            elseif isknownlength(ti)
+                result[i] = ti.parameters
+            else
+                return nothing
+            end
         elseif ti<:AbstractArray && i==n
             result[i] = Any[Vararg{eltype(ti)}]
         else
@@ -995,6 +1007,9 @@ function abstract_call(f, fargs, argtypes::Vector{Any}, vtypes, sv::StaticVarInf
         end
     end
     rt = builtin_tfunction(f, fargs, Tuple{argtypes...}, vtypes, sv)
+    if isa(rt, TypeVar)
+        rt = rt.ub
+    end
     #print("=> ", rt, "\n")
     return rt
 end
@@ -1421,14 +1436,14 @@ function typeinf(linfo::LambdaStaticData,atypes::ANY,sparams::SimpleVector, def,
                     break
                 end
                 if isa(code,Type)
-                    curtype = code
+                    curtype = code::Type
                     # sometimes just a return type is stored here. if a full AST
                     # is not needed, we can return it.
                     if !needtree
                         return (nothing, code)
                     end
                 else
-                    curtype = ccall(:jl_ast_rettype, Any, (Any,Any), def, code)
+                    curtype = ccall(:jl_ast_rettype, Any, (Any,Any), def, code)::Type
                     return (code, curtype)
                 end
             end
@@ -1441,7 +1456,7 @@ function typeinf(linfo::LambdaStaticData,atypes::ANY,sparams::SimpleVector, def,
 
     (fulltree, result, rec) = typeinf_uncached(linfo, atypes, sparams, def, curtype, cop, true)
     if fulltree === ()
-        return (fulltree,result)
+        return (fulltree, result::Type)
     end
 
     if !redo
@@ -1470,7 +1485,7 @@ function typeinf(linfo::LambdaStaticData,atypes::ANY,sparams::SimpleVector, def,
         def.tfunc[tfunc_idx+1] = rec
     end
 
-    return (fulltree, result)
+    return (fulltree, result::Type)
 end
 
 typeinf_uncached(linfo, atypes::ANY, sparams::ANY; optimize=true) =
@@ -1584,14 +1599,21 @@ function typeinf_uncached(linfo::LambdaStaticData, atypes::ANY, sparams::SimpleV
             lastatype = lastatype.parameters[1]
             laty -= 1
         end
+        if isa(lastatype, TypeVar)
+            lastatype = lastatype.ub
+        end
         if laty > la
             laty = la
         end
         for i=1:laty
-            s[1][args[i]] = VarState(atypes.parameters[i],false)
+            atyp = atypes.parameters[i]
+            if isa(atyp, TypeVar)
+                atyp = atyp.ub
+            end
+            s[1][args[i]] = VarState(atyp, false)
         end
         for i=laty+1:la
-            s[1][args[i]] = VarState(lastatype,false)
+            s[1][args[i]] = VarState(lastatype, false)
         end
     elseif la != 0
         return ((), Bottom, false) # wrong number of arguments
@@ -2938,7 +2960,7 @@ function inlining_pass(e::Expr, sv, ast)
                     newargs[i-3] = aarg.args[2:end]
                 elseif isa(aarg, Tuple)
                     newargs[i-3] = Any[ QuoteNode(x) for x in aarg ]
-                elseif (t<:Tuple) && t !== Union{} && !isvatuple(t) && effect_free(aarg,sv,true)
+                elseif isa(t,DataType) && t.name===Tuple.name && !isvatuple(t) && effect_free(aarg,sv,true)
                     # apply(f,t::(x,y)) => f(t[1],t[2])
                     tp = t.parameters
                     newargs[i-3] = Any[ mk_getfield(aarg,j,tp[j]) for j=1:length(tp) ]

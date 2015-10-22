@@ -113,11 +113,10 @@ function installed(pkg::AbstractString)
     avail = Read.available(pkg)
     if Read.isinstalled(pkg)
         res = typemin(VersionNumber)
-        repo = GitRepo(pkg)
-        try
-            res = Read.installed_version(pkg, repo, avail)
-        finally
-            finalize(repo)
+        if ispath(joinpath(pkg,".git"))
+            LibGit2.with(GitRepo, pkg) do repo
+                res = Read.installed_version(pkg, repo, avail)
+            end
         end
         return res
     end
@@ -174,13 +173,13 @@ function status(io::IO, pkg::AbstractString, ver::VersionNumber, fix::Bool)
             isfile("METADATA",pkg,"url") || push!(attrs,"unregistered")
             LibGit2.isdirty(prepo) && push!(attrs,"dirty")
             isempty(attrs) || print(io, " (",join(attrs,", "),")")
-        catch
-            print(io, "broken-repo (unregistered)")
+        catch err
+            print_with_color(:red, io, " broken-repo (unregistered)")
         finally
             finalize(prepo)
         end
     else
-        print(io, "non-repo (unregistered)")
+        print_with_color(:yellow, io, "non-repo (unregistered)")
     end
     println(io)
 end
@@ -196,9 +195,9 @@ function clone(url::AbstractString, pkg::AbstractString)
         LibGit2.with(LibGit2.clone(url, pkg)) do repo
             LibGit2.set_remote_url(repo, url)
         end
-    catch
+    catch err
         isdir(pkg) && Base.rm(pkg, recursive=true)
-        rethrow()
+        rethrow(err)
     end
     info("Computing changes...")
     if !edit(Reqs.add, pkg)
@@ -293,16 +292,27 @@ end
 
 function pin(pkg::AbstractString, head::AbstractString)
     ispath(pkg,".git") || throw(PkgError("$pkg is not a git repo"))
-    rslv = !isempty(head) # no need to resolve, branch will be from HEAD
+    should_resolve = true
     with(GitRepo, pkg) do repo
-        if isempty(head) # get HEAD oid
-            head = head_oid(repo)
+        id = if isempty(head) # get HEAD commit
+            LibGit2.head_oid(repo)
+        else
+            # no need to resolve, branch will be from HEAD
+            should_resolve = false
+            LibGit2.revparseid(repo, head)
         end
-        branch = "pinned.$(head[1:8]).tmp"
+        commit = LibGit2.get(LibGit2.GitCommit, repo, id)
+        branch = "pinned.$(string(id)[1:8]).tmp"
         info("Creating $pkg branch $branch")
-        LibGit2.create_branch(repo, branch, head)
+        try
+            ref = LibGit2.create_branch(repo, branch, commit)
+            finalize(ref)
+        finally
+            finalize(commit)
+        end
     end
-    rslv ? resolve() : nothing
+    should_resolve && resolve()
+    nothing
 end
 pin(pkg::AbstractString) = pin(pkg, "")
 
@@ -320,8 +330,12 @@ function update(branch::AbstractString)
     with(GitRepo, "METADATA") do repo
         with(LibGit2.head(repo)) do h
             if LibGit2.branch(h) != branch
-                LibGit2.isdirty(repo) && throw(PkgError("METADATA is dirty and not on $branch, bailing"))
-                LibGit2.isattached(repo) || throw(PkgError("METADATA is detached not on $branch, bailing"))
+                if LibGit2.isdirty(repo)
+                    throw(PkgError("METADATA is dirty and not on $branch, bailing"))
+                end
+                if !LibGit2.isattached(repo)
+                    throw(PkgError("METADATA is detached not on $branch, bailing"))
+                end
                 LibGit2.fetch(repo)
                 LibGit2.checkout_head(repo)
                 LibGit2.branch!(repo, branch, track="refs/remotes/origin/$branch")
@@ -329,11 +343,14 @@ function update(branch::AbstractString)
             end
         end
         LibGit2.fetch(repo)
-        LibGit2.merge!(repo, fastforward=true) || LibGit2.rebase!(repo, "origin/$branch")
+        ff_succeeded = LibGit2.merge!(repo, fastforward=true)
+        if !ff_succeeded
+            LibGit2.rebase!(repo, "origin/$branch")
+        end
     end
     avail = Read.available()
     # this has to happen before computing free/fixed
-    for pkg in filter!(Read.isinstalled,collect(keys(avail)))
+    for pkg in filter(Read.isinstalled, collect(keys(avail)))
         try
             Cache.prefetch(pkg, Read.url(pkg), [a.sha1 for (v,a)=avail[pkg]])
         catch err
@@ -341,19 +358,34 @@ function update(branch::AbstractString)
         end
     end
     instd = Read.installed(avail)
-    free = Read.free(instd)
+    free  = Read.free(instd)
     for (pkg,ver) in free
-        Cache.prefetch(pkg, Read.url(pkg), [a.sha1 for (v,a)=avail[pkg]])
+        Cache.prefetch(pkg, Read.url(pkg), [a.sha1 for (v,a) in avail[pkg]])
     end
     fixed = Read.fixed(avail,instd)
     for (pkg,ver) in fixed
         ispath(pkg,".git") || continue
         with(GitRepo, pkg) do repo
-            if LibGit2.isattached(repo) && !LibGit2.isdirty(repo)
-                info("Updating $pkg...")
-                @recover begin
-                    LibGit2.fetch(repo)
-                    LibGit2.merge!(repo, fastforward=true)
+            if LibGit2.isattached(repo)
+                if LibGit2.isdirty(repo)
+                    warn("Package $pkg: skipping update (dirty)...")
+                else
+                    prev_sha = string(LibGit2.head_oid(repo))
+                    success = true
+                    try
+                        LibGit2.fetch(repo)
+                        LibGit2.merge!(repo, fastforward=true)
+                    catch err
+                        show(err)
+                        print('\n')
+                        success = false
+                    end
+                    if success
+                        post_sha = string(LibGit2.head_oid(repo))
+                        branch = LibGit2.branch(repo)
+                        info("Updating $pkg $branch...",
+                              prev_sha != post_sha ? " $(prev_sha[1:8]) → $(post_sha[1:8])" : "")
+                    end
                 end
             end
         end
@@ -438,7 +470,7 @@ function resolve(
             end
             push!(changed,(pkg,(ver1,ver2)))
         end
-    catch
+    catch err
         for (pkg,(ver1,ver2)) in reverse!(changed)
             if ver1 === nothing
                 info("Rolling back install of $pkg")
@@ -451,7 +483,7 @@ function resolve(
                 @recover Write.update(pkg, Read.sha1(pkg,ver1))
             end
         end
-        rethrow()
+        rethrow(err)
     end
     # re/build all updated/installed packages
     build(map(x->x[1], filter(x -> x[2][2] !== nothing, changes)))
@@ -487,6 +519,12 @@ function build!(pkgs::Vector, errs::Dict, seen::Set=Set())
     errfile = tempname()
     close(open(errfile, "w")) # create empty file
     code = """
+        empty!(Base.LOAD_PATH)
+        append!(Base.LOAD_PATH, $(repr(Base.LOAD_PATH)))
+        empty!(Base.LOAD_CACHE_PATH)
+        append!(Base.LOAD_CACHE_PATH, $(repr(Base.LOAD_CACHE_PATH)))
+        empty!(Base.DL_LOAD_PATH)
+        append!(Base.DL_LOAD_PATH, $(repr(Base.DL_LOAD_PATH)))
         open("$(escape_string(errfile))", "a") do f
             for path_ in eachline(STDIN)
                 path = chomp(path_)
@@ -520,10 +558,10 @@ function build!(pkgs::Vector, errs::Dict, seen::Set=Set())
                 errs[pkg] = err
             end
         end
-    catch
+    catch err
         kill(pobj)
         close(io)
-        rethrow()
+        rethrow(err)
     finally
         isfile(errfile) && Base.rm(errfile)
     end

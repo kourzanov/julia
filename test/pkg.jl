@@ -10,7 +10,6 @@ function temp_pkg_dir(fn::Function, remove_tmp_dir::Bool=true)
         Pkg.init()
         @test isdir(Pkg.dir())
         Pkg.resolve()
-
         fn()
     finally
         remove_tmp_dir && rm(tmpdir, recursive=true)
@@ -44,6 +43,7 @@ temp_pkg_dir() do
     Pkg.rm("Example")
     @test isempty(Pkg.installed())
     @test !isempty(Pkg.available("Example"))
+    @test !in("Example", keys(Pkg.installed()))
     Pkg.clone("https://github.com/JuliaLang/Example.jl.git")
     @test [keys(Pkg.installed())...] == ["Example"]
     Pkg.status("Example", iob)
@@ -118,9 +118,6 @@ temp_pkg_dir() do
     end
     @test Pkg.installed()["Example"] > v"0.0.0"
 
-    Pkg.rm("Example")
-    @test isempty(Pkg.installed())
-
     # issue #13583
     begin
         try
@@ -136,5 +133,21 @@ temp_pkg_dir() do
             @test isa(ex,Pkg.PkgError)
             @test ex.msg == "IDoNotExist1 and IDoNotExist2 are not installed packages"
         end
+    end
+
+    begin
+        Pkg.pin("Example")
+        Pkg.free("Example")
+
+        Pkg.pin("Example", v"0.4.0")
+        Pkg.update()
+        Pkg.installed()["Example"] == v"0.4.0"
+    end
+
+    # add a directory that is not a git repository
+    begin
+        mkdir(joinpath(Pkg.dir(), "NOTGIT"))
+        Pkg.installed("NOTGIT") == typemin(VersionNumber)
+        Pkg.installed()["NOTGIT"] == typemin(VersionNumber)
     end
 end
