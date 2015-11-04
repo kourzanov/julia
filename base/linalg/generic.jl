@@ -8,7 +8,7 @@ scale(s::Number, X::AbstractArray) = s*X
 # For better performance when input and output are the same array
 # See https://github.com/JuliaLang/julia/issues/8415#issuecomment-56608729
 function generic_scale!(X::AbstractArray, s::Number)
-    for I in eachindex(X)
+    @simd for I in eachindex(X)
         @inbounds X[I] *= s
     end
     X
@@ -325,19 +325,26 @@ function inv{T}(A::AbstractMatrix{T})
     A_ldiv_B!(factorize(convert(AbstractMatrix{S}, A)), eye(S, chksquare(A)))
 end
 
-function \{T}(A::AbstractMatrix{T}, B::AbstractVecOrMat{T})
-    if size(A,1) != size(B,1)
-        throw(DimensionMismatch("left and right hand sides should have the same number of rows, left hand side has $(size(A,1)) rows, but right hand side has $(size(B,1)) rows."))
+function (\)(A::AbstractMatrix, B::AbstractVecOrMat)
+    m, n = size(A)
+    if m == n
+        if istril(A)
+            if istriu(A)
+                return Diagonal(A) \ B
+            else
+                return LowerTriangular(A) \ B
+            end
+        end
+        if istriu(A)
+            return UpperTriangular(A) \ B
+        end
+        return lufact(A) \ B
     end
-    factorize(A)\B
-end
-function \{TA,TB}(A::AbstractMatrix{TA}, B::AbstractVecOrMat{TB})
-    TC = typeof(one(TA)/one(TB))
-    convert(AbstractMatrix{TC}, A)\convert(AbstractArray{TC}, B)
+    return qrfact(A,Val{true}) \ B
 end
 
-\(a::AbstractVector, b::AbstractArray) = reshape(a, length(a), 1) \ b
-/(A::AbstractVecOrMat, B::AbstractVecOrMat) = (B' \ A')'
+(\)(a::AbstractVector, b::AbstractArray) = reshape(a, length(a), 1) \ b
+(/)(A::AbstractVecOrMat, B::AbstractVecOrMat) = (B' \ A')'
 # \(A::StridedMatrix,x::Number) = inv(A)*x Should be added at some point when the old elementwise version has been deprecated long enough
 # /(x::Number,A::StridedMatrix) = x*inv(A)
 
@@ -528,4 +535,76 @@ logabsdet(A::AbstractMatrix) = logabsdet(lufact(A))
 function isapprox{T<:Number,S<:Number}(x::AbstractArray{T}, y::AbstractArray{S}; rtol::Real=Base.rtoldefault(T,S), atol::Real=0, norm::Function=vecnorm)
     d = norm(x - y)
     return isfinite(d) ? d <= atol + rtol*max(norm(x), norm(y)) : x == y
+end
+
+"""
+    normalize!(v, [p=2])
+
+Normalize the vector `v` in-place with respect to the `p`-norm.
+
+# Inputs
+
+- `v::AbstractVector` - vector to be normalized
+- `p::Real` - The `p`-norm to normalize with respect to. Default: 2
+
+# Output
+
+- `v` - A unit vector being the input vector, rescaled to have norm 1.
+        The input vector is modified in-place.
+
+# See also
+
+`normalize`, `qr`
+
+"""
+function normalize!(v::AbstractVector, p::Real=2)
+    nrm = norm(v, p)
+    __normalize!(v, nrm)
+end
+
+@inline function __normalize!(v::AbstractVector, nrm::AbstractFloat)
+    #The largest positive floating point number whose inverse is less than
+    #infinity
+    δ = inv(prevfloat(typemax(nrm)))
+
+    if nrm ≥ δ #Safe to multiply with inverse
+        invnrm = inv(nrm)
+        scale!(v, invnrm)
+
+    else # scale elements to avoid overflow
+        εδ = eps(one(nrm))/δ
+        scale!(v, εδ)
+        scale!(v, inv(nrm*εδ))
+    end
+
+    v
+end
+
+"""
+    normalize(v, [p=2])
+
+Normalize the vector `v` with respect to the `p`-norm.
+
+# Inputs
+
+- `v::AbstractVector` - vector to be normalized
+- `p::Real` - The `p`-norm to normalize with respect to. Default: 2
+
+# Output
+
+- `v` - A unit vector being a copy of the input vector, scaled to have norm 1
+
+# See also
+
+`normalize!`, `qr`
+"""
+function normalize(v::AbstractVector, p::Real = 2)
+    nrm = norm(v, p)
+    if !isempty(v)
+        vv = copy_oftype(v, typeof(v[1]/nrm))
+        return __normalize!(vv, nrm)
+    else
+        T = typeof(zero(eltype(v))/nrm)
+        return T[]
+    end
 end
