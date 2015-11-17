@@ -70,13 +70,11 @@ static htable_t fptr_to_id;
 // (reverse of fptr_to_id)
 static jl_fptr_t id_to_fptrs[] = {
   NULL, NULL,
-  jl_f_throw, jl_f_is, jl_f_no_function, jl_f_typeof,
-  jl_f_subtype, jl_f_isa, jl_f_typeassert, jl_f_apply,
-  jl_f_top_eval, jl_f_isdefined, jl_f_tuple, jl_f_svec,
+  jl_f_throw, jl_f_is, jl_f_no_function, jl_f_typeof, jl_f_subtype, jl_f_isa,
+  jl_f_typeassert, jl_f_apply, jl_f_isdefined, jl_f_tuple, jl_f_svec,
   jl_f_get_field, jl_f_set_field, jl_f_field_type, jl_f_nfields,
-  jl_f_arraylen, jl_f_arrayref, jl_f_arrayset, jl_f_arraysize,
-  jl_f_instantiate_type, jl_f_kwcall, jl_trampoline,
-  jl_f_methodexists, jl_f_applicable, jl_f_invoke,
+  jl_f_arrayref, jl_f_arrayset, jl_f_arraysize, jl_f_instantiate_type,
+  jl_f_kwcall, jl_trampoline, jl_f_applicable, jl_f_invoke,
   jl_apply_generic, jl_unprotect_stack, jl_f_sizeof, jl_f_new_expr,
   jl_f_intrinsic_call,
   NULL };
@@ -208,18 +206,18 @@ extern void jl_cpuid(int32_t CPUInfo[4], int32_t InfoType);
 #endif
 
 extern int globalUnique;
-uv_lib_t *jl_sysimg_handle = NULL;
+void *jl_sysimg_handle = NULL;
 uint64_t jl_sysimage_base = 0;
 #ifdef _OS_WINDOWS_
 #include <dbghelp.h>
 #endif
 
-DLLEXPORT int jl_running_on_valgrind()
+DLLEXPORT int jl_running_on_valgrind(void)
 {
     return RUNNING_ON_VALGRIND;
 }
 
-static int jl_load_sysimg_so()
+static int jl_load_sysimg_so(void)
 {
 #ifndef _OS_WINDOWS_
     Dl_info dlinfo;
@@ -256,7 +254,7 @@ static int jl_load_sysimg_so()
 #endif
 
 #ifdef _OS_WINDOWS_
-        jl_sysimage_base = (intptr_t)jl_sysimg_handle->handle;
+        jl_sysimage_base = (intptr_t)jl_sysimg_handle;
 #else
         if (dladdr((void*)sysimg_gvars, &dlinfo) != 0) {
             jl_sysimage_base = (intptr_t)dlinfo.dli_fbase;
@@ -405,7 +403,7 @@ static void jl_delayed_fptrs(jl_lambda_info_t *li, int32_t func, int32_t cfunc)
     }
 }
 
-static void jl_update_all_fptrs()
+static void jl_update_all_fptrs(void)
 {
     //jl_printf(JL_STDOUT, "delayed_fptrs_n: %d\n", delayed_fptrs_n);
     jl_value_t ***gvars = sysimg_gvars;
@@ -528,7 +526,7 @@ static void jl_serialize_datatype(ios_t *s, jl_datatype_t *dt)
         write_int32(s, dt->alignment);
         write_int8(s, dt->haspadding);
         size_t fieldsize = jl_fielddesc_size(dt->fielddesc_type);
-        ios_write(s, (char*)dt->fields, nf * fieldsize);
+        ios_write(s, jl_datatype_fields(dt), nf * fieldsize);
         jl_serialize_value(s, dt->types);
     }
 
@@ -695,7 +693,7 @@ static void jl_serialize_value_(ios_t *s, jl_value_t *v)
         }
     }
     else if (jl_is_symbol(v)) {
-        size_t l = strlen(((jl_sym_t*)v)->name);
+        size_t l = strlen(jl_symbol_name((jl_sym_t*)v));
         if (l <= 255) {
             writetag(s, jl_symbol_type);
             write_uint8(s, (uint8_t)l);
@@ -704,7 +702,7 @@ static void jl_serialize_value_(ios_t *s, jl_value_t *v)
             writetag(s, (jl_value_t*)LongSymbol_tag);
             write_int32(s, l);
         }
-        ios_write(s, ((jl_sym_t*)v)->name, l);
+        ios_write(s, jl_symbol_name((jl_sym_t*)v), l);
     }
     else if (jl_is_globalref(v)) {
         if (mode == MODE_AST && jl_globalref_mod(v) == tree_enclosing_module) {
@@ -983,9 +981,9 @@ void jl_serialize_mod_list(ios_t *s)
                 jl_module_t *child = (jl_module_t*)b->value;
                 if (child->name == b->name) {
                     // this is the original/primary binding for the submodule
-                    size_t l = strlen(child->name->name);
+                    size_t l = strlen(jl_symbol_name(child->name));
                     write_int32(s, l);
-                    ios_write(s, child->name->name, l);
+                    ios_write(s, jl_symbol_name(child->name), l);
                     write_uint64(s, child->uuid);
                 }
             }
@@ -1004,7 +1002,8 @@ static void jl_serialize_header(ios_t *s)
     write_uint16(s, JI_FORMAT_VERSION);
     ios_write(s, (char *) &BOM, 2);
     write_uint8(s, sizeof(void*));
-    const char *OS_NAME = jl_get_OS_NAME()->name, *ARCH = jl_get_ARCH()->name;
+    const char *OS_NAME = jl_symbol_name(jl_get_OS_NAME());
+    const char *ARCH = jl_symbol_name(jl_get_ARCH());
     ios_write(s, OS_NAME, strlen(OS_NAME)+1);
     ios_write(s, ARCH, strlen(ARCH)+1);
     ios_write(s, JULIA_VERSION_STRING, strlen(JULIA_VERSION_STRING)+1);
@@ -1131,7 +1130,7 @@ static jl_value_t *jl_deserialize_datatype(ios_t *s, int pos, jl_value_t **loc)
         dt->alignment = read_int32(s);
         dt->haspadding = read_int8(s);
         size_t fieldsize = jl_fielddesc_size(fielddesc_type);
-        ios_read(s, (char*)dt->fields, nf * fieldsize);
+        ios_read(s, jl_datatype_fields(dt), nf * fieldsize);
         dt->types = (jl_svec_t*)jl_deserialize_value(s, (jl_value_t**)&dt->types);
         jl_gc_wb(dt, dt->types);
     }
@@ -1225,7 +1224,7 @@ static jl_value_t *jl_deserialize_value_(ios_t *s, jl_value_t *vtag, jl_value_t 
         jl_svec_t *sv = jl_alloc_svec_uninit(len);
         if (usetable)
             arraylist_push(&backref_list, (jl_value_t*)sv);
-        jl_value_t **data = sv->data;
+        jl_value_t **data = jl_svec_data(sv);
         for(i=0; i < len; i++) {
             data[i] = jl_deserialize_value(s, &data[i]);
         }
@@ -1590,7 +1589,7 @@ void jl_deserialize_lambdas_from_mod(ios_t *s)
         jl_function_t *meth = (jl_function_t*)jl_deserialize_value(s, NULL);
         jl_svec_t *tvars = (jl_svec_t*)jl_deserialize_value(s, NULL);
         int8_t isstaged = read_int8(s);
-        jl_add_method(gf, types, meth, tvars, isstaged);
+        jl_method_table_insert(jl_gf_mtable(gf), types, meth, tvars, isstaged);
     }
 }
 
@@ -1654,8 +1653,8 @@ DLLEXPORT int jl_deserialize_verify_header(ios_t *s)
             read_uint16(s) == JI_FORMAT_VERSION &&
             ios_read(s, (char *) &bom, 2) == 2 && bom == BOM &&
             read_uint8(s) == sizeof(void*) &&
-            readstr_verify(s, jl_get_OS_NAME()->name) && !read_uint8(s) &&
-            readstr_verify(s, jl_get_ARCH()->name) && !read_uint8(s) &&
+            readstr_verify(s, jl_symbol_name(jl_get_OS_NAME())) && !read_uint8(s) &&
+            readstr_verify(s, jl_symbol_name(jl_get_ARCH())) && !read_uint8(s) &&
             readstr_verify(s, JULIA_VERSION_STRING) && !read_uint8(s) &&
             readstr_verify(s, jl_git_branch()) && !read_uint8(s) &&
             readstr_verify(s, jl_git_commit()) && !read_uint8(s));
@@ -1689,7 +1688,7 @@ static void jl_reinit_item(ios_t *f, jl_value_t *v, int how) {
     JL_TRY {
         switch (how) {
             case 1: { // rehash ObjectIdDict
-                jl_array_t **a = (jl_array_t**)&v->fieldptr[0];
+                jl_array_t **a = (jl_array_t**)v;
                 jl_idtable_rehash(a, jl_array_len(*a));
                 jl_gc_wb(v, *a);
                 break;
@@ -1700,12 +1699,14 @@ static void jl_reinit_item(ios_t *f, jl_value_t *v, int how) {
                 jl_declare_constant(b); // this can throw
                 if (b->value != NULL) {
                     if (!jl_is_module(b->value)) {
-                        jl_errorf("invalid redefinition of constant %s", mod->name->name); // this also throws
+                        jl_errorf("invalid redefinition of constant %s",
+                                  jl_symbol_name(mod->name)); // this also throws
                     }
                     if (jl_generating_output() && jl_options.incremental) {
-                        jl_errorf("cannot replace module %s during incremental precompile", mod->name->name);
+                        jl_errorf("cannot replace module %s during incremental precompile", jl_symbol_name(mod->name));
                     }
-                    jl_printf(JL_STDERR, "WARNING: replacing module %s\n", mod->name->name);
+                    jl_printf(JL_STDERR, "WARNING: replacing module %s\n",
+                              jl_symbol_name(mod->name));
                 }
                 b->value = v;
                 jl_gc_wb_binding(b, v);
@@ -1809,7 +1810,7 @@ DLLEXPORT void jl_save_system_image(const char *fname)
     JL_SIGATOMIC_END();
 }
 
-DLLEXPORT ios_t *jl_create_system_image()
+DLLEXPORT ios_t *jl_create_system_image(void)
 {
     ios_t *f; f = (ios_t*)malloc(sizeof(ios_t));
     ios_mem(f, 1000000);
@@ -1840,7 +1841,7 @@ DLLEXPORT void jl_preload_sysimg_so(const char *fname)
     }
 
     // Get handle to sys.so
-    jl_sysimg_handle = (uv_lib_t*)jl_load_dynamic_library_e(fname_shlib, JL_RTLD_DEFAULT | JL_RTLD_GLOBAL);
+    jl_sysimg_handle = jl_load_dynamic_library_e(fname_shlib, JL_RTLD_DEFAULT | JL_RTLD_GLOBAL);
 
     // set cpu target if unspecified by user and available from sysimg
     // otherwise default to native.
@@ -2077,9 +2078,6 @@ DLLEXPORT int jl_save_incremental(const char *fname, jl_array_t *worklist)
     return 0;
 }
 
-jl_function_t *jl_method_cache_insert(jl_methtable_t *mt, jl_tupletype_t *type,
-                                      jl_function_t *method);
-
 static jl_datatype_t *jl_recache_type(jl_datatype_t *dt, size_t start)
 {
     assert(dt->uid == -1);
@@ -2147,7 +2145,7 @@ static jl_datatype_t *jl_recache_type(jl_datatype_t *dt, size_t start)
     return t;
 }
 
-static void jl_recache_types()
+static void jl_recache_types(void)
 {
     size_t i = 0;
     while (i < flagref_list.len) {

@@ -676,6 +676,8 @@ export
     lufact,
     lyap,
     norm,
+    normalize,
+    normalize!,
     nullspace,
     ordschur!,
     ordschur,
@@ -751,6 +753,7 @@ export
     filter,
     foldl,
     foldr,
+    foreach,
     get,
     get!,
     getindex,
@@ -909,12 +912,9 @@ export
 
 # bigfloat & precision
     precision,
-    get_bigfloat_precision,
-    set_bigfloat_precision,
-    with_bigfloat_precision,
-    get_rounding,
-    set_rounding,
-    with_rounding,
+    rounding,
+    setprecision,
+    setrounding,
     get_zero_subnormals,
     set_zero_subnormals,
 
@@ -1010,7 +1010,6 @@ export
     Condition,
     consume,
     current_task,
-    istaskstarted,
     istaskdone,
     lock,
     notify,
@@ -1082,6 +1081,7 @@ export
     isgeneric,
     isinteractive,
     less,
+    method_exists,
     methods,
     methodswith,
     module_name,
@@ -1298,6 +1298,7 @@ export
     tempname,
     touch,
     uperm,
+    walkdir,
 
 # external processes ## TODO: whittle down these exports.
     detach,

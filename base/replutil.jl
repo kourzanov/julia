@@ -136,7 +136,13 @@ function showerror(io::IO, ex::DomainError, bt; backtrace=true)
     nothing
 end
 
-showerror(io::IO, ex::SystemError) = print(io, "SystemError: $(ex.prefix): $(Libc.strerror(ex.errnum))")
+function showerror(io::IO, ex::SystemError)
+    if ex.extrainfo == nothing
+        print(io, "SystemError: $(ex.prefix): $(Libc.strerror(ex.errnum))")
+    else
+        print(io, "SystemError (with $(ex.extrainfo)): $(ex.prefix): $(Libc.strerror(ex.errnum))")
+    end
+end
 showerror(io::IO, ::DivideError) = print(io, "DivideError: integer division error")
 showerror(io::IO, ::StackOverflowError) = print(io, "StackOverflowError:")
 showerror(io::IO, ::UndefRefError) = print(io, "UndefRefError: access to undefined reference")
@@ -205,7 +211,11 @@ function showerror(io::IO, ex::MethodError)
         print(io, "This may have arisen from a call to the constructor $construct_type(...),",
                   "\nsince type constructors fall back to convert methods.")
     end
-    show_method_candidates(io, ex)
+    try
+        show_method_candidates(io, ex)
+    catch
+        warn(io, "Error showing method candidates, aborted")
+    end
 end
 
 #Show an error by directly calling jl_printf.
@@ -256,7 +266,7 @@ function show_method_candidates(io::IO, ex::MethodError)
             right_matches = 0
             tv = method.tvars
             if !isa(tv,SimpleVector)
-                tv = svec(tv)
+                tv = Any[tv]
             end
             if !isempty(tv)
                 show_delim_array(buf, tv, '{', ',', '}', false)
@@ -337,7 +347,7 @@ function show_method_candidates(io::IO, ex::MethodError)
         end
     end
 
-    if length(lines) != 0 # Display up to three closest candidates
+    if !isempty(lines) # Display up to three closest candidates
         Base.with_output_color(:normal, io) do io
             println(io)
             print(io, "Closest candidates are:")

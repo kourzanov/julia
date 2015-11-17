@@ -39,10 +39,6 @@
 #include <link.h>
 #endif
 
-#define __STDC_CONSTANT_MACROS
-#define __STDC_LIMIT_MACROS
-#include <llvm-c/Target.h>
-
 #ifdef __SSE__
 #include <xmmintrin.h>
 #endif
@@ -75,6 +71,7 @@ DLLEXPORT uint32_t jl_getutf8(ios_t *s)
     return wc;
 }
 
+DLLEXPORT int jl_sizeof_uv_mutex(void) { return sizeof(uv_mutex_t); }
 DLLEXPORT int jl_sizeof_off_t(void) { return sizeof(off_t); }
 #ifndef _OS_WINDOWS_
 DLLEXPORT off_t jl_lseek(int fd, off_t offset, int whence) { return lseek(fd, offset, whence); }
@@ -484,7 +481,7 @@ DLLEXPORT void jl_cpuid(int32_t CPUInfo[4], int32_t InfoType)
 // subnormal_flags should be declared atomic.
 static volatile int32_t subnormal_flags = 1;
 
-static int32_t get_subnormal_flags()
+static int32_t get_subnormal_flags(void)
 {
     uint32_t f = subnormal_flags;
     if (f & 1) {
@@ -561,7 +558,7 @@ DLLEXPORT void jl_native_alignment(uint_t *int8align, uint_t *int16align, uint_t
     *float64align = __alignof(double);
 }
 
-DLLEXPORT jl_value_t *jl_is_char_signed()
+DLLEXPORT jl_value_t *jl_is_char_signed(void)
 {
     return ((char)255) < 0 ? jl_true : jl_false;
 }
@@ -634,23 +631,21 @@ DLLEXPORT size_t jl_get_alignment(jl_datatype_t *ty)
 }
 
 // Takes a handle (as returned from dlopen()) and returns the absolute path to the image loaded
-DLLEXPORT const char *jl_pathname_for_handle(uv_lib_t *uv_lib)
+DLLEXPORT const char *jl_pathname_for_handle(void *handle)
 {
-    if (!uv_lib)
+    if (!handle)
         return NULL;
 
-    void *handle = uv_lib->handle;
 #ifdef __APPLE__
     // Iterate through all images currently in memory
     for (int32_t i = _dyld_image_count(); i >= 0 ; i--) {
         // dlopen() each image, check handle
         const char *image_name = _dyld_get_image_name(i);
-        uv_lib_t *probe_lib = jl_load_dynamic_library(image_name, JL_RTLD_DEFAULT);
-        void *probe_handle = probe_lib->handle;
-        uv_dlclose(probe_lib);
+        void *probe_lib = jl_load_dynamic_library(image_name, JL_RTLD_DEFAULT);
+        jl_dlclose(probe_lib);
 
         // If the handle is the same as what was passed in (modulo mode bits), return this image name
-        if (((intptr_t)handle & (-4)) == ((intptr_t)probe_handle & (-4)))
+        if (((intptr_t)handle & (-4)) == ((intptr_t)probe_lib & (-4)))
             return image_name;
     }
 
@@ -729,7 +724,7 @@ DLLEXPORT void jl_raise_debugger(void)
 #endif // _OS_WINDOWS_
 }
 
-DLLEXPORT jl_sym_t* jl_get_OS_NAME()
+DLLEXPORT jl_sym_t* jl_get_OS_NAME(void)
 {
 #if defined(_OS_WINDOWS_)
     return jl_symbol("Windows");
@@ -745,7 +740,7 @@ DLLEXPORT jl_sym_t* jl_get_OS_NAME()
 #endif
 }
 
-DLLEXPORT jl_sym_t* jl_get_ARCH()
+DLLEXPORT jl_sym_t* jl_get_ARCH(void)
 {
     static jl_sym_t* ARCH = NULL;
     if (!ARCH)
@@ -753,7 +748,7 @@ DLLEXPORT jl_sym_t* jl_get_ARCH()
     return ARCH;
 }
 
-DLLEXPORT size_t jl_maxrss()
+DLLEXPORT size_t jl_maxrss(void)
 {
 #if defined(_OS_WINDOWS_)
 	PROCESS_MEMORY_COUNTERS counter;

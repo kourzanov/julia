@@ -3461,3 +3461,41 @@ let cache = Dict()
     end
 end
 @test I13636.foo(1,k=2) == 3
+
+# issue #11327 and #13547
+@test_throws MethodError convert(Type{Int}, Float32)
+# TODO: this should probably be a MethodError in `convert`; not sure what's going on
+@test_throws TypeError Array{Type{Int64}}([Float32])
+abstract A11327
+abstract B11327 <: A11327
+f11327{T}(::Type{T},x::T) = x
+@test_throws MethodError f11327(Type{A11327},B11327)
+let T=TypeVar(:T,true)
+    @test typeintersect(Tuple{Type{T},T}, Tuple{Type{Type{Float64}},Type{Int}}) === Union{}
+end
+
+# issue 13855
+@eval @noinline function foo13855(x)
+    $(Expr(:localize, :(() -> () -> x)))
+end
+@test foo13855(Base.AddFun())() == Base.AddFun()
+@test foo13855(Base.MulFun())() == Base.MulFun()
+
+# check if finalizers for the old gen can be triggered manually
+# issue #13986
+let
+    obj = Ref(1)
+    finalized = 0
+    finalizer(obj, (obj) -> (finalized = 1))
+    # obj should be marked for promotion after the second gc and be promoted
+    # after the third GC
+    # GC_CLEAN; age = 0
+    gc(false)
+    # GC_CLEAN; age = 1
+    gc(false)
+    # GC_QUEUED; age = 1
+    gc(false)
+    # GC_MARKED; age = 1
+    finalize(obj)
+    @test finalized == 1
+end

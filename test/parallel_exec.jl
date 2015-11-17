@@ -2,7 +2,14 @@
 
 using Base.Test
 
-addprocs(3; exeflags=`--check-bounds=yes --depwarn=error`)
+inline_flag = Base.JLOptions().can_inline == 1 ? "" : "--inline=no"
+cov_flag = ""
+if Base.JLOptions().code_coverage == 1
+    cov_flag = "--code-coverage=user"
+elseif Base.JLOptions().code_coverage == 2
+    cov_flag = "--code-coverage=all"
+end
+addprocs(3; exeflags=`$cov_flag $inline_flag --check-bounds=yes --depwarn=error`)
 
 id_me = myid()
 id_other = filter(x -> x != id_me, procs())[rand(1:(nprocs()-1))]
@@ -242,7 +249,7 @@ map!(x->1, d)
 @test fill!(d, 2.) == fill(2, 10, 10)
 @test d[:] == fill(2, 100)
 @test d[:,1] == fill(2, 10)
-@test d[1,:] == fill(2, 1, 10)
+@test d[1,:] == fill(2, 10)
 
 # Boundary cases where length(S) <= length(pids)
 @test 2.0 == remotecall_fetch(D->D[2], id_other, Base.shmem_fill(2.0, 2; pids=[id_me, id_other]))
@@ -402,14 +409,24 @@ catch ex
     @test collect(1:5) == sort(map(x->parse(Int, x), errors))
 end
 
-try
-    remotecall_fetch(()->throw(ErrorException("foobar")), id_other)
-    error("unexpected")
-catch ex
-    @test typeof(ex) == RemoteException
-    @test typeof(ex.captured) == CapturedException
-    @test typeof(ex.captured.ex) == ErrorException
-    @test ex.captured.ex.msg == "foobar"
+macro test_remoteexception_thrown(expr)
+    quote
+        try
+            $(esc(expr))
+            error("unexpected")
+        catch ex
+            @test typeof(ex) == RemoteException
+            @test typeof(ex.captured) == CapturedException
+            @test typeof(ex.captured.ex) == ErrorException
+            @test ex.captured.ex.msg == "foobar"
+        end
+    end
+end
+
+for id in [id_other, id_me]
+    @test_remoteexception_thrown remotecall_fetch(()->throw(ErrorException("foobar")), id)
+    @test_remoteexception_thrown remotecall_wait(()->throw(ErrorException("foobar")), id)
+    @test_remoteexception_thrown wait(remotecall(()->throw(ErrorException("foobar")), id))
 end
 
 # The below block of tests are usually run only on local development systems, since:
@@ -455,7 +472,7 @@ if DoFullTest
     script = joinpath(dirname(@__FILE__), "topology.jl")
     cmd = `$(joinpath(JULIA_HOME,Base.julia_exename())) $script`
 
-    (strm, proc) = open(cmd)
+    (strm, proc) = open(pipeline(cmd, stderr=STDERR))
     wait(proc)
     if !success(proc) && ccall(:jl_running_on_valgrind,Cint,()) == 0
         println(readall(strm))
@@ -564,5 +581,13 @@ function f13168(n)
     val
 end
 let t = schedule(@task f13168(100))
-    @test schedule(t) === t
+    @test t.state == :queued
+    @test_throws ErrorException schedule(t)
+    yield()
+    @test t.state == :done
+    @test_throws ErrorException schedule(t)
+    @test isa(wait(t),Float64)
 end
+
+# issue #13122
+@test remotecall_fetch(identity, workers()[1], C_NULL) === C_NULL

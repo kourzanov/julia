@@ -231,7 +231,7 @@ sleep(1)
 import Base.zzzInvalidIdentifier
 """
 try
-    (in,p) = open(`$exename -f`, "w")
+    (in,p) = open(pipeline(`$exename -f`, stderr=STDERR), "w")
     write(in,cmd)
     close(in)
     wait(p)
@@ -331,3 +331,6 @@ let cmd = ["foo bar", "baz"]
 end
 
 @test Base.shell_split("\"\\\\\"") == ["\\"]
+
+# issue #13616
+@test_throws ErrorException collect(eachline(`cat _doesnt_exist__111_`))

@@ -20,6 +20,9 @@ Compiler/Runtime improvements
 Library improvements
 --------------------
 
+  * Most of the  combinatorics functions have been moved from `Base`
+    to the [Combinatorics.jl package](https://github.com/JuliaLang/Combinatorics.jl) ([#13897]).
+
   * Packages:
 
     * The package system (`Pkg`) is now based on the `libgit2` library, rather
@@ -45,18 +48,46 @@ Library improvements
 
   * `cov` and `cor` don't use keyword arguments anymore and are therefore now type stable ([#13465]).
 
-  * New method for generic QR with column pivoting ([#13480]).
+  * Linear algebra:
 
-  * A new `SparseVector` type allows for one-dimensional sparse arrays. Slicing
-    and reshaping sparse matrices now return vectors when appropriate. The
-    `sparsevec` function returns a one-dimensional sparse vector instead of a
-    one-column sparse matrix.
+    * All dimensions indexed by scalars are now dropped, whereas previously only
+      trailing scalar dimensions would be omitted from the result.
+
+    * New `normalize` and `normalize!` convenience functions for normalizing
+      vectors ([#13681]).
+
+    * QR
+
+      * New method for generic QR with column pivoting ([#13480]).
+
+      * New method for polar decompositions of `AbstractVector`s ([#13681]).
+
+    * A new `SparseVector` type allows for one-dimensional sparse arrays.
+      Slicing and reshaping sparse matrices now return vectors when
+      appropriate. The `sparsevec` function returns a one-dimensional sparse
+      vector instead of a one-column sparse matrix. ([#13440])
+
+  * New `foreach` function for calling a function on every element of a collection when
+    the results are not needed.
 
 Deprecated or removed
 ---------------------
 
-  * The method `A_ldiv_B!(SparseMatrixCSC, StrideVecOrMat)` has been deprecated in favor
-    of versions that require the matrix to in factored form ([#13496]).
+  * The following function names have been simplified and unified ([#13232]):
+
+    * `get_bigfloat_precision`  -> `precision(BigFloat)`
+    * `set_bigfloat_precision`  -> `setprecision`
+    * `with_bigfloat_precision` -> `setprecision`
+
+    * `get_rounding`            -> `rounding`
+    * `set_rounding`            -> `setrounding`
+    * `with_rounding`           -> `setrounding`
+
+  * The method `A_ldiv_B!(SparseMatrixCSC, StrideVecOrMat)` has been deprecated
+    in favor of versions that require the matrix to be in factored form
+    ([#13496]).
+
+  * Deprecate `chol(A,Val{:U/:L})` in favor of `chol(A)` ([#13680]).
 
 Julia v0.4.0 Release Notes
 ==========================
@@ -972,7 +1003,7 @@ Deprecated or removed
 
   * The `Stat` type is renamed `StatStruct` ([#4670]).
 
-  * `set_rounding`, `get_rounding` and `with_rounding` now take an additional
+  * `setrounding`, `rounding` and `setrounding` now take an additional
     argument specifying the floating point type to which they apply. The old
     behaviour and `[get/set/with]_bigfloat_rounding` functions are deprecated ([#5007]).
 
@@ -1697,6 +1728,10 @@ Too numerous to mention.
 [#13062]: https://github.com/JuliaLang/julia/issues/13062
 [#13338]: https://github.com/JuliaLang/julia/issues/13338
 [#13387]: https://github.com/JuliaLang/julia/issues/13387
+[#13440]: https://github.com/JuliaLang/julia/issues/13440
 [#13465]: https://github.com/JuliaLang/julia/issues/13465
+[#13496]: https://github.com/JuliaLang/julia/issues/13496
 [#13480]: https://github.com/JuliaLang/julia/issues/13480
 [#13542]: https://github.com/JuliaLang/julia/issues/13542
+[#13680]: https://github.com/JuliaLang/julia/issues/13680
+[#13681]: https://github.com/JuliaLang/julia/issues/13681

@@ -208,7 +208,10 @@ checked_mul(x::Integer, y::Integer) = checked_mul(promote(x,y)...)
 # as needed. For example, if you need to provide a custom result type
 # for the multiplication of two types,
 #   promote_op{R<:MyType,S<:MyType}(::MulFun, ::Type{R}, ::Type{S}) = MyType{multype(R,S)}
+promote_op(::Any)    = (@_pure_meta; Bottom)
+promote_op(::Any, T) = (@_pure_meta; T)
 promote_op{R,S}(::Any, ::Type{R}, ::Type{S}) = (@_pure_meta; promote_type(R, S))
+promote_op(op, T, S, U, V...) = (@_pure_meta; promote_op(op, T, promote_op(op, S, U, V...)))
 
 ## catch-alls to prevent infinite recursion when definitions are missing ##
 
@@ -240,6 +243,10 @@ mod{T<:Real}(x::T, y::T) = no_op_err("mod", T)
 mod1{T<:Real}(x::T, y::T) = no_op_err("mod1", T)
 rem1{T<:Real}(x::T, y::T) = no_op_err("rem1", T)
 fld1{T<:Real}(x::T, y::T) = no_op_err("fld1", T)
+
+min(x::Real) = x
+max(x::Real) = x
+minmax(x::Real) = (x, x)
 
 max{T<:Real}(x::T, y::T) = ifelse(y < x, x, y)
 min{T<:Real}(x::T, y::T) = ifelse(y < x, y, x)

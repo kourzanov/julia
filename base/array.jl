@@ -226,8 +226,9 @@ end
 
 convert{T,n}(::Type{Array{T}}, x::Array{T,n}) = x
 convert{T,n}(::Type{Array{T,n}}, x::Array{T,n}) = x
-convert{T,n,S}(::Type{Array{T}}, x::Array{S,n}) = convert(Array{T,n}, x)
-convert{T,n,S}(::Type{Array{T,n}}, x::Array{S,n}) = copy!(similar(x,T), x)
+
+convert{T,n,S}(::Type{Array{T}}, x::AbstractArray{S, n}) = convert(Array{T, n}, x)
+convert{T,n,S}(::Type{Array{T,n}}, x::AbstractArray{S,n}) = copy!(Array(T, size(x)), x)
 
 promote_rule{T,n,S}(::Type{Array{T,n}}, ::Type{Array{S,n}}) = Array{promote_type(T,S),n}
 
@@ -264,7 +265,7 @@ collect(itr) = collect(eltype(itr), itr)
 ## Iteration ##
 start(A::Array) = 1
 next(a::Array,i) = (a[i],i+1)
-done(a::Array,i) = (i > length(a))
+done(a::Array,i) = i == length(a)+1
 
 ## Indexing: getindex ##
 
@@ -419,9 +420,9 @@ end
 
 function push!{T}(a::Array{T,1}, item)
     # convert first so we don't grow the array if the assignment won't work
-    item = convert(T, item)
+    itemT = convert(T, item)
     ccall(:jl_array_grow_end, Void, (Any, UInt), a, 1)
-    a[end] = item
+    a[end] = itemT
     return a
 end
 

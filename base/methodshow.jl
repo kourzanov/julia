@@ -29,7 +29,9 @@ end
 function arg_decl_parts(m::Method)
     tv = m.tvars
     if !isa(tv,SimpleVector)
-        tv = svec(tv)
+        tv = Any[tv]
+    else
+        tv = Any[tv...]
     end
     li = m.func.code
     e = uncompressed_ast(li)
@@ -98,7 +100,12 @@ function url(m::Method)
     line = m.func.code.line
     line <= 0 || ismatch(r"In\[[0-9]+\]", file) && return ""
     if inbase(M)
-        return "https://github.com/JuliaLang/julia/tree/$(Base.GIT_VERSION_INFO.commit)/base/$file#L$line"
+        if isempty(Base.GIT_VERSION_INFO.commit)
+            # this url will only work if we're on a tagged release
+            return "https://github.com/JuliaLang/julia/tree/v$VERSION/base/$file#L$line"
+        else
+            return "https://github.com/JuliaLang/julia/tree/$(Base.GIT_VERSION_INFO.commit)/base/$file#L$line"
+        end
     else
         try
             d = dirname(file)

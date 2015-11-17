@@ -757,7 +757,7 @@ static jl_cgval_t emit_runtime_pointerset(jl_value_t *e, jl_value_t *x, jl_value
 {
     Value *psetfunc = // TODO: move this to the codegen initialization code section
         jl_Module->getOrInsertFunction("jl_pointerset",
-                                       FunctionType::get(T_void, three_pvalue_llvmt, false));
+                                       FunctionType::get(T_pjlvalue, three_pvalue_llvmt, false));
     int ldepth = ctx->gc.argDepth;
     jl_cgval_t parg = emit_boxed_rooted(e, ctx);
     Value *iarg = emit_boxed_rooted(i, ctx).V;
@@ -920,6 +920,9 @@ static jl_cgval_t emit_intrinsic(intrinsic f, jl_value_t **args, size_t nargs,
     case ccall: return emit_ccall(args, nargs, ctx);
     case cglobal: return emit_cglobal(args, nargs, ctx);
     case llvmcall: return emit_llvmcall(args, nargs, ctx);
+    case arraylen:
+        return mark_julia_type(emit_arraylen(emit_expr(args[1], ctx), args[1], ctx), false,
+                               jl_long_type);
 #if 0 // this section enables runtime-intrinsics (e.g. for testing), and disables their llvm counterparts
     default:
         int ldepth = ctx->gc.argDepth;
@@ -1047,7 +1050,7 @@ static jl_cgval_t emit_intrinsic(intrinsic f, jl_value_t **args, size_t nargs,
         int nb = get_bitstype_nbits(bt);
         Value *x = auto_unbox(args[2],ctx);
         if (x->getType() == T_void) return jl_cgval_t(); // auto_unbox threw an error
-#if JL_NEED_FLOATTEMP_VAR
+#ifdef JL_NEED_FLOATTEMP_VAR
         // Target platform might carry extra precision.
         // Force rounding to single precision first. The reason is that it's
         // fine to keep working in extended precision as long as it's
@@ -1515,10 +1518,8 @@ static Value *emit_untyped_intrinsic(intrinsic f, Value *x, Value *y, Value *z, 
 #endif
 #else
         // issue #6506
-        Type *ts[2] = { tx, tx };
-        Value *pow = jl_Module->getOrInsertFunction(
-            tx==T_float64 ? "pow" : "powf", FunctionType::get(tx, ts, false));
-        return builder.CreateCall2(pow, x, builder.CreateSIToFP(y, tx));
+        return builder.CreateCall2(prepare_call(tx == T_float64 ? jlpow_func : jlpowf_func),
+                x, builder.CreateSIToFP(y, tx));
 #endif
     }
     case sqrt_llvm_fast: {

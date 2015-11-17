@@ -33,7 +33,7 @@ static GlobalVariable *prepare_global(GlobalVariable *G)
         if (!gv) {
             gv = new GlobalVariable(*jl_Module, G->getType()->getElementType(),
                                     G->isConstant(), GlobalVariable::ExternalLinkage,
-                                    NULL, G->getName());
+                                    NULL, G->getName(), NULL, G->getThreadLocalMode());
         }
         return gv;
     }
@@ -69,46 +69,42 @@ static inline void add_named_global(GlobalObject *gv, void *addr)
 static inline void add_named_global(GlobalValue *gv, void *addr)
 #endif
 {
-#ifdef USE_MCJIT
-
+#ifdef LLVM34
     StringRef name = gv->getName();
 #ifdef _OS_WINDOWS_
     std::string imp_name;
+#endif
+#endif
+
+#ifdef _OS_WINDOWS_
     // setting DLLEXPORT correctly only matters when building a binary
     if (jl_generating_output()) {
+#ifdef LLVM35
         // add the __declspec(dllimport) attribute
         gv->setDLLStorageClass(GlobalValue::DLLImportStorageClass);
         // this will cause llvm to rename it, so we do the same
         imp_name = Twine("__imp_", name).str();
         name = StringRef(imp_name);
-        // __imp_ functions are jmp stubs (no additional work needed)
-        // __imp_ variables are indirection pointers, so use malloc to simulate that too
-        if (isa<GlobalVariable>(gv)) {
-            void** imp_addr = (void**)malloc(sizeof(void**));
-            *imp_addr = addr;
-            addr = (void*)imp_addr;
-        }
-    }
-#endif
-    addComdat(gv);
-    sys::DynamicLibrary::AddSymbol(name, addr);
-
-#else // USE_MCJIT
-
-#ifdef _OS_WINDOWS_
-    // setting DLLEXPORT correctly only matters when building a binary
-    if (jl_generating_output()) {
+#else
         if (gv->getLinkage() == GlobalValue::ExternalLinkage)
             gv->setLinkage(GlobalValue::DLLImportLinkage);
-#ifdef _P64
-        // the following is correct by observation,
-        // as long as everything stays within a 32-bit offset :/
+#endif
+#if defined(_P64) || defined(LLVM35)
+        // __imp_ variables are indirection pointers, so use malloc to simulate that
         void** imp_addr = (void**)malloc(sizeof(void**));
         *imp_addr = addr;
         addr = (void*)imp_addr;
 #endif
     }
 #endif // _OS_WINDOWS_
+
+#ifdef USE_ORCJIT
+    addComdat(gv);
+    jl_ExecutionEngine->addGlobalMapping(name, addr);
+#elif defined(USE_MCJIT)
+    addComdat(gv);
+    sys::DynamicLibrary::AddSymbol(name, addr);
+#else // USE_MCJIT
     jl_ExecutionEngine->addGlobalMapping(gv, addr);
 #endif // USE_MCJIT
 }
@@ -223,6 +219,45 @@ public:
         }
     }
 
+    Value *InjectFunctionProto(Function *F)
+    {
+	//return destModule->getOrInsertFunction(F->getName(), F->getFunctionType());
+        Function *NewF = destModule->getFunction(F->getName());
+        if (!NewF) {
+            NewF = Function::Create(F->getFunctionType(),
+                                          Function::ExternalLinkage,
+                                          F->getName(),destModule);
+            NewF->setAttributes(AttributeSet());
+
+            // FunctionType does not include any attributes. Copy them over manually
+            // as codegen may make decisions based on the presence of certain attributes
+            NewF->copyAttributesFrom(F);
+
+            // Declarations are not allowed to have personality routines, but
+            // copyAttributesFrom sets them anyway, so clear them again manually
+            NewF->setPersonalityFn(nullptr);
+
+            AttributeSet OldAttrs = F->getAttributes();
+            // Clone any argument attributes that are present in the VMap.
+            auto ArgI = NewF->arg_begin();
+            for (const Argument &OldArg : F->args()) {
+                AttributeSet attrs =
+                    OldAttrs.getParamAttributes(OldArg.getArgNo() + 1);
+                if (attrs.getNumSlots() > 0)
+                    ArgI->addAttr(attrs);
+                ++ArgI;
+            }
+
+            NewF->setAttributes(
+              NewF->getAttributes()
+                  .addAttributes(NewF->getContext(), AttributeSet::ReturnIndex,
+                                 OldAttrs.getRetAttributes())
+                  .addAttributes(NewF->getContext(), AttributeSet::FunctionIndex,
+                                 OldAttrs.getFnAttributes()));
+        }
+	return NewF;
+    }
+
     virtual Value *materializeValueFor (Value *V)
     {
         Function *F = dyn_cast<Function>(V);
@@ -238,16 +273,21 @@ public:
                     // Not truly external
                     // Check whether we already emitted it once
                     if (emitted_function_symtab.find(shadow) != emitted_function_symtab.end())
-                        return destModule->getOrInsertFunction(F->getName(),F->getFunctionType());
+                        return InjectFunctionProto(F);
                     uint64_t addr = jl_mcjmm->getSymbolAddress(F->getName());
                     if (addr) {
                         emitted_function_symtab[shadow] = addr;
-                        return destModule->getOrInsertFunction(F->getName(),F->getFunctionType());
+                        return InjectFunctionProto(F);
                     }
 
                     Function *oldF = destModule->getFunction(F->getName());
                     if (oldF)
                         return oldF;
+
+                    // Also check if this function is pending in any other module
+                    if (jl_ExecutionEngine->FindFunctionNamed(F->getName().data()))
+                        return InjectFunctionProto(F);
+
                     return CloneFunctionProto(F);
                 }
                 else if (!F->isDeclaration()) {
@@ -257,7 +297,7 @@ public:
             // Still a declaration and still in a different module
             if (F->isDeclaration() && F->getParent() != destModule) {
                 // Create forward declaration in current module
-                return destModule->getOrInsertFunction(F->getName(),F->getFunctionType());
+                return InjectFunctionProto(F);
             }
         }
         else if (isa<GlobalVariable>(V)) {
@@ -305,8 +345,13 @@ static DIType *julia_type_to_di(jl_value_t *jt, DIBuilder *dbuilder, bool isboxe
 static DIType julia_type_to_di(jl_value_t *jt, DIBuilder *dbuilder, bool isboxed = false)
 #endif
 {
-    if (jl_is_abstracttype(jt) || !jl_is_datatype(jt) || !jl_isbits(jt) || isboxed)
+    if (isboxed)
         return jl_pvalue_dillvmt;
+    if (jl_is_abstracttype(jt) || jl_is_uniontype(jt) || jl_is_array_type(jt))
+        return jl_pvalue_dillvmt;
+    if (jl_is_typector(jt) || jl_is_typevar(jt))
+        return jl_pvalue_dillvmt;
+    assert(jl_is_datatype(jt));
     jl_datatype_t *jdt = (jl_datatype_t*)jt;
     if (jdt->ditype != NULL) {
 #ifdef LLVM37
@@ -316,24 +361,52 @@ static DIType julia_type_to_di(jl_value_t *jt, DIBuilder *dbuilder, bool isboxed
 #endif
     }
     if (jl_is_bitstype(jt)) {
+        uint64_t SizeInBits = jdt == jl_bool_type ? 1 : 8*jdt->size;
     #ifdef LLVM37
-        llvm::DIType *t = dbuilder->createBasicType(jdt->name->name->name,jdt->size,jdt->alignment,llvm::dwarf::DW_ATE_unsigned);
+        llvm::DIType *t = dbuilder->createBasicType(jl_symbol_name(jdt->name->name),SizeInBits,8*jdt->alignment,llvm::dwarf::DW_ATE_unsigned);
         jdt->ditype = t;
         return t;
     #else
-        DIType t = dbuilder->createBasicType(jdt->name->name->name,jdt->size,jdt->alignment,llvm::dwarf::DW_ATE_unsigned);
+        DIType t = dbuilder->createBasicType(jl_symbol_name(jdt->name->name),SizeInBits,8*jdt->alignment,llvm::dwarf::DW_ATE_unsigned);
         MDNode *M = t;
         jdt->ditype = M;
         return t;
     #endif
     }
+    #ifdef LLVM37
+    else if (jl_is_tuple_type(jt) || jl_is_structtype(jt)) {
+        jl_datatype_t *jst = (jl_datatype_t*)jt;
+        size_t ntypes = jl_datatype_nfields(jst);
+        llvm::DICompositeType *ct = dbuilder->createStructType(
+            NULL,                       // Scope
+            jl_symbol_name(jdt->name->name),      // Name
+            NULL,                       // File
+            0,                          // LineNumber
+            8*jdt->size,                // SizeInBits
+            8*jdt->alignment,           // AlignmentInBits
+            0,                          // Flags
+            NULL,                       // DerivedFrom
+            DINodeArray(),              // Elements
+            dwarf::DW_LANG_Julia        // RuntimeLanguage
+            );
+        jdt->ditype = ct;
+        std::vector<llvm::Metadata*> Elements;
+        for(unsigned i = 0; i < ntypes; i++)
+            Elements.push_back(julia_type_to_di(jl_svecref(jst->types,i),dbuilder,false));
+        dbuilder->replaceArrays(ct, dbuilder->getOrCreateArray(ArrayRef<Metadata*>(Elements)));
+        return ct;
+    } else {
+        jdt->ditype = dbuilder->createTypedef(jl_pvalue_dillvmt, jl_symbol_name(jdt->name->name), NULL, 0, NULL);
+        return (llvm::DIType*)jdt->ditype;
+    }
+    #endif
     // TODO: Fixme
     return jl_pvalue_dillvmt;
 }
 
 // --- emitting pointers directly into code ---
 
-static Value *literal_static_pointer_val(void *p, Type *t)
+static Value *literal_static_pointer_val(const void *p, Type *t)
 {
     // this function will emit a static pointer into the generated code
     // the generated code will only be valid during the current session,
@@ -420,7 +493,7 @@ static void jl_dump_shadow(char *fname, int jit_model, const char *sysimg_data, 
     std::error_code err;
     StringRef fname_ref = StringRef(fname);
     raw_fd_ostream OS(fname_ref, err, sys::fs::F_None);
-#elif  LLVM35
+#elif defined(LLVM35)
     std::string err;
     raw_fd_ostream OS(fname, err, sys::fs::F_None);
 #else
@@ -482,9 +555,9 @@ static void jl_dump_shadow(char *fname, int jit_model, const char *sysimg_data, 
 #endif
 #ifdef LLVM37
     // No DataLayout pass needed anymore.
-#elif LLVM36
+#elif defined(LLVM36)
         PM.add(new DataLayoutPass());
-#elif LLVM35
+#elif defined(LLVM35)
         PM.add(new DataLayoutPass(*jl_ExecutionEngine->getDataLayout()));
 #else
         PM.add(new DataLayout(*jl_ExecutionEngine->getDataLayout()));
@@ -566,22 +639,22 @@ static Value *julia_gv(const char *prefix, jl_sym_t *name, jl_module_t *mod, voi
 {
     // emit a GlobalVariable for a jl_value_t, using the prefix, name, and module to
     // to create a readable name of the form prefixModA.ModB.name
-    size_t len = strlen(name->name)+strlen(prefix)+1;
+    size_t len = strlen(jl_symbol_name(name))+strlen(prefix)+1;
     jl_module_t *parent = mod, *prev = NULL;
     while (parent != NULL && parent != prev) {
-        len += strlen(parent->name->name)+1;
+        len += strlen(jl_symbol_name(parent->name))+1;
         prev = parent;
         parent = parent->parent;
     }
     char *fullname = (char*)alloca(len);
     strcpy(fullname, prefix);
-    len -= strlen(name->name)+1;
-    strcpy(fullname+len,name->name);
+    len -= strlen(jl_symbol_name(name))+1;
+    strcpy(fullname + len, jl_symbol_name(name));
     parent = mod;
     prev = NULL;
     while (parent != NULL && parent != prev) {
-        size_t part = strlen(parent->name->name)+1;
-        strcpy(fullname+len-part,parent->name->name);
+        size_t part = strlen(jl_symbol_name(parent->name))+1;
+        strcpy(fullname+len-part,jl_symbol_name(parent->name));
         fullname[len-1] = '.';
         len -= part;
         prev = parent;
@@ -732,7 +805,7 @@ static Type *julia_struct_to_llvm(jl_value_t *jt, bool *isboxed)
                 return T_void;
             StructType *structdecl;
             if (!isTuple) {
-                structdecl = StructType::create(jl_LLVMContext, jst->name->name->name);
+                structdecl = StructType::create(jl_LLVMContext, jl_symbol_name(jst->name->name));
                 jst->struct_decl = structdecl;
             }
             std::vector<Type*> latypes(0);
@@ -843,8 +916,9 @@ static Value *emit_nthptr_recast(Value *v, Value *idx, MDNode *tbaa, Type *ptype
 
 static Value *emit_typeptr_addr(Value *p)
 {
-   ssize_t offset = (offsetof(jl_taggedvalue_t,value) - offsetof(jl_taggedvalue_t,type)) / sizeof(jl_value_t*);
-   return emit_nthptr_addr(p, -offset);
+    ssize_t offset = (sizeof(jl_taggedvalue_t) -
+                      offsetof(jl_taggedvalue_t, type)) / sizeof(jl_value_t*);
+    return emit_nthptr_addr(p, -offset);
 }
 
 static Value *emit_typeof(Value *tt)
@@ -1491,7 +1565,7 @@ static Value *emit_arraylen_prim(Value *t, jl_value_t *ty)
         std::vector<Type *> fargt(0);
         fargt.push_back(T_pjlvalue);
         FunctionType *ft = FunctionType::get(T_size, fargt, false);
-        Value *alen = jl_Module->getOrInsertFunction("jl_array_len_", ft);
+        Value *alen = jl_Module->getOrInsertFunction("jl_array_len_", ft); // TODO: move to codegen init block
         return builder.CreateCall(prepare_call(alen), t);
     }
 #endif

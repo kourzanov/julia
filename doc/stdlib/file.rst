@@ -28,6 +28,25 @@
 
    Returns the files and directories in the directory ``dir`` (or the current working directory if not given).
 
+.. function:: walkdir(dir; topdown=true, follow_symlinks=false, onerror=throw)
+
+   .. Docstring generated from Julia source
+
+   The walkdir method return an iterator that walks the directory tree of a directory. The iterator returns a tuple containing ``(rootpath, dirs, files)``\ . The directory tree can be traversed top-down or bottom-up. If walkdir encounters a SystemError it will raise the error. A custom error handling function can be provided through ``onerror`` keyword argument, the function is called with a SystemError as argument.
+
+   .. code-block:: julia
+
+       for (root, dirs, files) in walkdir(".")
+           println("Directories in $root")
+           for dir in dirs
+               println(joinpath(root, dir)) # path to directories
+           end
+           println("Files in $root")
+           for file in files
+               println(joinpath(root, file)) # path to files
+           end
+       end
+
 .. function:: mkdir(path, [mode])
 
    .. Docstring generated from Julia source
@@ -225,12 +244,6 @@
 
    Returns ``true`` if ``path`` is a directory, ``false`` otherwise.
 
-.. function:: isexecutable(path) -> Bool
-
-   .. Docstring generated from Julia source
-
-   Returns ``true`` if the current user has permission to execute ``path``\ , ``false`` otherwise.
-
 .. function:: isfifo(path) -> Bool
 
    .. Docstring generated from Julia source
@@ -261,12 +274,6 @@
 
    Returns ``true`` if ``path`` is a valid filesystem path, ``false`` otherwise.
 
-.. function:: isreadable(path) -> Bool
-
-   .. Docstring generated from Julia source
-
-   Returns ``true`` if the current user has permission to read ``path``\ , ``false`` otherwise.
-
 .. function:: issetgid(path) -> Bool
 
    .. Docstring generated from Julia source
@@ -290,12 +297,6 @@
    .. Docstring generated from Julia source
 
    Returns ``true`` if ``path`` has the sticky bit set, ``false`` otherwise.
-
-.. function:: iswritable(path) -> Bool
-
-   .. Docstring generated from Julia source
-
-   Returns ``true`` if the current user has permission to write to ``path``\ , ``false`` otherwise.
 
 .. function:: homedir() -> AbstractString
 

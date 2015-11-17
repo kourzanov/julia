@@ -143,7 +143,7 @@ function parseipv4(str)
     i = 1
     ret = 0
     for f in fields
-        if length(f) == 0
+        if isempty(f)
             throw(ArgumentError("empty field in IPv4 address"))
         end
         if f[1] == '0'
@@ -233,18 +233,12 @@ macro ip_str(str)
     return parseip(str)
 end
 
-type InetAddr
-    host::IPAddr
+immutable InetAddr{T<:IPAddr}
+    host::T
     port::UInt16
-
-    function InetAddr(host, port::Integer)
-        if !(0 <= port <= typemax(UInt16))
-            throw(ArgumentError("port out of range, must be 0 ≤ port ≤ 65535, got $port"))
-        end
-        new(host,UInt16(port))
-    end
 end
 
+InetAddr(ip::IPAddr, port) = InetAddr{typeof(ip)}(ip, port)
 
 ## SOCKETS ##
 
@@ -402,6 +396,13 @@ const UV_UDP_IPV6ONLY = 1
 # remainder was discarded by the OS.
 const UV_UDP_PARTIAL = 2
 
+# Indicates if SO_REUSEADDR will be set when binding the handle in uv_udp_bind. This sets
+# the SO_REUSEPORT socket flag on the BSDs and OS X. On other Unix platforms, it sets the
+# SO_REUSEADDR flag. What that means is that multiple threads or processes can bind to the
+# same address without error (provided they all set the flag) but only the last one to bind
+# will receive any traffic, in effect "stealing" the port from the previous listener.
+const UV_UDP_REUSEADDR = 4
+
 ##
 
 _bind(sock::TCPServer, host::IPv4, port::UInt16, flags::UInt32 = UInt32(0)) = ccall(:jl_tcp_bind, Int32, (Ptr{Void}, UInt16, UInt32, Cuint),
@@ -416,14 +417,16 @@ _bind(sock::UDPSocket, host::IPv4, port::UInt16, flags::UInt32 = UInt32(0)) = cc
 _bind(sock::UDPSocket, host::IPv6, port::UInt16, flags::UInt32 = UInt32(0)) = ccall(:jl_udp_bind6, Int32, (Ptr{Void}, UInt16, Ptr{UInt128}, UInt32),
             sock.handle, hton(port), Ref(hton(host.host)), flags)
 
-function bind(sock::Union{TCPServer, UDPSocket}, host::IPAddr, port::Integer; ipv6only = false)
+function bind(sock::Union{TCPServer, UDPSocket}, host::IPAddr, port::Integer; ipv6only = false, reuseaddr = false, kws...)
     if sock.status != StatusInit
         error("$(typeof(sock)) is not initialized")
     end
-    flags = if isa(host,IPv6) && ipv6only
-        isa(sock, UDPSocket) ? UV_UDP_IPV6ONLY : UV_TCP_IPV6ONLY
-    else
-        0
+    flags = 0
+    if isa(host,IPv6) && ipv6only
+        flags |= isa(sock, UDPSocket) ? UV_UDP_IPV6ONLY : UV_TCP_IPV6ONLY
+    end
+    if isa(sock, UDPSocket) && reuseaddr
+        flags |= UV_UDP_REUSEADDR
     end
     err = _bind(sock,host,UInt16(port),UInt32(flags))
     if err < 0
@@ -435,6 +438,7 @@ function bind(sock::Union{TCPServer, UDPSocket}, host::IPAddr, port::Integer; ip
         end
     end
     sock.status = StatusOpen
+    isa(sock, UDPSocket) && setopt(sock; kws...)
     true
 end
 
@@ -716,7 +720,7 @@ function listenany(default_port)
             return (addr.port,sock)
         end
         close(sock)
-        addr.port += 1
+        addr = InetAddr(addr.host, addr.port + 1)
         if addr.port==default_port
             error("no ports available")
         end

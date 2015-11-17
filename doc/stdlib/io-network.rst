@@ -227,6 +227,18 @@ General I/O
 
    Determine whether a stream is read-only.
 
+.. function:: iswritable(io) -> Bool
+
+   .. Docstring generated from Julia source
+
+   Returns ``true`` if the specified IO object is writable (if that can be determined).
+
+.. function:: isreadable(io) -> Bool
+
+   .. Docstring generated from Julia source
+
+   Returns ``true`` if the specified IO object is readable (if that can be determined).
+
 .. function:: isopen(object) -> Bool
 
    .. Docstring generated from Julia source
@@ -237,7 +249,7 @@ General I/O
 
    .. Docstring generated from Julia source
 
-   Write an arbitrary value to a stream in an opaque format, such that it can be read back by ``deserialize``\ . The read-back value will be as identical as possible to the original. In general, this process will not work if the reading and writing are done by different versions of Julia, or an instance of Julia with a different system image.
+   Write an arbitrary value to a stream in an opaque format, such that it can be read back by ``deserialize``\ . The read-back value will be as identical as possible to the original. In general, this process will not work if the reading and writing are done by different versions of Julia, or an instance of Julia with a different system image. ``Ptr`` values are serialized as all-zero bit patterns (``NULL``\ ).
 
 .. function:: deserialize(stream)
 

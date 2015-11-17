@@ -25,12 +25,12 @@ function choosetests(choices = [])
         "bigint", "sorting", "statistics", "spawn", "backtrace",
         "priorityqueue", "file", "mmap", "version", "resolve",
         "pollfd", "mpfr", "broadcast", "complex", "socket",
-        "floatapprox", "readdlm", "reflection", "regex", "float16",
+        "floatapprox", "datafmt", "reflection", "regex", "float16",
         "combinatorics", "sysinfo", "rounding", "ranges", "mod2pi",
         "euler", "show", "lineedit", "replcompletions", "repl",
         "replutil", "sets", "test", "goto", "llvmcall", "grisu",
         "nullable", "meta", "profile", "libgit2", "docs", "markdown",
-        "base64", "serialize", "functors", "misc",
+        "base64", "serialize", "functors", "misc", "threads",
         "enums", "cmdlineargs", "i18n", "workspace", "libdl", "int",
         "intset", "floatfuncs", "compile", "parallel"
     ]
