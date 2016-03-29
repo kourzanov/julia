@@ -5,6 +5,7 @@
 export
     cd,
     chmod,
+    chown,
     cp,
     cptree,
     mkdir,
@@ -40,7 +41,7 @@ end
 cd() = cd(homedir())
 
 @unix_only function cd(f::Function, dir::AbstractString)
-    fd = ccall(:open,Int32,(Ptr{UInt8},Int32),".",0)
+    fd = ccall(:open,Int32,(Cstring,Int32),:.,0)
     systemerror(:open, fd == -1)
     try
         cd(dir)
@@ -88,19 +89,26 @@ end
 mkdir(path::AbstractString, mode::Signed) = throw(ArgumentError("mode must be an unsigned integer; try 0o$mode"))
 mkpath(path::AbstractString, mode::Signed) = throw(ArgumentError("mode must be an unsigned integer; try 0o$mode"))
 
-function rm(path::AbstractString; recursive::Bool=false)
+function rm(path::AbstractString; force::Bool=false, recursive::Bool=false)
     if islink(path) || !isdir(path)
-        @windows_only if (filemode(path) & 0o222) == 0; chmod(path, 0o777); end # is writable on windows actually means "is deletable"
-        unlink(path)
+        try
+            @windows_only if (filemode(path) & 0o222) == 0; chmod(path, 0o777); end # is writable on windows actually means "is deletable"
+            unlink(path)
+        catch err
+            if force && isa(err, UVError) && err.code==Base.UV_ENOENT
+                return
+            end
+            rethrow()
+        end
     else
         if recursive
             for p in readdir(path)
-                rm(joinpath(path, p), recursive=true)
+                rm(joinpath(path, p), force=force, recursive=true)
             end
         end
         @unix_only ret = ccall(:rmdir, Int32, (Cstring,), path)
         @windows_only ret = ccall(:_wrmdir, Int32, (Cwstring,), path)
-        systemerror(:rmdir, ret != 0)
+        systemerror(:rmdir, ret != 0, extrainfo=path)
     end
 end
 
@@ -177,7 +185,7 @@ end
 # Obtain a temporary filename.
 function tempname()
     d = get(ENV, "TMPDIR", C_NULL) # tempnam ignores TMPDIR on darwin
-    p = ccall(:tempnam, Ptr{UInt8}, (Ptr{UInt8},Ptr{UInt8}), d, "julia")
+    p = ccall(:tempnam, Cstring, (Cstring,Cstring), d, :julia)
     systemerror(:tempnam, p == C_NULL)
     s = bytestring(p)
     Libc.free(p)
@@ -190,7 +198,7 @@ tempdir() = dirname(tempname())
 # Create and return the name of a temporary file along with an IOStream
 function mktemp(parent=tempdir())
     b = joinpath(parent, "tmpXXXXXX")
-    p = ccall(:mkstemp, Int32, (Ptr{UInt8},), b) # modifies b
+    p = ccall(:mkstemp, Int32, (Cstring,), b) # modifies b
     systemerror(:mktemp, p == -1)
     return (b, fdio(p, true))
 end
@@ -198,7 +206,7 @@ end
 # Create and return the name of a temporary directory
 function mktempdir(parent=tempdir())
     b = joinpath(parent, "tmpXXXXXX")
-    p = ccall(:mkdtemp, Ptr{UInt8}, (Ptr{UInt8},), b)
+    p = ccall(:mkdtemp, Cstring, (Cstring,), b)
     systemerror(:mktempdir, p == C_NULL)
     return bytestring(p)
 end
@@ -211,19 +219,21 @@ function tempdir()
     if lentemppath >= length(temppath) || lentemppath == 0
         error("GetTempPath failed: $(Libc.FormatMessage())")
     end
-    resize!(temppath,lentemppath+1)
-    return utf8(UTF16String(temppath))
+    resize!(temppath,lentemppath)
+    return UTF8String(utf16to8(temppath))
 end
 tempname(uunique::UInt32=UInt32(0)) = tempname(tempdir(), uunique)
+const temp_prefix = cwstring("jl_")
 function tempname(temppath::AbstractString,uunique::UInt32)
+    tempp = cwstring(temppath)
     tname = Array(UInt16,32767)
-    uunique = ccall(:GetTempFileNameW,stdcall,UInt32,(Cwstring,Ptr{UInt16},UInt32,Ptr{UInt16}), temppath,utf16("jul"),uunique,tname)
+    uunique = ccall(:GetTempFileNameW,stdcall,UInt32,(Ptr{UInt16},Ptr{UInt16},UInt32,Ptr{UInt16}), tempp,temp_prefix,uunique,tname)
     lentname = findfirst(tname,0)-1
     if uunique == 0 || lentname <= 0
         error("GetTempFileName failed: $(Libc.FormatMessage())")
     end
-    resize!(tname,lentname+1)
-    return utf8(UTF16String(tname))
+    resize!(tname,lentname)
+    return UTF8String(utf16to8(tname))
 end
 function mktemp(parent=tempdir())
     filename = tempname(parent, UInt32(0))
@@ -236,7 +246,7 @@ function mktempdir(parent=tempdir())
             seed += 1
         end
         filename = tempname(parent, seed)
-        ret = ccall(:_wmkdir, Int32, (Ptr{UInt16},), utf16(filename))
+        ret = ccall(:_wmkdir, Int32, (Ptr{UInt16},), cwstring(filename))
         if ret == 0
             return filename
         end
@@ -281,7 +291,7 @@ function readdir(path::AbstractString)
     offset = 0
 
     for i = 1:file_count
-        entry = bytestring(ccall(:jl_uv_fs_t_ptr_offset, Ptr{UInt8},
+        entry = bytestring(ccall(:jl_uv_fs_t_ptr_offset, Cstring,
                                  (Ptr{UInt8}, Int32), uv_readdir_req, offset))
         push!(entries, entry)
         offset += sizeof(entry) + 1   # offset to the next entry
@@ -404,7 +414,7 @@ function symlink(p::AbstractString, np::AbstractString)
     flags = 0
     @windows_only if isdir(p); flags |= UV_FS_SYMLINK_JUNCTION; p = abspath(p); end
     err = ccall(:jl_fs_symlink, Int32, (Cstring, Cstring, Cint), p, np, flags)
-    @windows_only if err < 0
+    @windows_only if err < 0 && !isdir(p)
         Base.warn_once("Note: on Windows, creating file symlinks requires Administrator privileges.")
     end
     uv_error("symlink",err)
@@ -429,8 +439,21 @@ function readlink(path::AbstractString)
     end
 end
 
-function chmod(p::AbstractString, mode::Integer)
-    err = ccall(:jl_fs_chmod, Int32, (Cstring, Cint), p, mode)
-    uv_error("chmod",err)
+function chmod(path::AbstractString, mode::Integer; recursive::Bool=false)
+    err = ccall(:jl_fs_chmod, Int32, (Cstring, Cint), path, mode)
+    uv_error("chmod", err)
+    if recursive && isdir(path)
+        for p in readdir(path)
+            if !islink(joinpath(path, p))
+                chmod(joinpath(path, p), mode, recursive=true)
+            end
+        end
+    end
+    nothing
+end
+
+function chown(path::AbstractString, owner::Integer, group::Integer=-1)
+    err = ccall(:jl_fs_chown, Int32, (Cstring, Cint, Cint), path, owner, group)
+    uv_error("chown",err)
     nothing
 end

@@ -9,17 +9,12 @@ Simple unit testing functionality:
 All tests belong to a *test set*. There is a default, task-level
 test set that throws on the first failure. Users can choose to wrap
 their tests in (possibly nested) test sets that will store results
-and summarize them at the end of the test set. See:
-
-* `@testset`
-* `@testloop`
-
-for more information.
+and summarize them at the end of the test set with `@testset`.
 """
 module Test
 
 export @test, @test_throws
-export @testset, @testloop
+export @testset
 # Legacy approximate testing functions, yet to be included
 export @test_approx_eq, @test_approx_eq_eps, @inferred
 
@@ -48,21 +43,21 @@ end
 function Base.show(io::IO, t::Pass)
     print_with_color(:green, io, "Test Passed\n")
     print(io, "  Expression: ", t.orig_expr)
-    if !isa(t.expr, Expr)
+    if t.test_type == :test_throws
+        # The correct type of exception was thrown
+        print(io, "\n      Thrown: ", typeof(t.value))
+    elseif !isa(t.expr, Expr)
         # Maybe just a constant, like true
         print(io, "\n   Evaluated: ", t.expr)
     elseif t.test_type == :test && t.expr.head == :comparison
         # The test was an expression, so display the term-by-term
         # evaluated version as well
         print(io, "\n   Evaluated: ", t.expr)
-    elseif t.test_type == :test_throws
-        # The correct type of exception was thrown
-        print(io, "\n      Thrown: ", typeof(t.value))
     end
 end
 
 """
-    Pass
+    Fail
 
 The test condition was false, i.e. the expression evaluated to false or
 the correct exception was not thrown.
@@ -76,10 +71,14 @@ end
 function Base.show(io::IO, t::Fail)
     print_with_color(:red, io, "Test Failed\n")
     print(io, "  Expression: ", t.orig_expr)
-    if t.test_type == :test_throws
-        # Either no exception, or wrong exception
+    if t.test_type == :test_throws_wrong
+        # An exception was thrown, but it was of the wrong type
         print(io, "\n    Expected: ", t.expr)
         print(io, "\n      Thrown: ", typeof(t.value))
+    elseif t.test_type == :test_throws_nothing
+        # An exception was expected, but no exception was thrown
+        print(io, "\n    Expected: ", t.expr)
+        print(io, "\n  No exception thrown")
     elseif !isa(t.expr, Expr)
         # Maybe just a constant, like false
         print(io, "\n   Evaluated: ", t.expr)
@@ -128,6 +127,17 @@ end
 
 #-----------------------------------------------------------------------
 
+abstract ExecutionResult
+
+immutable Returned <: ExecutionResult
+    value
+end
+
+immutable Threw <: ExecutionResult
+    exception
+    backtrace
+end
+
 # @test - check if the expression evaluates to true
 # In the special case of a comparison, e.g. x == 5, generate code to
 # evaluate each term in the comparison individually so the results
@@ -140,8 +150,14 @@ Returns a `Pass` `Result` if it does, a `Fail` `Result` if it is
 `false`, and an `Error` `Result` if it could not be evaluated.
 """
 macro test(ex)
+    orig_ex = Expr(:quote,ex)
+    # Normalize comparison operator calls to :comparison expressions
+    if isa(ex, Expr) && ex.head == :call && length(ex.args)==3 &&
+        Base.operator_precedence(ex.args[1]) == Base.operator_precedence(:(==))
+        ex = Expr(:comparison, ex.args[2], ex.args[1], ex.args[3])
+    end
     # If the test is a comparison
-    if typeof(ex) == Expr && ex.head == :comparison
+    if isa(ex, Expr) && ex.head == :comparison
         # Generate a temporary for every term in the expression
         n = length(ex.args)
         terms = [gensym() for i in 1:n]
@@ -149,53 +165,59 @@ macro test(ex)
         # comparison indivudally
         comp_block = Expr(:block)
         comp_block.args = [:(
-                            $(terms[i]) = $(esc(ex.args[i]))
-                            ) for i in 1:n]
+                            $(t) = $(esc(x))
+                            ) for (t,x) in zip(terms, ex.args)]
         # The block should then evaluate whether the comparison
         # evaluates to true by splicing in the new terms into the
         # original comparsion. The block returns
         # - an expression with the values of terms spliced in
         # - the result of the comparison itself
-        push!(comp_block.args, Expr(:return,
-            :(  Expr(:comparison, $(terms...)),  # Terms spliced in
-              $(Expr(:comparison,   terms...))   # Comparison itself
-            )))
-        # Return code that calls do_test with an anonymous function
-        # that calls the comparison block
-        :(do_test(()->($comp_block), $(Expr(:quote,ex))))
+        push!(comp_block.args,
+              :(  Expr(:comparison, $(terms...)),  # Terms spliced in
+                $(Expr(:comparison,   terms...))   # Comparison itself
+                  ))
+        testpair = comp_block
     else
-        # Something else, perhaps just a single value
-        # Return code that calls do_test with an anonymous function
-        # that returns the expression and its value
-        :(do_test(()->($(Expr(:quote,ex)), $(esc(ex))), $(Expr(:quote,ex))))
+        testpair = :(($orig_ex, $(esc(ex))))
     end
+    result = quote
+        try
+            Returned($testpair)
+        catch _e
+            Threw(_e, catch_backtrace())
+        end
+    end
+    Base.remove_linenums!(result)
+    # code to call do_test with execution result and original expr
+    :(do_test($result, $orig_ex))
 end
 
 # An internal function, called by the code generated by the @test
 # macro to actually perform the evaluation and manage the result.
-function do_test(predicate, orig_expr)
+function do_test(result::ExecutionResult, orig_expr)
     # get_testset() returns the most recently added tests set
     # We then call record() with this test set and the test result
-    record(get_testset(),
-    try
+    if isa(result, Returned)
         # expr, in the case of a comparison, will contain the
         # comparison with evaluated values of each term spliced in.
         # For anything else, just contains the test expression.
         # value is the evaluated value of the whole test expression.
         # Ideally it is true, but it may be false or non-Boolean.
-        expr, value = predicate()
-        if isa(value, Bool)
+        expr, value = result.value
+        testres = if isa(value, Bool)
             value ? Pass(:test, orig_expr, expr, value) :
                     Fail(:test, orig_expr, expr, value)
         else
             # If the result is non-Boolean, this counts as an Error
             Error(:test_nonbool, orig_expr, value, nothing)
         end
-    catch err
+    else
         # The predicate couldn't be evaluated without throwing an
         # exception, so that is an Error and not a Fail
-        Error(:test_error, orig_expr, err, catch_backtrace())
-    end)
+        @assert isa(result, Threw)
+        testres = Error(:test_error, orig_expr, result.exception, result.backtrace)
+    end
+    record(get_testset(), testres)
 end
 
 #-----------------------------------------------------------------------
@@ -206,27 +228,32 @@ end
 Tests that the expression `ex` throws an exception of type `extype`.
 """
 macro test_throws(extype, ex)
-    :(do_test_throws( ()->($(esc(ex))), $(Expr(:quote,ex)),
-                      backtrace(), $(esc(extype)) ))
+    orig_ex = Expr(:quote,ex)
+    result = quote
+        try
+            Returned($(esc(ex)))
+        catch _e
+            Threw(_e, nothing)
+        end
+    end
+    Base.remove_linenums!(result)
+    :(do_test_throws($result, $orig_ex, $(esc(extype))))
 end
 
 # An internal function, called by the code generated by @test_throws
 # to evaluate and catch the thrown exception - if it exists
-function do_test_throws(predicate, orig_expr, bt, extype)
-    record(get_testset(),
-    try
-        predicate()
-        # If we hit this line, no exception was thrown. We treat
-        # this as equivalent to the wrong exception being thrown.
-        Fail(:test_throws, orig_expr, extype, nothing)
-    catch err
+function do_test_throws(result::ExecutionResult, orig_expr, extype)
+    if isa(result, Threw)
         # Check the right type of exception was thrown
-        if isa(err, extype)
-            Pass(:test_throws, orig_expr, extype, err)
+        if isa(result.exception, extype)
+            testres = Pass(:test_throws, orig_expr, extype, result.exception)
         else
-            Fail(:test_throws, orig_expr, extype, err)
+            testres = Fail(:test_throws_wrong, orig_expr, extype, result.exception)
         end
-    end)
+    else
+        testres = Fail(:test_throws_nothing, orig_expr, extype, nothing)
+    end
+    record(get_testset(), testres)
 end
 
 #-----------------------------------------------------------------------
@@ -293,7 +320,6 @@ record(ts::FallbackTestSet, t::Pass) = t
 function record(ts::FallbackTestSet, t::Union{Fail,Error})
     println(t)
     error("There was an error during testing")
-    t
 end
 # We don't need to do anything as we don't record anything
 finish(ts::FallbackTestSet) = ts
@@ -321,7 +347,9 @@ record(ts::DefaultTestSet, t::Pass) = (push!(ts.results, t); t)
 function record(ts::DefaultTestSet, t::Union{Fail,Error})
     print_with_color(:white, ts.description, ": ")
     print(t)
-    Base.show_backtrace(STDOUT, backtrace())
+    # don't print the backtrace for Errors because it gets printed in the show
+    # method
+    isa(t, Error) || Base.show_backtrace(STDOUT, backtrace())
     println()
     push!(ts.results, t)
     t
@@ -490,25 +518,51 @@ end
 
 """
     @testset [CustomTestSet] [option=val  ...] ["description"] begin ... end
+    @testset [CustomTestSet] [option=val  ...] ["description \$v"] for v in (...) ... end
+    @testset [CustomTestSet] [option=val  ...] ["description \$v, \$w"] for v in (...), w in (...) ... end
 
-Starts a new test set. If no custom testset type is given it defaults to creating
-a `DefaultTestSet`. `DefaultTestSet` records all the results and, and if there
-are any `Fail`s or `Error`s, throws an exception at the end of the
-top-level (non-nested) test set, along with a summary of the test results.
+Starts a new test set, or multiple test sets if a `for` loop is provided.
+
+If no custom testset type is given it defaults to creating a `DefaultTestSet`.
+`DefaultTestSet` records all the results and, and if there are any `Fail`s or
+`Error`s, throws an exception at the end of the top-level (non-nested) test set,
+along with a summary of the test results.
 
 Any custom testset type (subtype of `AbstractTestSet`) can be given and it will
-also be used for any nested `@testset` or `@testloop` invocations. The given
-options are only applied to the test set where they are given. The default test
-set type does not take any options.
+also be used for any nested `@testset` invocations. The given options are only
+applied to the test set where they are given. The default test set type does
+not take any options.
+
+The description string accepts interpolation from the loop indices.
+If no description is provided, one is constructed based on the variables.
 
 By default the `@testset` macro will return the testset object itself, though
-this behavior can be customized in other testset types.
+this behavior can be customized in other testset types. If a `for` loop is used
+then the macro collects and returns a list of the return values of the `finish`
+method, which by default will return a list of the testset objects used in
+each iteration.
 """
 macro testset(args...)
     isempty(args) && error("No arguments to @testset")
 
     tests = args[end]
 
+    # Determine if a single block or for-loop style
+    if !isa(tests,Expr) || (tests.head != :for && tests.head != :block)
+        error("Expected begin/end block or for loop as argument to @testset")
+    end
+
+    if tests.head == :for
+        return testset_forloop(args, tests)
+    else
+        return testset_beginend(args, tests)
+    end
+end
+
+"""
+Generate the code for a `@testset` with a `begin`/`end` argument
+"""
+function testset_beginend(args, tests)
     desc, testsettype, options = parse_testset_args(args[1:end-1])
     if desc == nothing
         desc = "test set"
@@ -540,27 +594,9 @@ end
 
 
 """
-    @testloop [CustomTestSet] [option=val  ...] ["description \$v"] for v in (...) ... end
-    @testloop [CustomTestSet] [option=val  ...] ["description \$v, \$w"] for v in (...), w in (...) ... end
-
-Starts a new test set for each iteration of the loop. The description string
-accepts interpolation from the loop indices. If no description is provided, one
-is constructed based on the variables.
-
-Any custom testset type (subtype of `AbstractTestSet`) can be given and it will
-also be used for any nested `@testset` or `@testloop` invocations. The given
-options are only applied to the test sets where they are given. The default test
-set type does not take any options.
-
-The `@testloop` macro collects and returns a list of the return values of the
-`finish` method, which by default will return a list of the testset objects used
-in each iteration.
+Generate the code for a `@testset` with a `for` loop argument
 """
-macro testloop(args...)
-    isempty(args) && error("no arguments to @testloop")
-
-    testloop = args[end]
-    isa(testloop,Expr) && testloop.head == :for || error("Unexpected argument to @testloop")
+function testset_forloop(args, testloop)
     # pull out the loop variables. We might need them for generating the
     # description and we'll definitely need them for generating the
     # comprehension expression at the end
@@ -572,7 +608,7 @@ macro testloop(args...)
             push!(loopvars, loopvar)
         end
     else
-        error("Unexpected argument to @testloop")
+        error("Unexpected argument to @testset")
     end
 
     desc, testsettype, options = parse_testset_args(args[1:end-1])
@@ -612,16 +648,15 @@ macro testloop(args...)
 end
 
 """
-Parse the arguments to the `@testset` or `@testloop` macro to pull out
-the description, Testset Type, and options. Generally this should be called
-with all the macro arguments except the last one, which is the test expression
-itself.
+Parse the arguments to the `@testset` macro to pull out the description,
+Testset Type, and options. Generally this should be called with all the macro
+arguments except the last one, which is the test expression itself.
 """
 function parse_testset_args(args)
     desc = nothing
     testsettype = nothing
     options = :(Dict{Symbol, Any}())
-    for arg in args[1:end]
+    for arg in args
         # a standalone symbol is assumed to be the test set we should use
         if isa(arg, Symbol)
             testsettype = esc(arg)
@@ -705,8 +740,7 @@ function test_approx_eq(va, vb, Eps, astr, bstr)
               "\n  ", bstr, " (length $(length(vb))) = ", vb)
     end
     diff = real(zero(eltype(va)))
-    for i = 1:length(va)
-        xa = va[i]; xb = vb[i]
+    for (xa, xb) = zip(va, vb)
         if isfinite(xa) && isfinite(xb)
             diff = max(diff, abs(xa-xb))
         elseif !isequal(xa,xb)
@@ -751,7 +785,7 @@ end
 
 macro inferred(ex)
     ex.head == :call || error("@inferred requires a call expression")
-    quote
+    Base.remove_linenums!(quote
         vals = ($([esc(ex.args[i]) for i = 2:length(ex.args)]...),)
         inftypes = Base.return_types($(esc(ex.args[1])), Base.typesof(vals...))
         @assert length(inftypes) == 1
@@ -759,7 +793,7 @@ macro inferred(ex)
         rettype = isa(result, Type) ? Type{result} : typeof(result)
         rettype == inftypes[1] || error("return type $rettype does not match inferred return type $(inftypes[1])")
         result
-    end
+    end)
 end
 
 # Test approximate equality of vectors or columns of matrices modulo floating

@@ -1,7 +1,7 @@
 # This file is a part of Julia. License is MIT: http://julialang.org/license
 
 using Base.Markdown
-import Base.Markdown: MD, Paragraph, Header, Italic, Bold, LineBreak, plain, term, html, Table, Code, LaTeX
+import Base.Markdown: MD, Paragraph, Header, Italic, Bold, LineBreak, plain, term, html, rst, Table, Code, LaTeX, Footnote
 import Base: writemime
 
 # Basics
@@ -38,8 +38,26 @@ h2
 foo
 ```
 """ == MD(Code("julia", "foo"))
-@test md"``code```more code``" == MD(Any[Paragraph(Any[Code("","code```more code")])])
-@test md"``code``````more code``" == MD(Any[Paragraph(Any[Code("","code``````more code")])])
+
+@test md"foo ``bar`` baz" == MD(Paragraph(["foo ", LaTeX("bar"), " baz"]))
+
+@test md"""
+```math
+...
+```
+""" == MD(LaTeX("..."))
+
+code_in_code = md"""
+````
+```
+````
+"""
+@test code_in_code == MD(Code("```"))
+@test plain(code_in_code) == "````\n```\n````\n"
+
+@test md"A footnote [^foo]." == MD(Paragraph(["A footnote ", Footnote("foo", nothing), "."]))
+
+@test md"[^foo]: footnote" == MD(Paragraph([Footnote("foo", Any[" footnote"])]))
 
 @test md"""
 * one
@@ -64,7 +82,7 @@ foo
 @test md"""Hello
 
 ---
-World""" |> plain == "Hello\n\n–––\n\nWorld\n"
+World""" |> plain == "Hello\n\n---\n\nWorld\n"
 @test md"[*a*](b)" |> plain == "[*a*](b)\n"
 @test md"""
 > foo
@@ -219,6 +237,34 @@ let out =
     @test sprint(io -> writemime(io, "text/rst", book)) == out
 end
 
+# rst rendering
+
+for (input, output) in (
+        md"foo *bar* baz"     => "foo *bar* baz\n",
+        md"something ***"     => "something ***\n",
+        md"# h1## "           => "h1##\n****\n\n",
+        md"## h2 ### "        => "h2\n==\n\n",
+        md"###### h6"         => "h6\n..\n\n",
+        md"####### h7"        => "####### h7\n",
+        md"   >"              => "    \n\n",
+        md"1. Hello"          => "1. Hello\n",
+        md"* World"           => "* World\n",
+        md"``x + y``"         => ":math:`x + y`\n",
+        md"# title *blah*"    => "title *blah*\n************\n\n",
+        md"## title *blah*"   => "title *blah*\n============\n\n",
+        md"[`x`](:func:`x`)"  => ":func:`x`\n",
+        md"[`x`](:obj:`x`)"   => ":obj:`x`\n",
+        md"[`x`](:ref:`x`)"   => ":ref:`x`\n",
+        md"[`x`](:exc:`x`)"   => ":exc:`x`\n",
+        md"[`x`](:class:`x`)" => ":class:`x`\n",
+        md"[`x`](:const:`x`)" => ":const:`x`\n",
+        md"[`x`](:data:`x`)"  => ":data:`x`\n",
+        md"[`x`](:???:`x`)"   => "```x`` <:???:`x`>`_\n",
+        md"[x](y)"            => "`x <y>`_\n",
+    )
+    @test rst(input) == output
+end
+
 # Interpolation / Custom types
 
 type Reference
@@ -270,23 +316,96 @@ no|table
 no error
 """ == MD([Paragraph(Any["no|table no error"])])
 
-t = """a   |   b
-:-- | --:
-1   |   2
-"""
-@test plain(Markdown.parse(t)) == t
+let t = """a   |   b
+    :-- | --:
+    1   |   2
+    """
+    @test Markdown.parse(t) == MD(Table(Any[Any["a", "b"], Any["1", "2"]], [:l, :r]))
+end
 
+let text =
+    """
+    | a   |   b |
+    |:--- | ---:|
+    | 1   |   2 |
+    """,
+    table = Markdown.parse(text)
+    @test text == Markdown.plain(table)
+end
+let text =
+    """
+    | Markdown | Table |  Test |
+    |:-------- |:-----:| -----:|
+    | foo      | `bar` | *baz* |
+    | `bar`    |  baz  | *foo* |
+    """,
+    table = Markdown.parse(text)
+    @test text == Markdown.plain(table)
+end
 
 # LaTeX extension
-latex_doc = md"""
-We have $x^2 < x$ whenever:
 
-$|x| < 1$"""
+let in_dollars =
+    """
+    We have \$x^2 < x\$ whenever:
 
-@test latex_doc == MD(Any[Paragraph(Any["We have ",
-                                        LaTeX("x^2 < x"),
-                                        " whenever:"]),
-                          LaTeX("|x| < 1")])
+    \$|x| < 1\$
 
+    etc.
+    """,
+    in_backticks =
+    """
+    We have ``x^2 < x`` whenever:
 
-@test latex(latex_doc) == "We have \$x^2 < x\$ whenever:\n\$\$|x| < 1\$\$"
+    ```math
+    |x| < 1
+    ```
+
+    etc.
+    """,
+    out_plain =
+    """
+    We have \$x^2 < x\$ whenever:
+
+    \$\$
+    |x| < 1
+    \$\$
+
+    etc.
+    """,
+    out_rst =
+    """
+    We have :math:`x^2 < x` whenever:
+
+    .. math::
+
+        |x| < 1
+
+    etc.
+    """,
+    out_latex =
+    """
+    We have \$x^2 < x\$ whenever:
+    \$\$|x| < 1\$\$
+    etc.
+    """,
+    dollars   = Markdown.parse(in_dollars),
+    backticks = Markdown.parse(in_backticks),
+    latex_doc = MD(
+        Any[Paragraph(Any["We have ", LaTeX("x^2 < x"), " whenever:"]),
+            LaTeX("|x| < 1"),
+            Paragraph(Any["etc."])
+    ])
+
+    @test out_plain == Markdown.plain(dollars)
+    @test out_plain == Markdown.plain(backticks)
+
+    @test out_rst   == Markdown.rst(dollars)
+    @test out_rst   == Markdown.rst(backticks)
+
+    @test out_latex == Markdown.latex(dollars)
+    @test out_latex == Markdown.latex(backticks)
+
+    @test latex_doc == dollars
+    @test latex_doc == backticks
+end

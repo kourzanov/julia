@@ -6,15 +6,34 @@ value(x::Period) = x.value
 # The default constructors for Periods work well in almost all cases
 # P(x) = new((convert(Int64,x))
 # The following definitions are for Period-specific safety
-for p in (:Year,:Month,:Week,:Day,:Hour,:Minute,:Second,:Millisecond)
+for period in (:Year, :Month, :Week, :Day, :Hour, :Minute, :Second, :Millisecond)
+    period_str = string(period)
+    accessor_str = lowercase(period_str)
     # Convenience method for show()
-    @eval _units(x::$p) = $(" " * lowercase(string(p))) * (abs(value(x)) == 1 ? "" : "s")
+    @eval _units(x::$period) = " " * $accessor_str * (abs(value(x)) == 1 ? "" : "s")
     # periodisless
-    @eval periodisless(x::$p,y::$p) = value(x) < value(y)
+    @eval periodisless(x::$period,y::$period) = value(x) < value(y)
     # AbstractString parsing (mainly for IO code)
-    @eval $p(x::AbstractString) = $p(Base.parse(Int64,x))
+    @eval $period(x::AbstractString) = $period(Base.parse(Int64,x))
     # Period accessors
-    @eval $p(x::TimeType) = $p($(symbol(lowercase(string(p))))(x))
+    typ_str = period in (:Hour, :Minute, :Second, :Millisecond) ? "DateTime" : "TimeType"
+    description = typ_str == "TimeType" ? "`Date` or `DateTime`" : "`$typ_str`"
+    reference = period == :Week ? " For details see [`$accessor_str(::$typ_str)`](:func:`$accessor_str`)." : ""
+    @eval begin
+        @doc """
+            $($period_str)(dt::$($typ_str)) -> $($period_str)
+
+        The $($accessor_str) part of a $($description) as a `$($period_str)`.$($reference)
+        """ ->
+        $period(dt::$(symbol(typ_str))) = $period($(symbol(accessor_str))(dt))
+
+        @doc """
+            $($period_str)(v)
+
+        Construct a `$($period_str)` object with the given `v` value. Input must be
+        losslessly convertible to an `Int64`.
+        """ $period(v)
+    end
 end
 # Now we're safe to define Period-Number conversions
 # Anything an Int64 can convert to, a Period can convert to
@@ -30,6 +49,14 @@ Base.typemin{P<:Period}(::Type{P}) = P(typemin(Int64))
 Base.typemax{P<:Period}(::Type{P}) = P(typemax(Int64))
 
 # Default values (as used by TimeTypes)
+"""
+    default(p::Period) -> Period
+
+Returns a sensible "default" value for the input Period by returning `one(p)` for Year,
+Month, and Day, and `zero(p)` for Hour, Minute, Second, and Millisecond.
+"""
+function default end
+
 default{T<:DatePeriod}(p::Union{T,Type{T}}) = one(p)
 default{T<:TimePeriod}(p::Union{T,Type{T}}) = zero(p)
 
@@ -215,7 +242,7 @@ for op in (:.+, :.-)
         ($op_){P<:GeneralPeriod}(x::GeneralPeriod,Y::StridedArray{P}) = ($op)(Y,x) |> ($op_)
         ($op_){P<:GeneralPeriod}(Y::StridedArray{P},x::GeneralPeriod) = ($op)(Y,x)
         ($op_){P<:GeneralPeriod, Q<:GeneralPeriod}(X::StridedArray{P}, Y::StridedArray{Q}) =
-            reshape(CompoundPeriod[($op_)(X[i],Y[i]) for i in eachindex(X, Y)], promote_shape(size(X),size(Y)))
+            reshape(CompoundPeriod[($op_)(x,y) for (x,y) in zip(X, Y)], promote_shape(size(X),size(Y)))
     end
 end
 

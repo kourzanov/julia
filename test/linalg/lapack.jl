@@ -16,7 +16,7 @@ let # syevr
         A = convert(Array{elty, 2}, A)
         Asym = A'A
         vals, Z = LAPACK.syevr!('V', copy(Asym))
-        @test_approx_eq Z*scale(vals, Z') Asym
+        @test_approx_eq Z * (Diagonal(vals) * Z') Asym
         @test all(vals .> 0.0)
         @test_approx_eq LAPACK.syevr!('N','V','U',copy(Asym),0.0,1.0,4,5,-1.0)[1] vals[vals .< 1.0]
         @test_approx_eq LAPACK.syevr!('N','I','U',copy(Asym),0.0,1.0,4,5,-1.0)[1] vals[4:5]
@@ -151,7 +151,12 @@ for elty in (Float32, Float64, Complex64, Complex128)
     @test_approx_eq S lS
     @test_approx_eq V' lVt
     B = rand(elty,10,10)
-    @test_throws DimensionMismatch LAPACK.ggsvd!('S','S','S',A,B)
+    # xggsvd3 replaced xggsvd in LAPACK 3.6.0
+    if LAPACK.VERSION[] < v"3.6.0"
+        @test_throws DimensionMismatch LAPACK.ggsvd!('S','S','S',A,B)
+    else
+        @test_throws DimensionMismatch LAPACK.ggsvd3!('S','S','S',A,B)
+    end
 end
 
 #geevx, ggev errors
@@ -317,6 +322,23 @@ for elty in (Float32, Float64, Complex64, Complex128)
     @test LAPACK.sytrf!('U',zeros(elty,0,0)) == (zeros(elty,0,0),zeros(BlasInt,0))
 end
 
+for elty in (Float32, Float64, Complex64, Complex128)
+    A = rand(elty,10,10)
+    A = A + A.' #symmetric!
+    B = copy(A)
+    B,ipiv = LAPACK.sytrf_rook!('U',B)
+    @test_approx_eq triu(inv(A)) triu(LAPACK.sytri_rook!('U',B,ipiv))
+    @test_throws DimensionMismatch LAPACK.sytrs_rook!('U',B,ipiv,rand(elty,11,5))
+    @test LAPACK.sytrf_rook!('U',zeros(elty,0,0)) == (zeros(elty,0,0),zeros(BlasInt,0))
+    A = rand(elty,10,10)
+    A = A + A.' #symmetric!
+    b = rand(elty,10)
+    c = A \ b
+    b,A = LAPACK.sysv_rook!('U',A,b)
+    @test_approx_eq b c
+    @test_throws DimensionMismatch LAPACK.sysv_rook!('U',A,rand(elty,11))
+end
+
 # hetrs
 for elty in (Complex64, Complex128)
     A = rand(elty,10,10)
@@ -324,6 +346,7 @@ for elty in (Complex64, Complex128)
     B = copy(A)
     B,ipiv = LAPACK.hetrf!('U',B)
     @test_throws DimensionMismatch LAPACK.hetrs!('U',B,ipiv,rand(elty,11,5))
+    @test_throws DimensionMismatch LAPACK.hetrs_rook!('U',B,ipiv,rand(elty,11,5))
 end
 
 # stev, stebz, stein, stegr
@@ -376,6 +399,13 @@ for elty in (Complex64, Complex128)
     b,A = LAPACK.hesv!('U',A,b)
     @test_approx_eq b c
     @test_throws DimensionMismatch LAPACK.hesv!('U',A,rand(elty,11))
+    A = rand(elty,10,10)
+    A = A + A' #hermitian!
+    b = rand(elty,10)
+    c = A \ b
+    b,A = LAPACK.hesv_rook!('U',A,b)
+    @test_approx_eq b c
+    @test_throws DimensionMismatch LAPACK.hesv_rook!('U',A,rand(elty,11))
 end
 
 #ptsv
@@ -528,4 +558,14 @@ for elty in (Float32, Float64, Complex{Float32}, Complex{Float64})
         @test_approx_eq FJulia.factors FLAPACK[1]
         @test_approx_eq FJulia.τ FLAPACK[2]
     end
+end
+
+# Issue 13976
+let A = [NaN 0.0 NaN; 0 0 0; NaN 0 NaN]
+    @test_throws ArgumentError expm(A)
+end
+
+# Issue 14065 (and 14220)
+let A = [NaN NaN; NaN NaN]
+    @test_throws ArgumentError eigfact(A)
 end

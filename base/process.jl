@@ -2,21 +2,79 @@
 
 abstract AbstractCmd
 
+# libuv process option flags
+const UV_PROCESS_WINDOWS_VERBATIM_ARGUMENTS = UInt8(1 << 2)
+const UV_PROCESS_DETACHED = UInt8(1 << 3)
+const UV_PROCESS_WINDOWS_HIDE = UInt8(1 << 4)
+
 immutable Cmd <: AbstractCmd
     exec::Vector{ByteString}
     ignorestatus::Bool
-    detach::Bool
+    flags::UInt32 # libuv process flags
     env::Union{Array{ByteString},Void}
     dir::UTF8String
     Cmd(exec::Vector{ByteString}) =
-        new(exec, false, false, nothing, "")
-    Cmd(cmd::Cmd, ignorestatus, detach, env, dir) =
-        new(cmd.exec, ignorestatus, detach, env,
+        new(exec, false, 0x00, nothing, "")
+    Cmd(cmd::Cmd, ignorestatus, flags, env, dir) =
+        new(cmd.exec, ignorestatus, flags, env,
             dir === cmd.dir ? dir : cstr(dir))
-    Cmd(cmd::Cmd; ignorestatus=cmd.ignorestatus, detach=cmd.detach, env=cmd.env, dir=cmd.dir) =
-        new(cmd.exec, ignorestatus, detach, env,
+    function Cmd(cmd::Cmd; ignorestatus::Bool=cmd.ignorestatus, env=cmd.env, dir::AbstractString=cmd.dir,
+                 detach::Bool = 0 != cmd.flags & UV_PROCESS_DETACHED,
+                 windows_verbatim::Bool = 0 != cmd.flags & UV_PROCESS_WINDOWS_VERBATIM_ARGUMENTS,
+                 windows_hide::Bool = 0 != cmd.flags & UV_PROCESS_WINDOWS_HIDE)
+        flags = detach*UV_PROCESS_DETACHED |
+                windows_verbatim*UV_PROCESS_WINDOWS_VERBATIM_ARGUMENTS |
+                windows_hide*UV_PROCESS_WINDOWS_HIDE
+        new(cmd.exec, ignorestatus, flags, byteenv(env),
             dir === cmd.dir ? dir : cstr(dir))
+    end
 end
+
+"""
+    Cmd(cmd::Cmd; ignorestatus, detach, windows_verbatim, windows_hide,
+                  env, dir)
+
+Construct a new `Cmd` object, representing an external program and
+arguments, from `cmd`, while changing the settings of the optional
+keyword arguments:
+
+* `ignorestatus::Bool`: If `true` (defaults to `false`), then the `Cmd`
+  will not throw an error if the return code is nonzero.
+* `detach::Bool`: If `true` (defaults to `false`), then the `Cmd` will be
+  run in a new process group, allowing it to outlive the `julia` process
+  and not have Ctrl-C passed to it.
+* `windows_verbatim::Bool`: If `true` (defaults to `false`), then on Windows
+  the `Cmd` will send a command-line string to the process with no quoting
+  or escaping of arguments, even arguments containing spaces.  (On Windows,
+  arguments are sent to a program as a single "command-line" string, and
+  programs are responsible for parsing it into arguments.  By default,
+  empty arguments and arguments with spaces or tabs are quoted with double
+  quotes `"` in the command line, and `\\` or `"` are preceded by backslashes.
+  `windows_verbatim=true` is useful for launching programs that parse their
+  command line in nonstandard ways.)  Has no effect on non-Windows systems.
+* `windows_hide::Bool`: If `true` (defaults to `false`), then on Windows no
+  new console window is displayed when the `Cmd` is executed.  This has
+  no effect if a console is already open or on non-Windows systems.
+* `env`: Set environment variables to use when running the `Cmd`.  `env`
+  is either a dictionary mapping strings to strings, an array
+  of strings of the form `"var=val"`, an array or tuple of `"var"=>val`
+  pairs, or `nothing`.  In order to modify (rather than replace)
+  the existing environment, create `env` by `copy(ENV)` and then
+  set `env["var"]=val` as desired.
+* `dir::AbstractString`: Specify a working directory for the command (instead
+  of the current directory).
+
+For any keywords that are not specified, the current settings from `cmd` are
+used.   Normally, to create a `Cmd` object in the first place, one uses
+backticks, e.g.
+
+    Cmd(`echo "Hello world"`, ignorestatus=true, detach=false)
+"""
+Cmd
+
+hash(x::Cmd, h::UInt) = hash(x.exec, hash(x.env, hash(x.ignorestatus, hash(x.dir, hash(x.flags, h)))))
+==(x::Cmd, y::Cmd) = x.exec == y.exec && x.env == y.env && x.ignorestatus == y.ignorestatus &&
+                     x.dir == y.dir && isequal(x.flags, y.flags)
 
 immutable OrCmds <: AbstractCmd
     a::AbstractCmd
@@ -91,8 +149,8 @@ const DevNull = DevNullStream()
 isreadable(::DevNullStream) = false
 iswritable(::DevNullStream) = true
 isopen(::DevNullStream) = true
-read{T<:DevNullStream}(::T, args...) = throw(EOFErorr())
-write{T<:DevNullStream}(::T, args...) = 0
+read(::DevNullStream, ::Type{UInt8}) = throw(EOFError())
+write(::DevNullStream, ::UInt8) = 1
 close(::DevNullStream) = nothing
 flush(::DevNullStream) = nothing
 copy(::DevNullStream) = DevNull
@@ -136,11 +194,21 @@ function show(io::IO, cr::CmdRedirect)
     print(io, ")")
 end
 
+"""
+    ignorestatus(command)
 
+Mark a command object so that running it will not throw an error if the result code is non-zero.
+"""
 ignorestatus(cmd::Cmd) = Cmd(cmd, ignorestatus=true)
 ignorestatus(cmd::Union{OrCmds,AndCmds}) =
     typeof(cmd)(ignorestatus(cmd.a), ignorestatus(cmd.b))
-detach(cmd::Cmd) = Cmd(cmd, detach=true)
+
+"""
+    detach(command)
+
+Mark a command object so that it will be run in a new process group, allowing it to outlive the julia process, and not have Ctrl-C interrupts passed to it.
+"""
+detach(cmd::Cmd) = Cmd(cmd; detach=true)
 
 # like bytestring(s), but throw an error if s contains NUL, since
 # libuv requires NUL-terminated strings
@@ -151,21 +219,19 @@ function cstr(s)
     return bytestring(s)
 end
 
-function setenv{S<:ByteString}(cmd::Cmd, env::Array{S}; dir="")
-    byteenv = ByteString[cstr(x) for x in env]
-    return Cmd(cmd; env = byteenv, dir = dir)
-end
-function setenv(cmd::Cmd, env::Associative; dir="")
-    byteenv = ByteString[cstr(string(k)*"="*string(v)) for (k,v) in env]
-    return Cmd(cmd; env = byteenv, dir = dir)
-end
-function setenv{T<:AbstractString}(cmd::Cmd, env::Pair{T}...; dir="")
-    byteenv = ByteString[cstr(k*"="*string(v)) for (k,v) in env]
-    return Cmd(cmd; env = byteenv, dir = dir)
-end
-function setenv(cmd::Cmd; dir="")
-    return Cmd(cmd; dir = dir)
-end
+# convert various env representations into an array of "key=val" strings
+byteenv{S<:AbstractString}(env::AbstractArray{S}) =
+    ByteString[cstr(x) for x in env]
+byteenv(env::Associative) =
+    ByteString[cstr(string(k)*"="*string(v)) for (k,v) in env]
+byteenv(env::Void) = nothing
+byteenv{T<:AbstractString}(env::Union{AbstractVector{Pair{T}}, Tuple{Vararg{Pair{T}}}}) =
+    ByteString[cstr(k*"="*string(v)) for (k,v) in env]
+
+setenv(cmd::Cmd, env; dir="") = Cmd(cmd; env=byteenv(env), dir=dir)
+setenv{T<:AbstractString}(cmd::Cmd, env::Pair{T}...; dir="") =
+    setenv(cmd, env; dir=dir)
+setenv(cmd::Cmd; dir="") = Cmd(cmd; dir=dir)
 
 (&)(left::AbstractCmd, right::AbstractCmd) = AndCmds(left, right)
 redir_out(src::AbstractCmd, dest::AbstractCmd) = OrCmds(src, dest)
@@ -237,6 +303,8 @@ type Process <: AbstractPipe
         this
     end
 end
+pipe_reader(p::Process) = p.out
+pipe_writer(p::Process) = p.in
 
 immutable ProcessChain <: AbstractPipe
     processes::Vector{Process}
@@ -245,6 +313,8 @@ immutable ProcessChain <: AbstractPipe
     err::Redirectable
     ProcessChain(stdios::StdIOSet) = new(Process[], stdios[1], stdios[2], stdios[3])
 end
+pipe_reader(p::ProcessChain) = p.out
+pipe_writer(p::ProcessChain) = p.in
 
 function _jl_spawn(cmd, argv, loop::Ptr{Void}, pp::Process,
                    in, out, err)
@@ -255,7 +325,7 @@ function _jl_spawn(cmd, argv, loop::Ptr{Void}, pp::Process,
          Ptr{Void}, Int32, Ptr{Void}, Int32, Ptr{Void}, Int32, Ptr{Ptr{UInt8}}, Ptr{UInt8}, Ptr{Void}),
         cmd, argv, loop, proc, pp, uvtype(in),
         uvhandle(in), uvtype(out), uvhandle(out), uvtype(err), uvhandle(err),
-        pp.cmd.detach, pp.cmd.env === nothing ? C_NULL : pp.cmd.env, isempty(pp.cmd.dir) ? C_NULL : pp.cmd.dir,
+        pp.cmd.flags, pp.cmd.env === nothing ? C_NULL : pp.cmd.env, isempty(pp.cmd.dir) ? C_NULL : pp.cmd.dir,
         uv_jl_return_spawn::Ptr{Void})
     if error != 0
         ccall(:jl_forceclose_uv, Void, (Ptr{Void},), proc)
@@ -457,12 +527,10 @@ spawn_opts_inherit(in::Redirectable=RawFD(0), out::Redirectable=RawFD(1), err::R
 
 spawn(cmds::AbstractCmd, args...; chain::Nullable{ProcessChain}=Nullable{ProcessChain}()) =
     spawn(cmds, spawn_opts_swallow(args...)...; chain=chain)
-spawn(cmds::AbstractCmd, args...; chain::Nullable{ProcessChain}=Nullable{ProcessChain}()) =
-    spawn(cmds, spawn_opts_swallow(args...)...; chain=chain)
 
 function eachline(cmd::AbstractCmd, stdin)
     stdout = Pipe()
-    processes = spawn(cmd, (stdin,stdout,DevNull))
+    processes = spawn(cmd, (stdin,stdout,STDERR))
     close(stdout.in)
     out = stdout.out
     # implicitly close after reading lines, since we opened
@@ -475,12 +543,12 @@ function open(cmds::AbstractCmd, mode::AbstractString="r", other::Redirectable=D
     if mode == "r"
         in = other
         out = io = Pipe()
-        processes = spawn(cmds, (in,out,DevNull))
+        processes = spawn(cmds, (in,out,STDERR))
         close(out.in)
     elseif mode == "w"
         in = io = Pipe()
         out = other
-        processes = spawn(cmds, (in,out,DevNull))
+        processes = spawn(cmds, (in,out,STDERR))
         close(in.out)
     else
         throw(ArgumentError("mode must be \"r\" or \"w\", not \"$mode\""))
@@ -509,15 +577,15 @@ function readandwrite(cmds::AbstractCmd)
     (out, in, processes)
 end
 
-function readbytes(cmd::AbstractCmd, stdin::Redirectable=DevNull)
+function read(cmd::AbstractCmd, stdin::Redirectable=DevNull)
     out, procs = open(cmd, "r", stdin)
-    bytes = readbytes(out)
+    bytes = read(out)
     !success(procs) && pipeline_error(procs)
     return bytes
 end
 
-function readall(cmd::AbstractCmd, stdin::Redirectable=DevNull)
-    return bytestring(readbytes(cmd, stdin))
+function readstring(cmd::AbstractCmd, stdin::Redirectable=DevNull)
+    return bytestring(read(cmd, stdin))
 end
 
 function writeall(cmd::AbstractCmd, stdin::AbstractString, stdout::Redirectable=DevNull)

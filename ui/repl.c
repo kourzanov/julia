@@ -34,6 +34,18 @@
 extern "C" {
 #endif
 
+#ifdef JULIA_ENABLE_THREADING
+static JL_CONST_FUNC jl_tls_states_t *jl_get_ptls_states_static(void)
+{
+#  if !defined(_COMPILER_MICROSOFT_)
+    static __thread jl_tls_states_t tls_states;
+#  else
+    static __declspec(thread) jl_tls_states_t tls_states;
+#  endif
+    return &tls_states;
+}
+#endif
+
 static int lisp_prompt = 0;
 static int codecov  = JL_LOG_NONE;
 static int malloclog= JL_LOG_NONE;
@@ -73,9 +85,9 @@ static const char opts[]  =
     " --no-history-file         Don't load history file (deprecated, use --history-file=no)\n\n"
 
     // code generation options
-    " --compile={yes|no|all}    Enable or disable compiler, or request exhaustive compilation\n"
+    " --compile={yes|no|all|min}Enable or disable JIT compiler, or request exhaustive compilation\n"
     " -C, --cpu-target <target> Limit usage of cpu features up to <target>\n"
-    " -O, --optimize            Run time-intensive code optimizations\n"
+    " -O, --optimize={0,1,2,3}  Set the optimization level (default 2 if unspecified or 3 if specified as -O)\n"
     " --inline={yes|no}         Control whether inlining is permitted (overrides functions declared as @inline)\n"
     " --check-bounds={yes|no}   Emit bounds checks always or never (ignoring declarations)\n"
     " --math-mode={ieee,fast}   Disallow or enable unsafe floating point optimizations (overrides @fastmath declaration)\n\n"
@@ -119,7 +131,7 @@ void parse_opts(int *argcp, char ***argvp)
            opt_use_compilecache,
            opt_incremental
     };
-    static char* shortopts = "+vhqFfH:e:E:P:L:J:C:ip:O";
+    static char* shortopts = "+vhqFfH:e:E:P:L:J:C:ip:O:";
     static struct option longopts[] = {
         // exposed command line options
         // NOTE: This set of required arguments need to be kept in sync
@@ -146,7 +158,7 @@ void parse_opts(int *argcp, char ***argvp)
         { "compile",         required_argument, 0, opt_compile },
         { "code-coverage",   optional_argument, 0, opt_code_coverage },
         { "track-allocation",optional_argument, 0, opt_track_allocation },
-        { "optimize",        no_argument,       0, 'O' },
+        { "optimize",        optional_argument, 0, 'O' },
         { "check-bounds",    required_argument, 0, opt_check_bounds },
         { "output-bc",       required_argument, 0, opt_output_bc },
         { "output-o",        required_argument, 0, opt_output_o },
@@ -179,6 +191,7 @@ void parse_opts(int *argcp, char ***argvp)
         int lastind = optind;
         int c = getopt_long(argc, argv, shortopts, longopts, 0);
         if (c == -1) break;
+restart_switch:
         switch (c) {
         case 0:
             break;
@@ -187,10 +200,16 @@ void parse_opts(int *argcp, char ***argvp)
             if (optopt) {
                 for (struct option *o = longopts; o->val; o++) {
                     if (optopt == o->val) {
-                        if (strchr(shortopts, o->val))
+                        if (o->has_arg == optional_argument) {
+                            c = o->val;
+                            goto restart_switch;
+                        }
+                        else if (strchr(shortopts, o->val)) {
                             jl_errorf("option `-%c/--%s` is missing an argument", o->val, o->name);
-                        else
+                        }
+                        else {
                             jl_errorf("option `--%s` is missing an argument", o->name);
+                        }
                     }
                 }
                 jl_errorf("unknown option `-%c`", optopt);
@@ -300,6 +319,8 @@ void parse_opts(int *argcp, char ***argvp)
                 jl_options.compile_enabled = JL_OPTIONS_COMPILE_OFF;
             else if (!strcmp(optarg,"all"))
                 jl_options.compile_enabled = JL_OPTIONS_COMPILE_ALL;
+            else if (!strcmp(optarg,"min"))
+                jl_options.compile_enabled = JL_OPTIONS_COMPILE_MIN;
             else
                 jl_errorf("julia: invalid argument to --compile (%s)", optarg);
             break;
@@ -311,6 +332,8 @@ void parse_opts(int *argcp, char ***argvp)
                     codecov = JL_LOG_ALL;
                 else if (!strcmp(optarg,"none"))
                     codecov = JL_LOG_NONE;
+                else
+                    jl_errorf("julia: invalid argument to --code-coverage (%s)", optarg);
                 break;
             }
             else {
@@ -325,6 +348,8 @@ void parse_opts(int *argcp, char ***argvp)
                     malloclog = JL_LOG_ALL;
                 else if (!strcmp(optarg,"none"))
                     malloclog = JL_LOG_NONE;
+                else
+                    jl_errorf("julia: invalid argument to --track-allocation (%s)", optarg);
                 break;
             }
             else {
@@ -332,7 +357,22 @@ void parse_opts(int *argcp, char ***argvp)
             }
             break;
         case 'O': // optimize
-            jl_options.opt_level = 1;
+            if (optarg != NULL) {
+                if (!strcmp(optarg,"0"))
+                    jl_options.opt_level = 0;
+                else if (!strcmp(optarg,"1"))
+                    jl_options.opt_level = 1;
+                else if (!strcmp(optarg,"2"))
+                    jl_options.opt_level = 2;
+                else if (!strcmp(optarg,"3"))
+                    jl_options.opt_level = 3;
+                else
+                    jl_errorf("julia: invalid argument to -O (%s)", optarg);
+                break;
+            }
+            else {
+                jl_options.opt_level = 3;
+            }
             break;
         case 'i': // isinteractive
             jl_options.isinteractive = 1;
@@ -477,13 +517,15 @@ static void print_profile(void)
 }
 #endif
 
-static int true_main(int argc, char *argv[])
+static NOINLINE int true_main(int argc, char *argv[])
 {
     if (jl_core_module != NULL) {
         jl_array_t *args = (jl_array_t*)jl_get_global(jl_core_module, jl_symbol("ARGS"));
         if (args == NULL) {
             args = jl_alloc_cell_1d(0);
+            JL_GC_PUSH1(&args);
             jl_set_const(jl_core_module, jl_symbol("ARGS"), (jl_value_t*)args);
+            JL_GC_POP();
         }
         assert(jl_array_len(args) == 0);
         jl_array_grow_end(args, argc);
@@ -499,7 +541,7 @@ static int true_main(int argc, char *argv[])
         (jl_function_t*)jl_get_global(jl_base_module, jl_symbol("_start")) : NULL;
 
     if (start_client) {
-        jl_apply(start_client, NULL, 0);
+        jl_apply(&start_client, 1);
         return 0;
     }
 
@@ -553,8 +595,23 @@ int main(int argc, char *argv[])
 {
     uv_setup_args(argc, argv); // no-op on Windows
 #else
+
+#if defined(_P64) && defined(JL_DEBUG_BUILD)
+static int is_running_under_wine()
+{
+    static const char * (CDECL *pwine_get_version)(void);
+    HMODULE hntdll = GetModuleHandle("ntdll.dll");
+    assert(hntdll);
+    pwine_get_version = (void *)GetProcAddress(hntdll, "wine_get_version");
+    return pwine_get_version != 0;
+}
+#endif
+
 static void lock_low32() {
 #if defined(_P64) && defined(JL_DEBUG_BUILD)
+    // Wine currently has a that causes it to answer VirtualQuery incorrectly.
+    // See https://www.winehq.org/pipermail/wine-devel/2016-March/112188.html for details
+    int under_wine = is_running_under_wine();
     // block usage of the 32-bit address space on win64, to catch pointer cast errors
     char *const max32addr = (char*)0xffffffffL;
     SYSTEM_INFO info;
@@ -563,7 +620,8 @@ static void lock_low32() {
     memset(&meminfo, 0, sizeof(meminfo));
     meminfo.BaseAddress = info.lpMinimumApplicationAddress;
     while ((char*)meminfo.BaseAddress < max32addr) {
-        VirtualQuery(meminfo.BaseAddress, &meminfo, sizeof(meminfo));
+        size_t nbytes = VirtualQuery(meminfo.BaseAddress, &meminfo, sizeof(meminfo));
+        assert(nbytes == sizeof(meminfo));
         if (meminfo.State == MEM_FREE) { // reserve all free pages in the first 4GB of memory
             char *first = (char*)meminfo.BaseAddress;
             char *last = first + meminfo.RegionSize;
@@ -576,7 +634,7 @@ static void lock_low32() {
             last = (char*)((long long)last & ~(info.dwAllocationGranularity - 1));
             if (last != first) {
                 p = VirtualAlloc(first, last - first, MEM_RESERVE, PAGE_NOACCESS); // reserve all memory in between
-                assert(p == first);
+                assert(under_wine || p == first);
             }
         }
         meminfo.BaseAddress += meminfo.RegionSize;
@@ -595,6 +653,14 @@ int wmain(int argc, wchar_t *argv[], wchar_t *envp[])
         if (!WideCharToMultiByte(CP_UTF8, 0, warg, -1, arg, len, NULL, NULL)) return 1;
         argv[i] = (wchar_t*)arg;
     }
+#endif
+#ifdef JULIA_ENABLE_THREADING
+    // We need to make sure this function is called before any reference to
+    // TLS variables. Since the compiler is free to move calls to
+    // `jl_get_ptls_states()` around, we should avoid referencing TLS
+    // variables in this function. (Mark `true_main` as noinline for this
+    // reason).
+    jl_set_ptls_states_getter(jl_get_ptls_states_static);
 #endif
     libsupport_init();
     parse_opts(&argc, (char***)&argv);

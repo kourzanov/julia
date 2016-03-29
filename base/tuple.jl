@@ -16,6 +16,18 @@ start(t::Tuple) = 1
 done(t::Tuple, i::Int) = (length(t) < i)
 next(t::Tuple, i::Int) = (t[i], i+1)
 
+eachindex(t::Tuple) = 1:length(t)
+
+function eachindex(t::Tuple, t2::Tuple...)
+    @_inline_meta
+    1:_maxlength(t, t2...)
+end
+_maxlength(t::Tuple) = length(t)
+function _maxlength(t::Tuple, t2::Tuple, t3::Tuple...)
+    @_inline_meta
+    max(length(t), _maxlength(t2, t3...))
+end
+
 # this allows partial evaluation of bounded sequences of next() calls on tuples,
 # while reducing to plain next() for arbitrary iterables.
 indexed_next(t::Tuple, i::Int, state) = (t[i], i+1)
@@ -72,6 +84,22 @@ tails() = ()
 tails(t::Tuple, ts::Tuple...) = (tail(t), tails(ts...)...)
 map(f, ::Tuple{}, ts::Tuple...) = ()
 map(f, ts::Tuple...) = (f(heads(ts...)...), map(f, tails(ts...)...)...)
+
+# type-stable padding
+fill_to_length{N}(t::Tuple, val, ::Type{Val{N}}) = _ftl((), val, Val{N}, t...)
+_ftl{N}(out::NTuple{N}, val, ::Type{Val{N}}) = out
+function _ftl{N}(out::NTuple{N}, val, ::Type{Val{N}}, t...)
+    @_inline_meta
+    error("input tuple of length $(N+length(t)), requested $N")
+end
+function _ftl{N}(out, val, ::Type{Val{N}}, t1, t...)
+    @_inline_meta
+    _ftl((out..., t1), val, Val{N}, t...)
+end
+function _ftl{N}(out, val, ::Type{Val{N}})
+    @_inline_meta
+    _ftl((out..., val), val, Val{N})
+end
 
 ## comparison ##
 

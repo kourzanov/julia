@@ -24,7 +24,7 @@ maxintfloat(::Type{Float16}) = Float16(2048f0)
 maxintfloat{T<:AbstractFloat}(x::T)  = maxintfloat(T)
 maxintfloat() = maxintfloat(Float64)
 
-isinteger(x::AbstractFloat) = (trunc(x)==x)&isfinite(x)
+isinteger(x::AbstractFloat) = x-trunc(x) == 0
 
 num2hex(x::Float16) = hex(reinterpret(UInt16,x), 4)
 num2hex(x::Float32) = hex(box(UInt32,unbox(Float32,x)),8)
@@ -69,44 +69,44 @@ round{T<:Integer}(::Type{T}, x::AbstractFloat, r::RoundingMode) = trunc(T,round(
 for f in (:trunc,:floor,:ceil,:round)
     @eval begin
         function ($f){T,R}(::Type{T}, x::AbstractArray{R,1})
-            [ ($f)(T, x[i])::T for i = 1:length(x) ]
+            [ ($f)(T, y)::T for y in x ]
         end
         function ($f){T,R}(::Type{T}, x::AbstractArray{R,2})
             [ ($f)(T, x[i,j])::T for i = 1:size(x,1), j = 1:size(x,2) ]
         end
         function ($f){T}(::Type{T}, x::AbstractArray)
-            reshape([ ($f)(T, x[i])::T for i in eachindex(x) ], size(x))
+            reshape([ ($f)(T, y)::T for y in x ], size(x))
         end
         function ($f){R}(x::AbstractArray{R,1}, digits::Integer, base::Integer=10)
-            [ ($f)(x[i], digits, base) for i = 1:length(x) ]
+            [ ($f)(y, digits, base) for y in x ]
         end
         function ($f){R}(x::AbstractArray{R,2}, digits::Integer, base::Integer=10)
             [ ($f)(x[i,j], digits, base) for i = 1:size(x,1), j = 1:size(x,2) ]
         end
         function ($f)(x::AbstractArray, digits::Integer, base::Integer=10)
-            reshape([ ($f)(x[i], digits, base) for i in eachindex(x) ], size(x))
+            reshape([ ($f)(y, digits, base) for y in x ], size(x))
         end
     end
 end
 
 function round{R}(x::AbstractArray{R,1}, r::RoundingMode)
-    [ round(x[i], r) for i = 1:length(x) ]
+    [ round(y, r) for y in x ]
 end
 function round{R}(x::AbstractArray{R,2}, r::RoundingMode)
     [ round(x[i,j], r) for i = 1:size(x,1), j = 1:size(x,2) ]
 end
 function round(x::AbstractArray, r::RoundingMode)
-    reshape([ round(x[i], r) for i in eachindex(x) ], size(x))
+    reshape([ round(y, r) for y in x ], size(x))
 end
 
 function round{T,R}(::Type{T}, x::AbstractArray{R,1}, r::RoundingMode)
-    [ round(T, x[i], r)::T for i = 1:length(x) ]
+    [ round(T, y, r)::T for y in x ]
 end
 function round{T,R}(::Type{T}, x::AbstractArray{R,2}, r::RoundingMode)
     [ round(T, x[i,j], r)::T for i = 1:size(x,1), j = 1:size(x,2) ]
 end
 function round{T}(::Type{T}, x::AbstractArray, r::RoundingMode)
-    reshape([ round(T, x[i], r)::T for i in eachindex(x) ], size(x))
+    reshape([ round(T, y, r)::T for y in x ], size(x))
 end
 
 # adapted from Matlab File Exchange roundsd: http://www.mathworks.com/matlabcentral/fileexchange/26212
@@ -176,7 +176,7 @@ const ≈ = isapprox
 # default tolerance arguments
 rtoldefault{T<:AbstractFloat}(::Type{T}) = sqrt(eps(T))
 rtoldefault{T<:Real}(::Type{T}) = 0
-rtoldefault{T<:Number,S<:Number}(x::Union{T,Type{T}}, y::Union{S,Type{S}}) = rtoldefault(promote_type(real(T),real(S)))
+rtoldefault{T<:Number,S<:Number}(x::Union{T,Type{T}}, y::Union{S,Type{S}}) = max(rtoldefault(real(T)),rtoldefault(real(S)))
 
 # fused multiply-add
 fma_libm(x::Float32, y::Float32, z::Float32) =

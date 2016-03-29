@@ -2,35 +2,224 @@
 
 using Base.Test
 
-inline_flag = Base.JLOptions().can_inline == 1 ? "" : "--inline=no"
-cov_flag = ""
+inline_flag = Base.JLOptions().can_inline == 1 ? `` : `--inline=no`
+cov_flag = ``
 if Base.JLOptions().code_coverage == 1
-    cov_flag = "--code-coverage=user"
+    cov_flag = `--code-coverage=user`
 elseif Base.JLOptions().code_coverage == 2
-    cov_flag = "--code-coverage=all"
+    cov_flag = `--code-coverage=all`
 end
 addprocs(3; exeflags=`$cov_flag $inline_flag --check-bounds=yes --depwarn=error`)
 
+# Test remote()
+
+let
+    pool = Base.default_worker_pool()
+
+    count = 0
+    count_condition = Condition()
+
+    function remote_wait(c)
+        @async begin
+            count += 1
+            remote(take!)(c)
+            count -= 1
+            notify(count_condition)
+        end
+        yield()
+    end
+
+    testchannels = [RemoteChannel() for i in 1:nworkers()]
+    testcount = 0
+    @test isready(pool) == true
+    for c in testchannels
+        @test count == testcount
+        remote_wait(c)
+        testcount += 1
+    end
+    @test count == testcount
+    @test isready(pool) == false
+
+    for c in testchannels
+        @test count == testcount
+        put!(c, "foo")
+        testcount -= 1
+        wait(count_condition)
+        @test count == testcount
+        @test isready(pool) == true
+    end
+
+    @test count == 0
+
+    for c in testchannels
+        @test count == testcount
+        remote_wait(c)
+        testcount += 1
+    end
+    @test count == testcount
+    @test isready(pool) == false
+
+    for c in reverse(testchannels)
+        @test count == testcount
+        put!(c, "foo")
+        testcount -= 1
+        wait(count_condition)
+        @test count == testcount
+        @test isready(pool) == true
+    end
+
+    @test count == 0
+end
+
+
 id_me = myid()
 id_other = filter(x -> x != id_me, procs())[rand(1:(nprocs()-1))]
+
+# Test Futures
+function testf(id)
+    f=Future(id)
+    @test isready(f) == false
+    @test isnull(f.v) == true
+    put!(f, :OK)
+    @test isready(f) == true
+    @test isnull(f.v) == false
+
+    @test_throws ErrorException put!(f, :OK) # Cannot put! to a already set future
+    @test_throws MethodError take!(f) # take! is unsupported on a Future
+
+    @test fetch(f) == :OK
+end
+
+testf(id_me)
+testf(id_other)
+
+# Distributed GC tests for Futures
+function test_futures_dgc(id)
+    f = remotecall(myid, id)
+    fid = Base.remoteref_id(f)
+
+    # remote value should be deleted after a fetch
+    @test remotecall_fetch(k->(yield();haskey(Base.PGRP.refs, k)), id, fid) == true
+    @test isnull(f.v) == true
+    @test fetch(f) == id
+    @test isnull(f.v) == false
+    @test remotecall_fetch(k->(yield();haskey(Base.PGRP.refs, k)), id, fid) == false
+
+
+    # if unfetched, it should be deleted after a finalize
+    f = remotecall(myid, id)
+    fid = Base.remoteref_id(f)
+    @test remotecall_fetch(k->(yield();haskey(Base.PGRP.refs, k)), id, fid) == true
+    @test isnull(f.v) == true
+    finalize(f)
+    Base.flush_gc_msgs()
+    @test remotecall_fetch(k->(yield();haskey(Base.PGRP.refs, k)), id, fid) == false
+end
+
+test_futures_dgc(id_me)
+test_futures_dgc(id_other)
+
+# if sent to another worker, it should not be deleted till the other worker has fetched.
+wid1 = workers()[1]
+wid2 = workers()[2]
+f = remotecall(myid, wid1)
+fid = Base.remoteref_id(f)
+
+fstore = RemoteChannel(wid2)
+put!(fstore, f)
+
+@test fetch(f) == wid1
+@test remotecall_fetch(k->haskey(Base.PGRP.refs, k), wid1, fid) == true
+remotecall_fetch(r->fetch(fetch(r)), wid2, fstore)
+@test remotecall_fetch(k->haskey(Base.PGRP.refs, k), wid1, fid) == false
+
+# put! should release remote reference since it would have been cached locally
+f = Future(wid1)
+fid = Base.remoteref_id(f)
+
+# should not be created remotely till accessed
+@test remotecall_fetch(k->haskey(Base.PGRP.refs, k), wid1, fid) == false
+# create it remotely
+isready(f)
+
+@test remotecall_fetch(k->haskey(Base.PGRP.refs, k), wid1, fid) == true
+put!(f, :OK)
+@test remotecall_fetch(k->haskey(Base.PGRP.refs, k), wid1, fid) == false
+@test fetch(f) == :OK
+
+# RemoteException should be thrown on a put! when another process has set the value
+f = Future(wid1)
+fid = Base.remoteref_id(f)
+
+fstore = RemoteChannel(wid2)
+put!(fstore, f) # send f to wid2
+put!(f, :OK) # set value from master
+
+@test remotecall_fetch(k->haskey(Base.PGRP.refs, k), wid1, fid) == true
+
+testval = remotecall_fetch(wid2, fstore) do x
+    try
+        put!(fetch(x), :OK)
+        return 0
+    catch e
+        if isa(e, RemoteException)
+            return 1
+        else
+            return 2
+        end
+    end
+end
+@test testval == 1
+
+# Distributed GC tests for RemoteChannels
+function test_remoteref_dgc(id)
+    rr = RemoteChannel(id)
+    put!(rr, :OK)
+    rrid = Base.remoteref_id(rr)
+
+    # remote value should be deleted after finalizing the ref
+    @test remotecall_fetch(k->(yield();haskey(Base.PGRP.refs, k)), id, rrid) == true
+    @test fetch(rr) == :OK
+    @test remotecall_fetch(k->(yield();haskey(Base.PGRP.refs, k)), id, rrid) == true
+    finalize(rr)
+    Base.flush_gc_msgs()
+    @test remotecall_fetch(k->(yield();haskey(Base.PGRP.refs, k)), id, rrid) == false
+end
+test_remoteref_dgc(id_me)
+test_remoteref_dgc(id_other)
+
+# if sent to another worker, it should not be deleted till the other worker has also finalized.
+wid1 = workers()[1]
+wid2 = workers()[2]
+rr = RemoteChannel(wid1)
+rrid = Base.remoteref_id(rr)
+
+fstore = RemoteChannel(wid2)
+put!(fstore, rr)
+
+@test remotecall_fetch(k->haskey(Base.PGRP.refs, k), wid1, rrid) == true
+finalize(rr); Base.flush_gc_msgs() # finalize locally
+@test remotecall_fetch(k->haskey(Base.PGRP.refs, k), wid1, rrid) == true
+remotecall_fetch(r->(finalize(take!(r)); Base.flush_gc_msgs(); nothing), wid2, fstore) # finalize remotely
+sleep(0.5) # to ensure that wid2 messages have been executed on wid1
+@test remotecall_fetch(k->haskey(Base.PGRP.refs, k), wid1, rrid) == false
 
 @test fetch(@spawnat id_other myid()) == id_other
 @test @fetchfrom id_other begin myid() end == id_other
 @fetch begin myid() end
 
-rr=RemoteRef()
-@test typeof(rr) == RemoteRef{Channel{Any}}
-a = rand(5,5)
-put!(rr, a)
-@test rr[2,3] == a[2,3]
-@test rr[] == a
+# test getindex on Futures and RemoteChannels
+function test_indexing(rr)
+    a = rand(5,5)
+    put!(rr, a)
+    @test rr[2,3] == a[2,3]
+    @test rr[] == a
+end
 
-rr=RemoteRef(workers()[1])
-@test typeof(rr) == RemoteRef{Channel{Any}}
-a = rand(5,5)
-put!(rr, a)
-@test rr[1,5] == a[1,5]
-@test rr[] == a
+test_indexing(Future())
+test_indexing(Future(id_other))
+test_indexing(RemoteChannel())
+test_indexing(RemoteChannel(id_other))
 
 dims = (20,20,20)
 
@@ -120,9 +309,7 @@ d = SharedArray(Float64, (2,3))
 
 # Mapping an existing file
 fn = tempname()
-open(fn, "w") do io
-    write(io, 1:30)
-end
+write(fn, 1:30)
 sz = (6,5)
 Atrue = reshape(1:30, sz)
 
@@ -139,9 +326,7 @@ end
 check_pids_all(S)
 
 filedata = similar(Atrue)
-open(fn, "r") do io
-    read!(io, filedata)
-end
+read!(fn, filedata)
 @test filedata == sdata(S)
 
 # Error for write-only files
@@ -155,23 +340,17 @@ fn2 = tempname()
 S = SharedArray(fn2, Int, sz, init=D->D[localindexes(D)] = myid())
 @test S == filedata
 filedata2 = similar(Atrue)
-open(fn2, "r") do io
-    read!(io, filedata2)
-end
+read!(fn2, filedata2)
 @test filedata == filedata2
 
 # Appending to a file
 fn3 = tempname()
-open(fn3, "w") do io
-    write(io, ones(UInt8, 4))
-end
+write(fn3, ones(UInt8, 4))
 S = SharedArray(fn3, UInt8, sz, 4, mode="a+", init=D->D[localindexes(D)]=0x02)
 len = prod(sz)+4
 @test filesize(fn3) == len
 filedata = Array(UInt8, len)
-open(fn3, "r") do io
-    read!(io, filedata)
-end
+read!(fn3, filedata)
 @test all(filedata[1:4] .== 0x01)
 @test all(filedata[5:end] .== 0x02)
 
@@ -255,6 +434,34 @@ map!(x->1, d)
 @test 2.0 == remotecall_fetch(D->D[2], id_other, Base.shmem_fill(2.0, 2; pids=[id_me, id_other]))
 @test 3.0 == remotecall_fetch(D->D[1], id_other, Base.shmem_fill(3.0, 1; pids=[id_me, id_other]))
 
+# Issue #14664
+d = SharedArray(Int,10)
+@sync @parallel for i=1:10
+    d[i] = i
+end
+
+for (x,i) in enumerate(d)
+    @test x == i
+end
+
+# Once finalized accessing remote references and shared arrays should result in exceptions.
+function finalize_and_test(r)
+    finalize(r)
+    @test_throws ErrorException fetch(r)
+end
+
+for id in [id_me, id_other]
+    finalize_and_test(Future(id))
+    finalize_and_test((r=Future(id); put!(r, 1); r))
+    finalize_and_test(RemoteChannel(id))
+    finalize_and_test((r=RemoteChannel(id); put!(r, 1); r))
+end
+
+d = SharedArray(Int,10)
+finalize(d)
+@test_throws BoundsError d[1]
+
+
 # Test @parallel load balancing - all processors should get either M or M+1
 # iterations out of the loop range for some M.
 workloads = hist(@parallel((a,b)->[a;b], for i=1:7; myid(); end), nprocs())[2]
@@ -269,14 +476,17 @@ workloads = hist(@parallel((a,b)->[a;b], for i=1:7; myid(); end), nprocs())[2]
     rr2 = Channel()
     rr3 = Channel()
 
+    callback() = all(map(isready, [rr1, rr2, rr3]))
+    # precompile functions which will be tested for execution time
+    @test !callback()
+    @test timedwait(callback, 0.0) === :timed_out
+
     @async begin sleep(0.5); put!(rr1, :ok) end
     @async begin sleep(1.0); put!(rr2, :ok) end
     @async begin sleep(2.0); put!(rr3, :ok) end
 
     tic()
-    timedwait(1.0) do
-        all(map(isready, [rr1, rr2, rr3]))
-    end
+    timedwait(callback, 1.0)
     et=toq()
     # assuming that 0.5 seconds is a good enough buffer on a typical modern CPU
     try
@@ -287,6 +497,20 @@ workloads = hist(@parallel((a,b)->[a;b], for i=1:7; myid(); end), nprocs())[2]
     end
     @test isready(rr1)
 end
+
+# Test multiple concurrent put!/take! on a channel
+function testcpt()
+    c = Channel()
+    size = 0
+    inc() = size += 1
+    dec() = size -= 1
+    @sync for i = 1:10^4
+        @async (sleep(rand()); put!(c, i); inc())
+        @async (sleep(rand()); take!(c); dec())
+    end
+    @test size == 0
+end
+testcpt()
 
 @test_throws ArgumentError sleep(-1)
 @test_throws ArgumentError timedwait(()->false, 0.1, pollint=-0.5)
@@ -344,33 +568,10 @@ function test_channel(c)
 end
 
 test_channel(Channel(10))
-test_channel(RemoteRef(()->Channel(10)))
+test_channel(RemoteChannel(()->Channel(10)))
 
 c=Channel{Int}(1)
 @test_throws MethodError put!(c, "Hello")
-
-c=Channel(256)
-# Test growth of channel
-@test c.szp1 <= 33
-for x in 1:40
-  put!(c, x)
-end
-@test c.szp1 <= 65
-for x in 1:39
-  take!(c)
-end
-for x in 1:64
-  put!(c, x)
-end
-@test (c.szp1 > 65) && (c.szp1 <= 129)
-for x in 1:39
-  take!(c)
-end
-@test fetch(c) == 39
-for x in 1:26
-  take!(c)
-end
-@test isready(c) == false
 
 # test channel iterations
 function test_iteration(in_c, out_c)
@@ -409,24 +610,55 @@ catch ex
     @test collect(1:5) == sort(map(x->parse(Int, x), errors))
 end
 
-macro test_remoteexception_thrown(expr)
-    quote
-        try
-            $(esc(expr))
-            error("unexpected")
-        catch ex
-            @test typeof(ex) == RemoteException
-            @test typeof(ex.captured) == CapturedException
-            @test typeof(ex.captured.ex) == ErrorException
-            @test ex.captured.ex.msg == "foobar"
-        end
+function test_remoteexception_thrown(expr)
+    try
+        expr()
+        error("unexpected")
+    catch ex
+        @test typeof(ex) == RemoteException
+        @test typeof(ex.captured) == CapturedException
+        @test typeof(ex.captured.ex) == ErrorException
+        @test ex.captured.ex.msg == "foobar"
     end
 end
 
 for id in [id_other, id_me]
-    @test_remoteexception_thrown remotecall_fetch(()->throw(ErrorException("foobar")), id)
-    @test_remoteexception_thrown remotecall_wait(()->throw(ErrorException("foobar")), id)
-    @test_remoteexception_thrown wait(remotecall(()->throw(ErrorException("foobar")), id))
+    test_remoteexception_thrown() do
+        remotecall_fetch(id) do
+            throw(ErrorException("foobar"))
+        end
+    end
+    test_remoteexception_thrown() do
+        remotecall_wait(id) do
+            throw(ErrorException("foobar"))
+        end
+    end
+    test_remoteexception_thrown() do
+        wait(remotecall(id) do
+            throw(ErrorException("foobar"))
+        end)
+    end
+end
+
+# make sure the stackframe from the remote error can be serialized
+let ex
+    try
+        remotecall_fetch(id_other) do
+            @eval module AModuleLocalToOther
+                foo() = error("A.error")
+                foo()
+            end
+        end
+    catch ex
+    end
+    @test (ex::RemoteException).pid == id_other
+    @test ((ex.captured::CapturedException).ex::ErrorException).msg == "A.error"
+    bt = ex.captured.processed_bt::Array{Any,1}
+    @test length(bt) > 1
+    frame, repeated = bt[1]::Tuple{StackFrame, Int}
+    @test frame.func == :foo
+    @test isnull(frame.outer_linfo)
+    @test repeated == 1
 end
 
 # The below block of tests are usually run only on local development systems, since:
@@ -470,12 +702,12 @@ if DoFullTest
     # time can only support a single topology and the current session
     # is already running in parallel under the default topology.
     script = joinpath(dirname(@__FILE__), "topology.jl")
-    cmd = `$(joinpath(JULIA_HOME,Base.julia_exename())) $script`
+    cmd = `$(Base.julia_cmd()) $script`
 
     (strm, proc) = open(pipeline(cmd, stderr=STDERR))
     wait(proc)
     if !success(proc) && ccall(:jl_running_on_valgrind,Cint,()) == 0
-        println(readall(strm))
+        println(readstring(strm))
         error("Topology tests failed : $cmd")
     end
 
@@ -486,6 +718,11 @@ if DoFullTest
         throw(ErrorException("TESTING EXCEPTION ON REMOTE DO. PLEASE IGNORE"))
     end
     sleep(0.5)  # Give some time for the above error to be printed
+
+    # github PR #14456
+    for n = 1:10^6
+        fetch(@spawnat myid() myid())
+    end
 
 @unix_only begin
     function test_n_remove_pids(new_pids)
@@ -591,3 +828,17 @@ end
 
 # issue #13122
 @test remotecall_fetch(identity, workers()[1], C_NULL) === C_NULL
+
+# issue #11062
+function t11062()
+    @async v11062 = 1
+    v11062 = 2
+end
+
+@test t11062() == 2
+
+# issue #15406
+v15406 = remotecall_wait(() -> 1, id_other)
+fetch(v15406)
+remotecall_wait(t -> fetch(t), id_other, v15406)
+

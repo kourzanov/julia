@@ -42,6 +42,25 @@ end
 # issue #4718
 @test collect(filter(x->x[1], zip([true, false, true, false],"abcd"))) == [(true,'a'),(true,'c')]
 
+let z = zip(1:2)
+    @test collect(z) == [(1,), (2,)]
+    # Issue #13979
+    @test eltype(z) == Tuple{Int}
+end
+
+let z = zip(1:2, 3:4)
+    @test collect(z) == [(1,3), (2,4)]
+    @test eltype(z) == Tuple{Int,Int}
+end
+
+let z = zip(1:2, 3:4, 5:6)
+    @test collect(z) == [(1,3,5), (2,4,6)]
+    @test eltype(z) == Tuple{Int,Int,Int}
+end
+
+# typed `collect`
+@test collect(Float64, Filter(isodd, [1,2,3,4]))[1] === 1.0
+
 # enumerate (issue #6284)
 let b = IOBuffer("1\n2\n3\n"), a = []
     for (i,x) in enumerate(eachline(b))
@@ -60,12 +79,19 @@ let zeb     = IOBuffer("1\n2\n3\n4\n5\n"),
     @test res == [(1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e')]
 end
 
+@test length(zip(cycle(1:3), 1:7)) == 7
+@test length(zip(cycle(1:3), 1:7, cycle(1:3))) == 7
+@test length(zip(1:3,Base.product(1:7,cycle(1:3)))) == 3
+@test length(zip(1:3,Base.product(1:7,cycle(1:3)),8)) == 1
+
 # rest
 # ----
 let s = "hello"
     _, st = next(s, start(s))
     @test collect(rest(s, st)) == ['e','l','l','o']
 end
+
+@test_throws MethodError collect(rest(countfrom(1), 5))
 
 # countfrom
 # ---------
@@ -99,6 +125,10 @@ let i = 0
     @test i == 10
 end
 
+@test length(take(1:3,typemax(Int))) == 3
+@test length(take(countfrom(1),3)) == 3
+@test length(take(1:6,3)) == 3
+
 # drop
 # ----
 
@@ -109,6 +139,10 @@ let i = 0
     end
     @test i == 4
 end
+
+@test length(drop(1:3,typemax(Int))) == 0
+@test Base.iteratorsize(drop(countfrom(1),3)) == Base.IsInfinite()
+@test_throws MethodError length(drop(countfrom(1), 3))
 
 # cycle
 # -----
@@ -139,6 +173,32 @@ let i = 0
     end
 end
 
+
+# product
+# -------
+
+@test isempty(Base.product(1:2,1:0))
+@test isempty(Base.product(1:2,1:0,1:10))
+@test isempty(Base.product(1:2,1:10,1:0))
+@test isempty(Base.product(1:0,1:2,1:10))
+@test collect(Base.product(1:2,3:4)) == [(1,3),(2,3),(1,4),(2,4)]
+@test isempty(collect(Base.product(1:0,1:2)))
+@test length(Base.product(1:2,1:10,4:6)) == 60
+@test Base.iteratorsize(Base.product(1:2, countfrom(1))) == Base.IsInfinite()
+
+# flatten
+# -------
+
+import Base.flatten
+
+@test collect(flatten(Any[1:2, 4:5])) == Any[1,2,4,5]
+@test collect(flatten(Any[flatten(Any[1:2, 6:5]), flatten(Any[10:7, 10:9])])) == Any[1,2]
+@test collect(flatten(Any[flatten(Any[1:2, 4:5]), flatten(Any[6:7, 8:9])])) == Any[1,2,4,5,6,7,8,9]
+@test collect(flatten(Any[flatten(Any[1:2, 6:5]), flatten(Any[6:7, 8:9])])) == Any[1,2,6,7,8,9]
+@test collect(flatten(Any[2:1])) == Any[]
+@test eltype(flatten(UnitRange{Int8}[1:2, 3:4])) == Int8
+@test_throws ArgumentError collect(flatten(Any[]))
+
 # foreach
 let
     a = []
@@ -151,3 +211,31 @@ let
     foreach((args...)->push!(a,args), [2,4,6], [10,20,30])
     @test a == [(2,10),(4,20),(6,30)]
 end
+
+# generators (#4470, #14848)
+
+@test sum(i/2 for i=1:2) == 1.5
+@test collect(2i for i=2:5) == [4,6,8,10]
+@test collect((i+10j for i=1:2,j=3:4)) == [31 41; 32 42]
+@test collect((i+10j for i=1:2,j=3:4,k=1:1)) == reshape([31 41; 32 42], (2,2,1))
+
+let I = Base.IteratorND(1:27,(3,3,3))
+    @test collect(I) == reshape(1:27,(3,3,3))
+    @test size(I) == (3,3,3)
+    @test length(I) == 27
+    @test eltype(I) === Int
+    @test ndims(I) == 3
+end
+
+let A = collect(Base.Generator(x->2x, Real[1.5,2.5]))
+    @test A == [3,5]
+    @test isa(A,Vector{Float64})
+end
+
+let f(g) = (@test size(g.iter)==(2,3))
+    f(i+j for i=1:2, j=3:5)
+end
+
+@test_throws DimensionMismatch Base.IteratorND(1:2, (2,3))
+
+@test collect(Base.Generator(+, [1,2], [10,20])) == [11,22]

@@ -32,7 +32,7 @@ function HTML(xs...)
 end
 
 writemime(io::IO, ::MIME"text/html", h::HTML) = print(io, h.content)
-writemime(io::IO, ::MIME"text/html", h::HTML{Function}) = h.content(io)
+writemime{F <: Function}(io::IO, ::MIME"text/html", h::HTML{F}) = h.content(io)
 
 """
     @html_str -> Docs.HTML
@@ -69,7 +69,7 @@ type Text{T}
 end
 
 print(io::IO, t::Text) = print(io, t.content)
-print(io::IO, t::Text{Function}) = t.content(io)
+print{F <: Function}(io::IO, t::Text{F}) = t.content(io)
 writemime(io::IO, ::MIME"text/plain", t::Text) = print(io, t)
 
 """
@@ -91,10 +91,31 @@ end
 
 # REPL help
 
+function helpmode(line::AbstractString)
+    line = strip(line)
+    expr =
+        if haskey(keywords, symbol(line))
+            # Docs for keywords must be treated separately since trying to parse a single
+            # keyword such as `function` would throw a parse error due to the missing `end`.
+            symbol(line)
+        else
+            x = Base.syntax_deprecation_warnings(false) do
+                parse(line, raise = false)
+            end
+            # Retrieving docs for macros requires us to make a distinction between the text
+            # `@macroname` and `@macroname()`. These both parse the same, but are used by
+            # the docsystem to return different results. The first returns all documentation
+            # for `@macroname`, while the second returns *only* the docs for the 0-arg
+            # definition if it exists.
+            (isexpr(x, :macrocall, 1) && !endswith(line, "()")) ? quot(x) : x
+        end
+    :(Base.Docs.@repl $expr)
+end
+
 function repl_search(io::IO, s)
     pre = "search:"
     print(io, pre)
-    printmatches(io, s, completions(s), cols=Base.tty_size()[2]-length(pre))
+    printmatches(io, s, completions(s), cols = displaysize(io)[2] - length(pre))
     println(io, "\n")
 end
 
@@ -243,7 +264,7 @@ end
 
 printmatch(args...) = printfuzzy(STDOUT, args...)
 
-function printmatches(io::IO, word, matches; cols = Base.tty_size()[2])
+function printmatches(io::IO, word, matches; cols = displaysize(io)[2])
     total = 0
     for match in matches
         total + length(match) + 1 > cols && break
@@ -254,9 +275,9 @@ function printmatches(io::IO, word, matches; cols = Base.tty_size()[2])
     end
 end
 
-printmatches(args...; cols = Base.tty_size()[2]) = printmatches(STDOUT, args..., cols = cols)
+printmatches(args...; cols = displaysize(STDOUT)[2]) = printmatches(STDOUT, args..., cols = cols)
 
-function print_joined_cols(io::IO, ss, delim = "", last = delim; cols = Base.tty_size()[2])
+function print_joined_cols(io::IO, ss, delim = "", last = delim; cols = displaysize(io)[2])
     i = 0
     total = 0
     for i = 1:length(ss)
@@ -266,13 +287,13 @@ function print_joined_cols(io::IO, ss, delim = "", last = delim; cols = Base.tty
     print_joined(io, ss[1:i], delim, last)
 end
 
-print_joined_cols(args...; cols = Base.tty_size()[2]) = print_joined_cols(STDOUT, args...; cols=cols)
+print_joined_cols(args...; cols = displaysize(STDOUT)[2]) = print_joined_cols(STDOUT, args...; cols=cols)
 
 function print_correction(io, word)
     cors = levsort(word, accessible(current_module()))
     pre = "Perhaps you meant "
     print(io, pre)
-    print_joined_cols(io, cors, ", ", " or "; cols = Base.tty_size()[2]-length(pre))
+    print_joined_cols(io, cors, ", ", " or "; cols = displaysize(io)[2] - length(pre))
     println(io)
     return
 end
@@ -314,26 +335,24 @@ function docsearch(haystack::Array, needle)
     false
 end
 function docsearch(haystack, needle)
-    warn_once("unable to search documentation of type $(typeof(haystack))")
+    Base.warn_once("unable to search documentation of type $(typeof(haystack))")
     false
 end
 
 ## Searching specific documentation objects
-function docsearch(haystack::TypeDoc, needle)
-    docsearch(haystack.main, needle) && return true
-    for v in values(haystack.fields)
-        docsearch(v, needle) && return true
-    end
-    for v in values(haystack.meta)
+function docsearch(haystack::MultiDoc, needle)
+    for v in values(haystack.docs)
         docsearch(v, needle) && return true
     end
     false
 end
 
-function docsearch(haystack::FuncDoc, needle)
-    docsearch(haystack.main, needle) && return true
-    for v in values(haystack.meta)
-        docsearch(v, needle) && return true
+function docsearch(haystack::DocStr, needle)
+    docsearch(parsedoc(haystack), needle) && return true
+    if haskey(haystack.data, :fields)
+        for doc in values(haystack.data[:fields])
+            docsearch(doc, needle) && return true
+        end
     end
     false
 end
@@ -350,6 +369,7 @@ internally by apropos to make docstrings containing more than one markdown
 element searchable.
 """
 stripmd(x::AbstractString) = x  # base case
+stripmd(x::Void) = " "
 stripmd(x::Vector) = string(map(stripmd, x)...)
 stripmd(x::Markdown.BlockQuote) = "$(stripmd(x.content))"
 stripmd(x::Markdown.Bold) = "$(stripmd(x.text))"
@@ -364,6 +384,7 @@ stripmd(x::Markdown.Link) = "$(stripmd(x.text)) $(x.url)"
 stripmd(x::Markdown.List) = join(map(stripmd, x.items), " ")
 stripmd(x::Markdown.MD) = join(map(stripmd, x.content), " ")
 stripmd(x::Markdown.Paragraph) = stripmd(x.content)
+stripmd(x::Markdown.Footnote) = "$(stripmd(x.id)) $(stripmd(x.text))"
 stripmd(x::Markdown.Table) =
     join([join(map(stripmd, r), " ") for r in x.rows], " ")
 
@@ -371,7 +392,7 @@ stripmd(x::Markdown.Table) =
 """
     apropos(string)
 
-Search through all documention for a string, ignoring case.
+Search through all documentation for a string, ignoring case.
 """
 apropos(string) = apropos(STDOUT, string)
 apropos(io::IO, string) = apropos(io, Regex("\\Q$string", "i"))
@@ -380,10 +401,7 @@ function apropos(io::IO, needle::Regex)
         # Module doc might be in README.md instead of the META dict
         docsearch(doc(mod), needle) && println(io, mod)
         for (k, v) in meta(mod)
-            (k === meta(mod) || k === mod) && continue
-            if docsearch(v, needle)
-                println(io, k)
-            end
+            docsearch(v, needle) && println(io, k)
         end
     end
 end

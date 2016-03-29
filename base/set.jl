@@ -11,6 +11,7 @@ Set(itr) = Set{eltype(itr)}(itr)
 
 eltype{T}(::Type{Set{T}}) = T
 similar{T}(s::Set{T}) = Set{T}()
+similar(s::Set, T::Type) = Set{T}()
 
 function show(io::IO, s::Set)
     print(io,"Set")
@@ -115,10 +116,11 @@ function unique(C)
     out
 end
 
-doc"""
+"""
     unique(f, itr)
 
-Returns an array containing one value from `itr` for each unique value produced by `f` applied to elements of `itr`.
+Returns an array containing one value from `itr` for each unique value produced by `f`
+applied to elements of `itr`.
 """
 function unique(f::Callable, C)
     out = Vector{eltype(C)}()
@@ -153,7 +155,7 @@ end
 
 const hashs_seed = UInt === UInt64 ? 0x852ada37cfe8e0ce : 0xcfe8e0ce
 function hash(s::Set, h::UInt)
-    h += hashs_seed
+    h = hash(hashs_seed, h)
     for x in s
         h $= hash(x)
     end

@@ -45,6 +45,8 @@ r = 5:-1:1
 @test isempty((1:4)[5:4])
 @test_throws BoundsError (1:10)[8:-1:-2]
 
+@test findin([5.2, 3.3], 3:20) == findin([5.2, 3.3], collect(3:20))
+
 let
     span = 5:20
     r = -7:3:42
@@ -454,7 +456,7 @@ r = linspace(1/3,5/7,6)
 @test abs(r[end] - 5/7) <= eps(5/7)
 r = linspace(0.25,0.25,1)
 @test length(r) == 1
-@test_throws Exception linspace(0.25,0.5,1)
+@test_throws ErrorException linspace(0.25,0.5,1)
 
 # issue #7426
 @test [typemax(Int):1:typemax(Int);] == [typemax(Int)]
@@ -561,14 +563,14 @@ end
 
 # stringmime/writemime should display the range or linspace nicely
 # to test print_range in range.jl
-replstr(x) = stringmime("text/plain", x)
-@test replstr(1:4) == "4-element UnitRange{$Int}:\n 1,2,3,4"
-@test replstr(linspace(1,5,7)) == "7-element LinSpace{Float64}:\n 1.0,1.66667,2.33333,3.0,3.66667,4.33333,5.0"
-@test replstr(0:100.) == "101-element FloatRange{Float64}:\n 0.0,1.0,2.0,3.0,4.0,5.0,6.0,7.0,8.0,9.0,…,94.0,95.0,96.0,97.0,98.0,99.0,100.0"
+replstrmime(x) = stringmime("text/plain", x)
+@test replstrmime(1:4) == "4-element UnitRange{$Int}:\n 1,2,3,4"
+@test replstrmime(linspace(1,5,7)) == "7-element LinSpace{Float64}:\n 1.0,1.66667,2.33333,3.0,3.66667,4.33333,5.0"
+@test replstrmime(0:100.) == "101-element FloatRange{Float64}:\n 0.0,1.0,2.0,3.0,4.0,5.0,6.0,7.0,8.0,9.0,…,94.0,95.0,96.0,97.0,98.0,99.0,100.0"
 # next is to test a very large range, which should be fast because print_range
 # only examines spacing of the left and right edges of the range, sufficient
 # to cover the designated screen size.
-@test replstr(0:10^9) == "1000000001-element UnitRange{$Int}:\n 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,…,999999998,999999999,1000000000"
+@test replstrmime(0:10^9) == "1000000001-element UnitRange{$Int}:\n 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,…,999999998,999999999,1000000000"
 
 @test sprint(io -> show(io,UnitRange(1,2))) == "1:2"
 @test sprint(io -> show(io,StepRange(1,2,5))) == "1:2:5"

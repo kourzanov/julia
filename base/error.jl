@@ -18,12 +18,12 @@
 
 ## native julia error handling ##
 
-error(s::AbstractString) = throw(Main.Base.call(Main.Base.ErrorException,s))
-error(s...) = throw(Main.Base.call(Main.Base.ErrorException,Main.Base.string(s...)))
+error(s::AbstractString) = throw(Main.Base.ErrorException(s))
+error(s...) = throw(Main.Base.ErrorException(Main.Base.string(s...)))
 
 rethrow() = ccall(:jl_rethrow, Void, ())::Bottom
 rethrow(e) = ccall(:jl_rethrow_other, Void, (Any,), e)::Bottom
-backtrace() = ccall(:jl_backtrace_from_here, Array{Ptr{Void},1}, ())
+backtrace() = ccall(:jl_backtrace_from_here, Array{Ptr{Void},1}, (Int32,), false)
 catch_backtrace() = ccall(:jl_get_backtrace, Array{Ptr{Void},1}, ())
 
 ## keyword arg lowering generates calls to this ##

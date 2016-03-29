@@ -56,15 +56,6 @@ macro deprecate(old,new)
     end
 end
 
-remove_linenums!(ex) = ex
-function remove_linenums!(ex::Expr)
-    filter!(x->!((isa(x,Expr) && is(x.head,:line)) || isa(x,LineNumberNode)), ex.args)
-    for subex in ex.args
-        remove_linenums!(subex)
-    end
-    ex
-end
-
 function depwarn(msg, funcsym)
     opts = JLOptions()
     if opts.depwarn > 0
@@ -85,13 +76,12 @@ function firstcaller(bt::Array{Ptr{Void},1}, funcsym::Symbol)
     # Identify the calling line
     i = 1
     while i <= length(bt)
-        lkup = ccall(:jl_lookup_code_address, Any, (Ptr{Void},Cint), bt[i], true)
+        lkup = StackTraces.lookup(bt[i])
         i += 1
-        if lkup === ()
+        if lkup === StackTraces.UNKNOWN
             continue
         end
-        fname, file, line, inlinedat_file, inlinedat_line, fromC = lkup
-        if fname == funcsym
+        if lkup.func == funcsym
             break
         end
     end
@@ -136,7 +126,7 @@ deprecate(:IpAddr)
 export apply
 @noinline function apply(f, args...)
     depwarn("apply(f, x) is deprecated, use `f(x...)` instead", :apply)
-    return Core._apply(call, f, args...)
+    return Core._apply(f, args...)
 end
 
 @deprecate median(v::AbstractArray; checknan::Bool=true)  median(v)
@@ -444,7 +434,7 @@ end
 to_index_nodep(i::Real) = convert(Int,i)::Int
 
 @noinline function to_index(i::Real)
-    depwarn("indexing with non Integer Reals is deprecated", :to_index)
+    depwarn("Indexing with non-Integer Reals is deprecated.  It may be that your index arose from an integer division of the form i/j, in which case you should consider using i÷j or div(i,j) instead.", :to_index)
     to_index_nodep(i)
 end
 
@@ -515,7 +505,13 @@ export float32_isvalid, float64_isvalid
 @deprecate utf32(c::Integer...)   UTF32String(UInt32[c...,0])
 
 # 12087
-@deprecate call(P::Base.DFT.Plan, A) P * A
+@deprecate call(P::Base.DFT.ScaledPlan, A) P * A
+if Base.USE_GPL_LIBS
+    @deprecate call(P::Base.FFTW.DCTPlan, A) P * A
+    @deprecate call(P::Base.FFTW.cFFTWPlan, A) P * A
+    @deprecate call(P::Base.FFTW.rFFTWPlan, A) P * A
+    @deprecate call(P::Base.FFTW.r2rFFTWPlan, A) P * A
+end
 for f in (:plan_fft, :plan_ifft, :plan_bfft, :plan_fft!, :plan_ifft!, :plan_bfft!, :plan_rfft)
     @eval @deprecate $f(A, dims, flags) $f(A, dims; flags=flags)
     @eval @deprecate $f(A, dims, flags, tlim) $f(A, dims; flags=flags, timelimit=tlim)
@@ -575,6 +571,21 @@ export @math_const
 # 11280, mmap
 
 export msync
+
+"""
+    msync(ptr, len, [flags])
+
+Forces synchronization of the [`mmap`](:func:`mmap`)ped memory region from `ptr` to
+`ptr+len`. Flags defaults to `MS_SYNC`, but can be a combination of `MS_ASYNC`, `MS_SYNC`,
+or `MS_INVALIDATE`. See your platform man page for specifics. The flags argument is not
+valid on Windows.
+
+You may not need to call `msync`, because synchronization is performed at intervals
+automatically by the operating system. However, you can call this directly if, for example,
+you are concerned about losing the result of a long-running calculation.
+"""
+function msync end
+
 msync{T}(A::Array{T}) = msync(pointer(A), length(A)*sizeof(T))
 msync(B::BitArray) = msync(pointer(B.chunks), length(B.chunks)*sizeof(UInt64))
 
@@ -591,10 +602,10 @@ export mmap
         throw(ArgumentError("requested size must be ≤ $(typemax(Int)-pagesize), got $len"))
     end
     # Set the offset to a page boundary
-    offset_page::FileOffset = floor(Integer,offset/pagesize)*pagesize
+    offset_page::Int64 = floor(Integer,offset/pagesize)*pagesize
     len_page::Int = (offset-offset_page) + len
     # Mmap the file
-    p = ccall(:jl_mmap, Ptr{Void}, (Ptr{Void}, Csize_t, Cint, Cint, Cint, FileOffset), C_NULL, len_page, prot, flags, fd, offset_page)
+    p = ccall(:jl_mmap, Ptr{Void}, (Ptr{Void}, Csize_t, Cint, Cint, Cint, Int64), C_NULL, len_page, prot, flags, fd, offset_page)
     systemerror("memory mapping failed", reinterpret(Int,p) == -1)
     # Also return a pointer that compensates for any adjustment in the offset
     return p, Int(offset-offset_page)
@@ -644,7 +655,7 @@ type SharedMemSpec
     create :: Bool
 end
 export mmap_array
-@noinline function mmap_array{T,N}(::Type{T}, dims::NTuple{N,Integer}, s::Union{IO,SharedMemSpec}, offset::FileOffset)
+@noinline function mmap_array{T,N}(::Type{T}, dims::NTuple{N,Integer}, s::Union{IO,SharedMemSpec}, offset::Int64)
     depwarn("`mmap_array` is deprecated, use `Mmap.mmap(io, Array{T,N}, dims, offset)` instead to return an mmapped-array", :mmap_array)
     if isa(s,SharedMemSpec)
         a = Mmap.Anonymous(s.name, s.readonly, s.create)
@@ -655,7 +666,7 @@ export mmap_array
 end
 end
 
-@deprecate mmap_bitarray{N}(::Type{Bool}, dims::NTuple{N,Integer}, s::IOStream, offset::FileOffset=position(s)) mmap(s, BitArray, dims, offset)
+@deprecate mmap_bitarray{N}(::Type{Bool}, dims::NTuple{N,Integer}, s::IOStream, offset::Int64=position(s)) mmap(s, BitArray, dims, offset)
 @deprecate mmap_bitarray{N}(dims::NTuple{N,Integer}, s::IOStream, offset=position(s)) mmap(s, BitArray, dims, offset)
 
 # T[a:b] and T[a:s:b]
@@ -793,17 +804,17 @@ nonboolean_warning(f, op, status) = """
 """
 
 
-@noinline function nonboolean_any(itr)
-    depwarn(nonboolean_warning(:any, :|, "deprecated"), :nonboolean_any)
-    #throw(ArgumentError(nonboolean_warning(:any, :|, "not supported")))
-    reduce(|, itr)
+@noinline function or_bool_only(a, b)
+    depwarn(nonboolean_warning(:any, :|, "deprecated"), :or_bool_only)
+    a|b
 end
+or_bool_only(a::Bool, b::Bool) = a|b
 
-@noinline function nonboolean_all(itr)
-    depwarn(nonboolean_warning(:all, :&, "deprecated"), :nonboolean_all)
-    #throw(ArgumentError(nonboolean_warning(:all, :&, "not supported")))
-    reduce(&, itr)
+@noinline function and_bool_only(a, b)
+    depwarn(nonboolean_warning(:all, :&, "deprecated"), :and_bool_only)
+    a&b
 end
+and_bool_only(a::Bool, b::Bool) = a&b
 
 @deprecate iseltype(x,T)  eltype(x) <: T
 
@@ -873,6 +884,15 @@ end
 @deprecate chol(A::Number, ::Type{Val{:L}})         ctranspose(chol(A))
 @deprecate chol(A::AbstractMatrix, ::Type{Val{:L}}) ctranspose(chol(A))
 
+# Number updates
+
+# rem1 is inconsistent for x==0: The result should both have the same
+# sign as x, and should be non-zero.
+function rem1{T<:Real}(x::T, y::T)
+    depwarn("`rem1(x,y)` is discontinued, as it cannot be defined consistently for `x==0`. Rewrite the expression using `mod1` instead.", :rem1)
+    rem(x-1,y)+1
+end
+
 # Filesystem module updates
 
 @deprecate_binding FS Filesystem
@@ -893,3 +913,92 @@ function isexecutable(st::Filesystem.StatStruct)
     return (st.mode & 0o111) > 0
 end
 export isreadable, iswritable, isexecutable
+
+@deprecate RemoteRef RemoteChannel
+
+function tty_size()
+    depwarn("tty_size is deprecated. use `displaysize(io)` as a replacement", :tty_size)
+    if isdefined(Base, :active_repl)
+        os = REPL.outstream(Base.active_repl)
+        if isa(os, Terminals.TTYTerminal)
+            return displaysize(os)
+        end
+    end
+    if isdefined(Base, :STDOUT)
+        return displaysize(STDOUT)
+    end
+    return displaysize()
+end
+
+#14335
+@deprecate super(T::DataType) supertype(T)
+
+function with_output_limit(thk, lim=true) # thk is usually show()
+    depwarn("with_output_limit is deprecated. use `io = IOContext(io, :limit_output => lim)` as a replacement", :with_output_limit)
+    global _limit_output
+    last = _limit_output
+    _limit_output::Bool = lim
+    try
+        thk()
+    finally
+        _limit_output = last
+    end
+end
+
+#14555
+@deprecate_binding Coff_t Int64
+@deprecate_binding FileOffset Int64
+
+#14474
+macro boundscheck(yesno,blk)
+    depwarn("The meaning of `@boundscheck` has changed. It now indicates that the provided code block performs bounds checking, and may be elided when inbounds.", symbol("@boundscheck"))
+    if yesno === true
+        :(@inbounds $(esc(blk)))
+    end
+end
+
+
+@deprecate parseip(str::AbstractString) parse(IPAddr, str)
+
+#https://github.com/JuliaLang/julia/issues/14608
+@deprecate readall readstring
+@deprecate readbytes read
+
+@deprecate field_offset(x::DataType, idx) fieldoffset(x, idx+1)
+@noinline function fieldoffsets(x::DataType)
+    depwarn("fieldoffsets is deprecated. use `map(idx->fieldoffset(x, idx), 1:nfields(x))` instead", :fieldoffsets)
+    nf = nfields(x)
+    offsets = Array(Int, nf)
+    for i = 1:nf
+        offsets[i] = fieldoffset(x, i)
+    end
+    return offsets
+end
+export fieldoffsets
+
+# 14766
+@deprecate write(io::IO, p::Ptr, nb::Integer) unsafe_write(io, p, nb)
+
+@deprecate isgeneric(f) isa(f,Function)
+
+# need to do this manually since the front end deprecates method defs of `call`
+const call = @eval function(f, args...; kw...)
+    $(Expr(:meta, :noinline))
+    depwarn("call(f,args...) is deprecated, use f(args...) instead.", :call)
+    f(args...; kw...)
+end
+export call
+
+@deprecate_binding LambdaStaticData LambdaInfo
+
+# Changed issym to issymmetric. #15192
+@deprecate issym issymmetric
+
+# 15258
+@deprecate scale(α::Number, A::AbstractArray) α*A
+@deprecate scale(A::AbstractArray, α::Number) A*α
+@deprecate scale(A::AbstractMatrix, x::AbstractVector) A*Diagonal(x)
+@deprecate scale(x::AbstractVector, A::AbstractMatrix) Diagonal(x)*A
+
+# 1933
+@deprecate_binding SingleAsyncWork AsyncCondition

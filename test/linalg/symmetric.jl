@@ -46,15 +46,33 @@ let n=10
 
         debug && println("\ntype of a: ", eltya, "\n")
 
+        # similar
+        @test isa(similar(Symmetric(asym)), Symmetric{eltya})
+        @test isa(similar(Hermitian(asym)), Hermitian{eltya})
+        @test isa(similar(Symmetric(asym), Int), Symmetric{Int})
+        @test isa(similar(Hermitian(asym), Int), Hermitian{Int})
+        @test isa(similar(Symmetric(asym), (3,2)), Matrix{eltya})
+        @test isa(similar(Hermitian(asym), (3,2)), Matrix{eltya})
+        @test isa(similar(Symmetric(asym), Int, (3,2)), Matrix{Int})
+        @test isa(similar(Hermitian(asym), Int, (3,2)), Matrix{Int})
+
         # full
         @test asym == full(Hermitian(asym))
+
+        # parent
+
+        @test asym == parent(Hermitian(asym))
+
+        # getindex
+        @test asym[1,1] == Hermitian(asym)[1,1]
+        @test asym[1,1] == Symmetric(asym)[1,1]
 
         #trace
         @test trace(asym) == trace(Hermitian(asym))
 
-        # issym, ishermitian
+        # issymmetric, ishermitian
         if eltya <: Real
-            @test issym(Symmetric(asym))
+            @test issymmetric(Symmetric(asym))
             @test ishermitian(Symmetric(asym))
         end
         if eltya <: Complex
@@ -113,6 +131,9 @@ let n=10
 
         # rank
         let A = a[:,1:5]*a[:,1:5]'
+            # Make sure A is Hermitian even in the present of rounding error
+            # xianyi/OpenBLAS#729
+            A = (A' + A) / 2
             @test rank(A) == rank(Hermitian(A))
         end
 
@@ -208,4 +229,10 @@ end
 let A = [1.0+im 2.0; 2.0 0.0]
     @test !ishermitian(A)
     @test_throws ArgumentError Hermitian(A)
+end
+
+# Unary minus for Symmetric matrices
+let A = Symmetric(randn(5,5))
+    B = -A
+    @test A + B ≈ zeros(5,5)
 end

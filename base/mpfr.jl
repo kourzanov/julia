@@ -13,7 +13,7 @@ import
         exp, exp2, exponent, factorial, floor, fma, hypot, isinteger,
         isfinite, isinf, isnan, ldexp, log, log2, log10, max, min, mod, modf,
         nextfloat, prevfloat, promote_rule, rem, round, show,
-        showcompact, sum, sqrt, string, print, trunc, precision, exp10, expm1,
+        sum, sqrt, string, print, trunc, precision, exp10, expm1,
         gamma, lgamma, digamma, erf, erfc, zeta, eta, log1p, airyai,
         eps, signbit, sin, cos, tan, sec, csc, cot, acos, asin, atan,
         cosh, sinh, tanh, sech, csch, coth, acosh, asinh, atanh, atan2,
@@ -465,6 +465,7 @@ function airyai(x::BigFloat)
     ccall((:mpfr_ai, :libmpfr), Int32, (Ptr{BigFloat}, Ptr{BigFloat}, Int32), &z, &x, ROUNDING_MODE[end])
     return z
 end
+airy(x::BigFloat) = airyai(x)
 
 function ldexp(x::BigFloat, n::Clong)
     z = BigFloat()
@@ -684,10 +685,10 @@ end
 
 precision(::Type{BigFloat}) = DEFAULT_PRECISION[end]  # precision of the type BigFloat itself
 
-doc"""
-    setprecision(T, precision)
+"""
+    setprecision([T=BigFloat,] precision::Int)
 
-Set precision of type `T`.
+Set the precision (in bits) to be used for `T` arithmetic.
 """
 function setprecision(::Type{BigFloat}, precision::Int)
     if precision < 2
@@ -696,11 +697,6 @@ function setprecision(::Type{BigFloat}, precision::Int)
     DEFAULT_PRECISION[end] = precision
 end
 
-doc"""
-    setprecision(precision)
-
-Set the precision of `BigFloat`
-"""
 setprecision(precision::Int) = setprecision(BigFloat, precision)
 
 maxintfloat(x::BigFloat) = BigFloat(2)^precision(x)
@@ -824,10 +820,17 @@ eps(::Type{BigFloat}) = nextfloat(BigFloat(1)) - BigFloat(1)
 realmin(::Type{BigFloat}) = nextfloat(zero(BigFloat))
 realmax(::Type{BigFloat}) = prevfloat(BigFloat(Inf))
 
-doc"""
-    setprecision(f::Function, T, precision)
+"""
+    setprecision(f::Function, [T=BigFloat,] precision::Integer)
 
-Set the precision of the type `T` for the duration of the function `f`.
+Change the `T` arithmetic precision (in bits) for the duration of `f`.
+It is logically equivalent to:
+
+    old = precision(BigFloat)
+    setprecision(BigFloat, precision)
+    f()
+    setprecision(BigFloat, old)
+
 Often used as `setprecision(T, precision) do ... end`
 """
 function setprecision{T}(f::Function, ::Type{T}, prec::Integer)
@@ -840,12 +843,6 @@ function setprecision{T}(f::Function, ::Type{T}, prec::Integer)
     end
 end
 
-doc"""
-    setprecision(f::Function, precision::Integer)
-
-Set the `BigFloat` precision for the duration of the function `f`.
-Often used as `setprecision(precision) do ... end`
-"""
 setprecision(f::Function, precision::Integer) = setprecision(f, BigFloat, precision)
 
 function string(x::BigFloat)
@@ -854,6 +851,7 @@ function string(x::BigFloat)
     k = ceil(Int32, precision(x) * 0.3010299956639812)
     lng = k + Int32(8) # Add space for the sign, the most significand digit, the dot and the exponent
     buf = Array(UInt8, lng + 1)
+    # format strings are guaranteed to contain no NUL, so we don't use Cstring
     lng = ccall((:mpfr_snprintf,:libmpfr), Int32, (Ptr{UInt8}, Culong, Ptr{UInt8}, Ptr{BigFloat}...), buf, lng + 1, "%.Re", &x)
     if lng < k + 5 # print at least k decimal places
         lng = ccall((:mpfr_sprintf,:libmpfr), Int32, (Ptr{UInt8}, Ptr{UInt8}, Ptr{BigFloat}...), buf, "%.$(k)Re", &x)
@@ -866,7 +864,6 @@ end
 
 print(io::IO, b::BigFloat) = print(io, string(b))
 show(io::IO, b::BigFloat) = print(io, string(b))
-showcompact(io::IO, b::BigFloat) = print(io, string(b))
 
 # get/set exponent min/max
 get_emax() = ccall((:mpfr_get_emax, :libmpfr), Clong, ())

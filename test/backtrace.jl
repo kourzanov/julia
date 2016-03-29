@@ -5,7 +5,7 @@ have_backtrace = false
 for l in bt
     lkup = ccall(:jl_lookup_code_address, Any, (Ptr{Void},), l)
     if lkup[1] == :backtrace
-        @test lkup[6] == false # fromC
+        @test lkup[7] == false # fromC
         have_backtrace = true
         break
     end
@@ -32,10 +32,11 @@ eval(Expr(:function, Expr(:call, :test_inline_1),
                      Expr(:call, :throw, "foo"))))
 
 # different-file inline
+const absfilepath = OS_NAME == :Windows ? "C:\\foo\\bar\\baz.jl" : "/foo/bar/baz.jl"
 eval(Expr(:function, Expr(:call, :test_inline_2),
                      Expr(:block, LineNumberNode(symbol("backtrace.jl"), 99),
                      LineNumberNode(symbol("foobar.jl"), 666),
-                     LineNumberNode(symbol("/foo/bar/baz.jl"), 111),
+                     LineNumberNode(symbol(absfilepath), 111),
                      Expr(:call, :throw, "foo"))))
 
 try
@@ -43,11 +44,9 @@ try
     error("unexpected")
 catch err
     lkup = get_bt_frame(:test_inline_1, catch_backtrace())
-    if is(lkup, nothing)
-        throw(Test.Failure("Missing backtrace in inlining test"))
-    end
+    @test lkup !== nothing || "Missing backtrace in inlining test"
 
-    fname, file, line, inlinedfile, inlinedline, fromC = lkup
+    fname, file, line, inlinedfile, inlinedline, linfo, fromC = lkup
     @test endswith(string(inlinedfile), "backtrace.jl")
     @test inlinedline == 42
 end
@@ -56,12 +55,10 @@ try
     error("unexpected")
 catch err
     lkup = get_bt_frame(:test_inline_2, catch_backtrace())
-    if is(lkup, nothing)
-        throw(Test.Failure("Missing backtrace in inlining test"))
-    end
+    @test lkup !== nothing || "Missing backtrace in inlining test"
 
-    fname, file, line, inlinedfile, inlinedline, fromC = lkup
-    @test string(file) == "/foo/bar/baz.jl"
+    fname, file, line, inlinedfile, inlinedline, linfo, fromC = lkup
+    @test string(file) == absfilepath
     @test line == 111
     @test endswith(string(inlinedfile), "backtrace.jl")
     @test inlinedline == 99

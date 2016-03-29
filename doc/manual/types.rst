@@ -755,21 +755,11 @@ each field:
     ERROR: MethodError: `convert` has no method matching convert(::Type{Point{Float64}}, ::Float64)
     This may have arisen from a call to the constructor Point{Float64}(...),
     since type constructors fall back to convert methods.
-    Closest candidates are:
-      Point{T}(::Any, !Matched::Any)
-      call{T}(::Type{T}, ::Any)
-      convert{T}(::Type{T}, !Matched::T)
-     in call at essentials.jl:56
 
     julia> Point{Float64}(1.0,2.0,3.0)
     ERROR: MethodError: `convert` has no method matching convert(::Type{Point{Float64}}, ::Float64, ::Float64, ::Float64)
     This may have arisen from a call to the constructor Point{Float64}(...),
     since type constructors fall back to convert methods.
-    Closest candidates are:
-      Point{T}(::Any, ::Any)
-      call{T}(::Type{T}, ::Any)
-      convert{T}(::Type{T}, !Matched::T)
-     in call at essentials.jl:57
 
 Only one default constructor is generated for parametric types, since
 overriding it is not possible. This constructor accepts any arguments
@@ -805,11 +795,6 @@ isn't the case, the constructor will fail with a :exc:`MethodError`:
     ERROR: MethodError: `convert` has no method matching convert(::Type{Point{T}}, ::Int64, ::Float64)
     This may have arisen from a call to the constructor Point{T}(...),
     since type constructors fall back to convert methods.
-    Closest candidates are:
-      Point{T}(::T, !Matched::T)
-      call{T}(::Type{T}, ::Any)
-      convert{T}(::Type{T}, !Matched::T)
-     in call at essentials.jl:57
 
 Constructor methods to appropriately handle such mixed cases can be
 defined, but that will not be discussed until later on in
@@ -1228,29 +1213,29 @@ As it happens, types are all composite values and thus all have a type of
 
 :obj:`DataType` is its own type.
 
-Another operation that applies to some types is :func:`super`, which
+Another operation that applies to some types is :func:`supertype`, which
 reveals a type's supertype.
 Only declared types (:obj:`DataType`) have unambiguous supertypes:
 
 .. doctest::
 
-    julia> super(Float64)
+    julia> supertype(Float64)
     AbstractFloat
 
-    julia> super(Number)
+    julia> supertype(Number)
     Any
 
-    julia> super(AbstractString)
+    julia> supertype(AbstractString)
     Any
 
-    julia> super(Any)
+    julia> supertype(Any)
     Any
 
-If you apply :func:`super` to other type objects (or non-type objects), a
+If you apply :func:`supertype` to other type objects (or non-type objects), a
 :exc:`MethodError` is raised::
 
-    julia> super(Union{Float64,Int64})
-    ERROR: `super` has no method matching super(::Type{Union{Float64,Int64}})
+    julia> supertype(Union{Float64,Int64})
+    ERROR: `supertype` has no method matching supertype(::Type{Union{Float64,Int64}})
 
 "Value types"
 -------------
@@ -1298,7 +1283,7 @@ minimal interface designed to ensure that interactions with missing values
 are safe. At present, the interface consists of four possible interactions:
 
 - Construct a :obj:`Nullable` object.
-- Check if an :obj:`Nullable` object has a missing value.
+- Check if a :obj:`Nullable` object has a missing value.
 - Access the value of a :obj:`Nullable` object with a guarantee that a
   :exc:`NullException` will be thrown if the object's value is missing.
 - Access the value of a :obj:`Nullable` object with a guarantee that a default
@@ -1339,8 +1324,8 @@ Note the core distinction between these two ways of constructing a :obj:`Nullabl
 object: in one style, you provide a type, ``T``, as a function parameter; in
 the other style, you provide a single value of type ``T`` as an argument.
 
-Checking if an :obj:`Nullable` object has a value
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Checking if a :obj:`Nullable` object has a value
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 You can check if a :obj:`Nullable` object has any value using :func:`isnull`:
 
@@ -1352,10 +1337,10 @@ You can check if a :obj:`Nullable` object has any value using :func:`isnull`:
     julia> isnull(Nullable(0.0))
     false
 
-Safely accessing the value of an :obj:`Nullable` object
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Safely accessing the value of a :obj:`Nullable` object
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-You can safely access the value of an :obj:`Nullable` object using :func:`get`:
+You can safely access the value of a :obj:`Nullable` object using :func:`get`:
 
 .. doctest::
 

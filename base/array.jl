@@ -10,40 +10,7 @@ typealias DenseVector{T} DenseArray{T,1}
 typealias DenseMatrix{T} DenseArray{T,2}
 typealias DenseVecOrMat{T} Union{DenseVector{T}, DenseMatrix{T}}
 
-call{T}(::Type{Vector{T}}, m::Integer) = Array{T}(m)
-call{T}(::Type{Vector{T}}) = Array{T}(0)
-call(::Type{Vector}, m::Integer) = Array{Any}(m)
-call(::Type{Vector}) = Array{Any}(0)
-
-call{T}(::Type{Matrix{T}}, m::Integer, n::Integer) = Array{T}(m, n)
-call{T}(::Type{Matrix{T}}) = Array{T}(0, 0)
-call(::Type{Matrix}, m::Integer, n::Integer) = Array{Any}(m, n)
-call(::Type{Matrix}) = Array{Any}(0, 0)
-
 ## Basic functions ##
-
-# convert Arrays to pointer arrays for ccall
-function call{P<:Ptr,T<:Ptr}(::Type{Ref{P}}, a::Array{T}) # Ref{P<:Ptr}(a::Array{T<:Ptr})
-    return RefArray(a) # effectively a no-op
-end
-function call{P<:Ptr,T}(::Type{Ref{P}}, a::Array{T}) # Ref{P<:Ptr}(a::Array)
-    if (!isbits(T) && T <: eltype(P))
-        # this Array already has the right memory layout for the requested Ref
-        return RefArray(a,1,false) # root something, so that this function is type-stable
-    else
-        ptrs = Array(P, length(a)+1)
-        roots = Array(Any, length(a))
-        for i = 1:length(a)
-            root = cconvert(P, a[i])
-            ptrs[i] = unsafe_convert(P, root)::P
-            roots[i] = root
-        end
-        ptrs[length(a)+1] = C_NULL
-        return RefArray(ptrs,1,roots)
-    end
-end
-cconvert{P<:Ptr,T<:Ptr}(::Union{Type{Ptr{P}},Type{Ref{P}}}, a::Array{T}) = a
-cconvert{P<:Ptr}(::Union{Type{Ptr{P}},Type{Ref{P}}}, a::Array) = Ref{P}(a)
 
 size(a::Array, d) = arraysize(a, d)
 size(a::Vector) = (arraysize(a,1),)
@@ -232,35 +199,99 @@ convert{T,n,S}(::Type{Array{T,n}}, x::AbstractArray{S,n}) = copy!(Array(T, size(
 
 promote_rule{T,n,S}(::Type{Array{T,n}}, ::Type{Array{S,n}}) = Array{promote_type(T,S),n}
 
+## copying iterators to containers
+
+# make a collection similar to `c` and appropriate for collecting `itr`
+_similar_for(c::AbstractArray, T, itr, ::SizeUnknown) = similar(c, T, 0)
+_similar_for(c::AbstractArray, T, itr, ::HasLength) = similar(c, T, Int(length(itr)::Integer))
+_similar_for(c::AbstractArray, T, itr, ::HasShape) = similar(c, T, convert(Dims,size(itr)))
+_similar_for(c, T, itr, isz) = similar(c, T)
+
 """
     collect(element_type, collection)
 
 Return an array of type `Array{element_type,1}` of all items in a collection.
 """
-function collect{T}(::Type{T}, itr)
-    if applicable(length, itr)
-        # when length() isn't defined this branch might pollute the
-        # type of the other.
-        a = Array(T,length(itr)::Integer)
-        i = 0
-        for x in itr
-            a[i+=1] = x
-        end
-    else
-        a = Array(T,0)
-        for x in itr
-            push!(a,x)
-        end
-    end
-    return a
-end
+collect{T}(::Type{T}, itr) = collect(Generator(T, itr))
 
 """
     collect(collection)
 
 Return an array of all items in a collection. For associative collections, returns Pair{KeyType, ValType}.
 """
-collect(itr) = collect(eltype(itr), itr)
+collect(itr) = _collect(1:1 #= Array =#, itr, iteratoreltype(itr), iteratorsize(itr))
+
+collect_similar(cont, itr) = _collect(cont, itr, iteratoreltype(itr), iteratorsize(itr))
+
+_collect(cont, itr, ::HasEltype, isz::Union{HasLength,HasShape}) =
+    copy!(_similar_for(cont, eltype(itr), itr, isz), itr)
+
+function _collect(cont, itr, ::HasEltype, isz::SizeUnknown)
+    a = _similar_for(cont, eltype(itr), itr, isz)
+    for x in itr
+        push!(a,x)
+    end
+    return a
+end
+
+_collect(c, itr, ::EltypeUnknown, isz::SizeUnknown) = grow_to!(_similar_for(c, Union{}, itr, isz), itr)
+
+function _collect(c, itr, ::EltypeUnknown, isz::Union{HasLength,HasShape})
+    st = start(itr)
+    if done(itr,st)
+        return _similar_for(c, Union{}, itr, isz)
+    end
+    v1, st = next(itr, st)
+    collect_to_with_first!(_similar_for(c, typeof(v1), itr, isz), v1, itr, st)
+end
+
+function collect_to_with_first!(dest::AbstractArray, v1, itr, st)
+    dest[1] = v1
+    return collect_to!(dest, itr, 2, st)
+end
+
+function collect_to_with_first!(dest, v1, itr, st)
+    push!(dest, v1)
+    return grow_to!(dest, itr, st)
+end
+
+function collect_to!{T}(dest::AbstractArray{T}, itr, offs, st)
+    # collect to dest array, checking the type of each result. if a result does not
+    # match, widen the result type and re-dispatch.
+    i = offs
+    while !done(itr, st)
+        el, st = next(itr, st)
+        S = typeof(el)
+        if S === T || S <: T
+            @inbounds dest[i] = el::T
+            i += 1
+        else
+            R = typejoin(T, S)
+            new = similar(dest, R)
+            copy!(new,1, dest,1, i-1)
+            @inbounds new[i] = el
+            return collect_to!(new, itr, i+1, st)
+        end
+    end
+    return dest
+end
+
+function grow_to!(dest, itr, st = start(itr))
+    T = eltype(dest)
+    while !done(itr, st)
+        el, st = next(itr, st)
+        S = typeof(el)
+        if S === T || S <: T
+            push!(dest, el::T)
+        else
+            new = similar(dest, typejoin(T, S))
+            copy!(new, dest)
+            push!(new, el)
+            return grow_to!(new, itr, st)
+        end
+    end
+    return dest
+end
 
 ## Iteration ##
 start(A::Array) = 1
@@ -273,11 +304,10 @@ done(a::Array,i) = i == length(a)+1
 getindex(A::Array, i1::Real) = arrayref(A, to_index(i1))
 getindex(A::Array, i1::Real, i2::Real, I::Real...) = arrayref(A, to_index(i1), to_index(i2), to_indexes(I...)...)
 
-unsafe_getindex(A::Array, i1::Real, I::Real...) = @inbounds return arrayref(A, to_index(i1), to_indexes(I...)...)
-
 # Faster contiguous indexing using copy! for UnitRange and Colon
-getindex(A::Array, I::UnitRange{Int}) = (checkbounds(A, I); unsafe_getindex(A, I))
-function unsafe_getindex(A::Array, I::UnitRange{Int})
+function getindex(A::Array, I::UnitRange{Int})
+    @_inline_meta
+    @boundscheck checkbounds(A, I)
     lI = length(I)
     X = similar(A, lI)
     if lI > 0
@@ -285,8 +315,7 @@ function unsafe_getindex(A::Array, I::UnitRange{Int})
     end
     return X
 end
-getindex(A::Array, c::Colon) = unsafe_getindex(A, c)
-function unsafe_getindex(A::Array, ::Colon)
+function getindex(A::Array, c::Colon)
     lI = length(A)
     X = similar(A, lI)
     if lI > 0
@@ -296,18 +325,13 @@ function unsafe_getindex(A::Array, ::Colon)
 end
 
 # This is redundant with the abstract fallbacks, but needed for bootstrap
-function getindex{T<:Real}(A::Array, I::Range{T})
-    return [ A[to_index(i)] for i in I ]
+function getindex{S,T<:Real}(A::Array{S}, I::Range{T})
+    return S[ A[to_index(i)] for i in I ]
 end
 
 ## Indexing: setindex! ##
 setindex!{T}(A::Array{T}, x, i1::Real) = arrayset(A, convert(T,x)::T, to_index(i1))
 setindex!{T}(A::Array{T}, x, i1::Real, i2::Real, I::Real...) = arrayset(A, convert(T,x)::T, to_index(i1), to_index(i2), to_indexes(I...)...)
-
-# Type inference is confused by `@inbounds return ...` and introduces a
-# !ispointerfree local variable and a GC frame
-unsafe_setindex!{T}(A::Array{T}, x, i1::Real, I::Real...) =
-    (@inbounds arrayset(A, convert(T,x)::T, to_index(i1), to_indexes(I...)...); A)
 
 # These are redundant with the abstract fallbacks but needed for bootstrap
 function setindex!(A::Array, x, I::AbstractVector{Int})
@@ -334,8 +358,9 @@ function setindex!(A::Array, X::AbstractArray, I::AbstractVector{Int})
 end
 
 # Faster contiguous setindex! with copy!
-setindex!{T}(A::Array{T}, X::Array{T}, I::UnitRange{Int}) = (checkbounds(A, I); unsafe_setindex!(A, X, I))
-function unsafe_setindex!{T}(A::Array{T}, X::Array{T}, I::UnitRange{Int})
+function setindex!{T}(A::Array{T}, X::Array{T}, I::UnitRange{Int})
+    @_inline_meta
+    @boundscheck checkbounds(A, I)
     lI = length(I)
     setindex_shape_check(X, lI)
     if lI > 0
@@ -343,8 +368,7 @@ function unsafe_setindex!{T}(A::Array{T}, X::Array{T}, I::UnitRange{Int})
     end
     return A
 end
-setindex!{T}(A::Array{T}, X::Array{T}, c::Colon) = unsafe_setindex!(A, X, c)
-function unsafe_setindex!{T}(A::Array{T}, X::Array{T}, ::Colon)
+function setindex!{T}(A::Array{T}, X::Array{T}, c::Colon)
     lI = length(A)
     setindex_shape_check(X, lI)
     if lI > 0
@@ -622,7 +646,6 @@ function lexcmp(a::Array{UInt8,1}, b::Array{UInt8,1})
     c < 0 ? -1 : c > 0 ? +1 : cmp(length(a),length(b))
 end
 
-# note: probably should be StridedVector or AbstractVector
 function reverse(A::AbstractVector, s=1, n=length(A))
     B = similar(A)
     for i = 1:s-1
@@ -638,9 +661,7 @@ function reverse(A::AbstractVector, s=1, n=length(A))
 end
 reverseind(a::AbstractVector, i::Integer) = length(a) + 1 - i
 
-reverse(v::StridedVector) = (n=length(v); [ v[n-i+1] for i=1:n ])
-reverse(v::StridedVector, s, n=length(v)) = reverse!(copy(v), s, n)
-function reverse!(v::StridedVector, s=1, n=length(v))
+function reverse!(v::AbstractVector, s=1, n=length(v))
     if n <= s  # empty case; ok
     elseif !(1 ≤ s ≤ endof(v))
         throw(BoundsError(v, s))
@@ -724,7 +745,7 @@ end
 findfirst(testf::Function, A) = findnext(testf, A, 1)
 
 # returns the index of the previous non-zero element, or 0 if all zeros
-function findprev(A, start)
+function findprev(A, start::Integer)
     for i = start:-1:1
         A[i] != 0 && return i
     end
@@ -733,7 +754,7 @@ end
 findlast(A) = findprev(A, length(A))
 
 # returns the index of the matching element, or 0 if no matching
-function findprev(A, v, start)
+function findprev(A, v, start::Integer)
     for i = start:-1:1
         A[i] == v && return i
     end
@@ -742,7 +763,7 @@ end
 findlast(A, v) = findprev(A, v, length(A))
 
 # returns the index of the previous element for which the function returns true, or zero if it never does
-function findprev(testf::Function, A, start)
+function findprev(testf::Function, A, start::Integer)
     for i = start:-1:1
         testf(A[i]) && return i
     end
@@ -754,8 +775,8 @@ function find(testf::Function, A::AbstractArray)
     # use a dynamic-length array to store the indexes, then copy to a non-padded
     # array for the return
     tmpI = Array(Int, 0)
-    for i = 1:length(A)
-        if testf(A[i])
+    for (i,a) = enumerate(A)
+        if testf(a)
             push!(tmpI, i)
         end
     end
@@ -764,12 +785,12 @@ function find(testf::Function, A::AbstractArray)
     I
 end
 
-function find(A::StridedArray)
+function find(A::AbstractArray)
     nnzA = countnz(A)
     I = similar(A, Int, nnzA)
     count = 1
-    for i=1:length(A)
-        if A[i] != 0
+    for (i,a) in enumerate(A)
+        if a != 0
             I[count] = i
             count += 1
         end
@@ -782,7 +803,7 @@ find(testf::Function, x::Number) = !testf(x) ? Array(Int,0) : [1]
 
 findn(A::AbstractVector) = find(A)
 
-function findn(A::StridedMatrix)
+function findn(A::AbstractMatrix)
     nnzA = countnz(A)
     I = similar(A, Int, nnzA)
     J = similar(A, Int, nnzA)
@@ -821,36 +842,36 @@ function findmax(a)
     if isempty(a)
         throw(ArgumentError("collection must be non-empty"))
     end
-    i = start(a)
-    mi = i
-    m, i = next(a, i)
-    while !done(a, i)
-        iold = i
-        ai, i = next(a, i)
+    s = start(a)
+    mi = i = 1
+    m, s = next(a, s)
+    while !done(a, s)
+        ai, s = next(a, s)
+        i += 1
         if ai > m || m!=m
             m = ai
-            mi = iold
+            mi = i
         end
     end
-    return (m, iterstate(mi))
+    return (m, mi)
 end
 
 function findmin(a)
     if isempty(a)
         throw(ArgumentError("collection must be non-empty"))
     end
-    i = start(a)
-    mi = i
-    m, i = next(a, i)
-    while !done(a, i)
-        iold = i
-        ai, i = next(a, i)
+    s = start(a)
+    mi = i = 1
+    m, s = next(a, s)
+    while !done(a, s)
+        ai, s = next(a, s)
+        i += 1
         if ai < m || m!=m
             m = ai
-            mi = iold
+            mi = i
         end
     end
-    return (m, iterstate(mi))
+    return (m, mi)
 end
 
 indmax(a) = findmax(a)[2]
@@ -863,24 +884,11 @@ function indexin(a::AbstractArray, b::AbstractArray)
     [get(bdict, i, 0) for i in a]
 end
 
-# findin (the index of intersection)
-function findin(a, b::UnitRange)
-    ind = Array(Int, 0)
-    f = first(b)
-    l = last(b)
-    for i = 1:length(a)
-        if f <= a[i] <= l
-            push!(ind, i)
-        end
-    end
-    ind
-end
-
 function findin(a, b)
     ind = Array(Int, 0)
     bset = Set(b)
-    @inbounds for i = 1:length(a)
-        a[i] in bset && push!(ind, i)
+    @inbounds for (i,ai) in enumerate(a)
+        ai in bset && push!(ind, i)
     end
     ind
 end
@@ -915,9 +923,9 @@ filter(f, As::AbstractArray) = As[map(f, As)::AbstractArray{Bool}]
 
 function filter!(f, a::Vector)
     insrt = 1
-    for curr = 1:length(a)
-        if f(a[curr])
-            a[insrt] = a[curr]
+    for acurr in a
+        if f(acurr)
+            a[insrt] = acurr
             insrt += 1
         end
     end
@@ -927,9 +935,9 @@ end
 
 function filter(f, a::Vector)
     r = Array(eltype(a), 0)
-    for i = 1:length(a)
-        if f(a[i])
-            push!(r, a[i])
+    for ai in a
+        if f(ai)
+            push!(r, ai)
         end
     end
     return r
@@ -942,8 +950,8 @@ function intersect(v1, vs...)
     ret = Array(eltype(v1),0)
     for v_elem in v1
         inall = true
-        for i = 1:length(vs)
-            if !in(v_elem, vs[i])
+        for vsi in vs
+            if !in(v_elem, vsi)
                 inall=false; break
             end
         end

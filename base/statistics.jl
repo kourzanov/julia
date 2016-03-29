@@ -98,7 +98,7 @@ varzm{T}(A::AbstractArray{T}, region; corrected::Bool=true) =
 immutable CentralizedAbs2Fun{T<:Number} <: Func{1}
     m::T
 end
-call(f::CentralizedAbs2Fun, x) = abs2(x - f.m)
+(f::CentralizedAbs2Fun)(x) = abs2(x - f.m)
 centralize_sumabs2(A::AbstractArray, m::Number) =
     mapreduce(CentralizedAbs2Fun(m), AddFun(), A)
 centralize_sumabs2(A::AbstractArray, m::Number, ifirst::Int, ilast::Int) =
@@ -126,7 +126,7 @@ centralize_sumabs2(A::AbstractArray, m::Number, ifirst::Int, ilast::Int) =
             @nloops $N i d->(d>1? (1:size(A,d)) : (1:1)) d->(j_d = sizeR_d==1 ? 1 : i_d) begin
                 @inbounds r = (@nref $N R j)
                 @inbounds m = (@nref $N means j)
-                for i_1 = 1:sizA1
+                for i_1 = 1:sizA1                # fixme (iter): change when #15459 is done
                     @inbounds r += abs2((@nref $N A i) - m)
                 end
                 @inbounds (@nref $N R j) = r
@@ -281,29 +281,34 @@ covm(x::AbstractVecOrMat, xmean, y::AbstractVecOrMat, ymean, vardim::Int=1, corr
     covzm(x .- xmean, y .- ymean, vardim, corrected)
 
 # cov (API)
-doc"""
+"""
     cov(x[, corrected=true])
 
-Compute the variance of the vector `x`. If `corrected` is `true` (the default) then the sum is scaled with `n-1` wheares the sum is scaled with `n` if `corrected` is `false` where `n = length(x)`.
+Compute the variance of the vector `x`. If `corrected` is `true` (the default) then the sum
+is scaled with `n-1` wheares the sum is scaled with `n` if `corrected` is `false` where `n = length(x)`.
 """
 cov(x::AbstractVector, corrected::Bool) = covm(x, Base.mean(x), corrected)
 # This ugly hack is necessary to make the method below considered more specific than the deprecated method. When the old keyword version has been completely deprecated, these two methods can be merged
 cov{T<:AbstractVector}(x::T) = covm(x, Base.mean(x), true)
 
-doc"""
+"""
     cov(X[, vardim=1, corrected=true])
 
-Compute the covariance matrix of the matrix `X` along the dimension `vardim`. If `corrected` is `true` (the default) then the sum is scaled with `n-1` wheares the sum is scaled with `n` if `corrected` is `false` where `n = size(X, vardim)`.
+Compute the covariance matrix of the matrix `X` along the dimension `vardim`. If `corrected`
+is `true` (the default) then the sum is scaled with `n-1` wheares the sum is scaled with `n`
+if `corrected` is `false` where `n = size(X, vardim)`.
 """
 cov(X::AbstractMatrix, vardim::Int, corrected::Bool=true) =
     covm(X, _vmean(X, vardim), vardim, corrected)
 # This ugly hack is necessary to make the method below considered more specific than the deprecated method. When the old keyword version has been completely deprecated, these two methods can be merged
 cov{T<:AbstractMatrix}(X::T) = cov(X, 1, true)
 
-doc"""
+"""
     cov(x, y[, corrected=true])
 
-Compute the covariance between the vectors `x` and `y`. If `corrected` is `true` (the default) then the sum is scaled with `n-1` wheares the sum is scaled with `n` if `corrected` is `false` where `n = length(x) = length(y)`.
+Compute the covariance between the vectors `x` and `y`. If `corrected` is `true` (the default)
+then the sum is scaled with `n-1` wheares the sum is scaled with `n` if `corrected` is `false`
+where `n = length(x) = length(y)`.
 """
 cov(x::AbstractVector, y::AbstractVector, corrected::Bool) =
     covm(x, Base.mean(x), y, Base.mean(y), corrected)
@@ -311,11 +316,12 @@ cov(x::AbstractVector, y::AbstractVector, corrected::Bool) =
 cov{T<:AbstractVector,S<:AbstractVector}(x::T, y::S) =
     covm(x, Base.mean(x), y, Base.mean(y), true)
 
-doc"""
+"""
     cov(X, Y[, vardim=1, corrected=true])
 
-Compute the covariance between the vectors or matrices `X` and `Y` along the dimension `vardim`. If `corrected` is `true` (the default) then the sum is scaled with `n-1` wheares the sum is scaled with `n` if `corrected` is `false` where `n = size(X, vardim) = size(Y, vardim)`.
-
+Compute the covariance between the vectors or matrices `X` and `Y` along the dimension
+`vardim`. If `corrected` is `true` (the default) then the sum is scaled with `n-1` wheares
+the sum is scaled with `n` if `corrected` is `false` where `n = size(X, vardim) = size(Y, vardim)`.
 """
 cov(X::AbstractVecOrMat, Y::AbstractVecOrMat, vardim::Int, corrected::Bool=true) =
     covm(X, _vmean(X, vardim), Y, _vmean(Y, vardim), vardim, corrected)
@@ -345,9 +351,9 @@ end
 function cov2cor!(C::AbstractMatrix, xsd::Number, ysd::AbstractArray)
     nx, ny = size(C)
     length(ysd) == ny || throw(DimensionMismatch("inconsistent dimensions"))
-    for j = 1:ny
-        for i = 1:nx
-            C[i,j] /= (xsd * ysd[j])
+    for (j, y) in enumerate(ysd)   # fixme (iter): here and in all `cov2cor!` we assume that `C` is efficiently indexed by integers
+        for i in 1:nx
+            C[i,j] /= (xsd * y)
         end
     end
     return C
@@ -355,9 +361,9 @@ end
 function cov2cor!(C::AbstractMatrix, xsd::AbstractArray, ysd::Number)
     nx, ny = size(C)
     length(xsd) == nx || throw(DimensionMismatch("inconsistent dimensions"))
-    for j = 1:ny
-        for i = 1:nx
-            C[i,j] /= (xsd[i] * ysd)
+    for j in 1:ny
+        for (i, x) in enumerate(xsd)
+            C[i,j] /= (x * ysd)
         end
     end
     return C
@@ -366,9 +372,9 @@ function cov2cor!(C::AbstractMatrix, xsd::AbstractArray, ysd::AbstractArray)
     nx, ny = size(C)
     (length(xsd) == nx && length(ysd) == ny) ||
         throw(DimensionMismatch("inconsistent dimensions"))
-    for j = 1:ny
-        for i = 1:nx
-            C[i,j] /= (xsd[i] * ysd[j])
+    for (i, x) in enumerate(xsd)
+        for (j, y) in enumerate(ysd)
+            C[i,j] /= x*y
         end
     end
     return C
@@ -416,7 +422,7 @@ corm(x::AbstractVecOrMat, xmean, y::AbstractVecOrMat, ymean, vardim::Int=1) =
     corzm(x .- xmean, y .- ymean, vardim)
 
 # cor
-doc"""
+"""
     cor(x)
 
 Return the number one.
@@ -424,7 +430,7 @@ Return the number one.
 cor{T<:AbstractVector}(x::T) = one(real(eltype(x)))
 # This ugly hack is necessary to make the method below considered more specific than the deprecated method. When the old keyword version has been completely deprecated, these two methods can be merged
 
-doc"""
+"""
     cor(X[, vardim=1])
 
 Compute the Pearson correlation matrix of the matrix `X` along the dimension `vardim`.
@@ -433,7 +439,7 @@ cor(X::AbstractMatrix, vardim::Int) = corm(X, _vmean(X, vardim), vardim)
 # This ugly hack is necessary to make the method below considered more specific than the deprecated method. When the old keyword version has been completely deprecated, these two methods can be merged
 cor{T<:AbstractMatrix}(X::T) = cor(X, 1)
 
-doc"""
+"""
     cor(x, y)
 
 Compute the Pearson correlation between the vectors `x` and `y`.
@@ -441,11 +447,10 @@ Compute the Pearson correlation between the vectors `x` and `y`.
 cor{T<:AbstractVector,S<:AbstractVector}(x::T, y::S) = corm(x, Base.mean(x), y, Base.mean(y))
 # This ugly hack is necessary to make the method below considered more specific than the deprecated method. When the old keyword version has been completely deprecated, these two methods can be merged
 
-doc"""
+"""
     cor(X, Y[, vardim=1])
 
 Compute the Pearson correlation between the vectors or matrices `X` and `Y` along the dimension `vardim`.
-
 """
 cor(x::AbstractVecOrMat, y::AbstractVecOrMat, vardim::Int) =
     corm(x, _vmean(x, vardim), y, _vmean(y, vardim), vardim)
@@ -510,51 +515,105 @@ median{T}(v::AbstractArray{T}, region) = mapslices(median!, v, region)
 
 # for now, use the R/S definition of quantile; may want variants later
 # see ?quantile in R -- this is type 7
-# TODO: need faster implementation (use select!?)
-#
-function quantile!(v::AbstractVector, q::AbstractVector)
-    isempty(v) && throw(ArgumentError("empty data array"))
-    isempty(q) && throw(ArgumentError("empty quantile array"))
+"""
+    quantile!([q, ] v, p; sorted=false)
 
-    # make sure the quantiles are in [0,1]
-    q = bound_quantiles(q)
+Compute the quantile(s) of a vector `v` at the probabilities `p`, with optional output into
+array `q` (if not provided, a new output array is created). The keyword argument `sorted`
+indicates whether `v` can be assumed to be sorted; if `false` (the default), then the
+elements of `v` may be partially sorted.
+
+The elements of `p` should be on the interval [0,1], and `v` should not have any `NaN`
+values.
+
+Quantiles are computed via linear interpolation between the points `((k-1)/(n-1), v[k])`,
+for `k = 1:n` where `n = length(v)`. This corresponds to Definition 7 of Hyndman and Fan
+(1996), and is the same as the R default.
+
+* Hyndman, R.J and Fan, Y. (1996) "Sample Quantiles in Statistical Packages",
+  *The American Statistician*, Vol. 50, No. 4, pp. 361-365
+"""
+function quantile!(q::AbstractArray, v::AbstractVector, p::AbstractArray;
+                   sorted::Bool=false)
+    size(p) == size(q) || throw(DimensionMismatch())
+
+    isempty(v) && throw(ArgumentError("empty data vector"))
 
     lv = length(v)
-    lq = length(q)
+    if !sorted
+        minp, maxp = extrema(p)
+        lo = floor(Int,1+minp*(lv-1))
+        hi = ceil(Int,1+maxp*(lv-1))
 
-    index = 1 .+ (lv-1)*q
-    lo = floor(Int,index)
-    hi = ceil(Int,index)
-    sort!(v)
-    isnan(v[end]) && throw(ArgumentError("quantiles are undefined in presence of NaNs"))
-    i = find(index .> lo)
-    r = float(v[lo])
-    h = (index.-lo)[i]
-    r[i] = (1.-h).*r[i] + h.*v[hi[i]]
-    return r
-end
-
-"""
-    quantile(v, ps)
-
-Compute the quantiles of a vector `v` at a specified set of probability values `ps`. Note: Julia does not ignore `NaN` values in the computation.
-"""
-quantile(v::AbstractVector, q::AbstractVector) = quantile!(copy(v),q)
-"""
-    quantile(v, p)
-
-Compute the quantile of a vector `v` at the probability `p`. Note: Julia does not ignore `NaN` values in the computation.
-"""
-quantile(v::AbstractVector, q::Number) = quantile(v,[q])[1]
-
-function bound_quantiles(qs::AbstractVector)
-    epsilon = 100*eps()
-    if (any(qs .< -epsilon) || any(qs .> 1+epsilon))
-        throw(ArgumentError("quantiles out of [0,1] range"))
+        # only need to perform partial sort
+        sort!(v, 1, lv, PartialQuickSort(lo:hi), Base.Sort.Forward)
     end
-    [min(1,max(0,q)) for q = qs]
+    isnan(v[end]) && throw(ArgumentError("quantiles are undefined in presence of NaNs"))
+
+    for (i, j) in zip(eachindex(p), eachindex(q))
+        @inbounds q[j] = _quantile(v,p[i])
+    end
+    return q
 end
 
+quantile!(v::AbstractVector, p::AbstractArray; sorted::Bool=false) =
+    quantile!(similar(p,float(eltype(v))), v, p; sorted=sorted)
+
+function quantile!(v::AbstractVector, p::Real;
+                   sorted::Bool=false)
+    isempty(v) && throw(ArgumentError("empty data vector"))
+
+    lv = length(v)
+    if !sorted
+        lo = floor(Int,1+p*(lv-1))
+        hi = ceil(Int,1+p*(lv-1))
+
+        # only need to perform partial sort
+        sort!(v, 1, lv, PartialQuickSort(lo:hi), Base.Sort.Forward)
+    end
+    isnan(v[end]) && throw(ArgumentError("quantiles are undefined in presence of NaNs"))
+
+    return _quantile(v,p)
+end
+
+# Core quantile lookup function: assumes `v` sorted
+@inline function _quantile(v::AbstractVector, p::Real)
+    T = float(eltype(v))
+    isnan(p) && return T(NaN)
+
+    lv = length(v)
+    index = 1 + (lv-1)*p
+    1 <= index <= lv || error("input probability out of [0,1] range")
+
+    indlo = floor(index)
+    i = trunc(Int,indlo)
+
+    if index == indlo
+        return T(v[i])
+    else
+        h = T(index - indlo)
+        return (1-h)*T(v[i]) + h*T(v[i+1])
+    end
+end
+
+
+"""
+    quantile(v, p; sorted=false)
+
+Compute the quantile(s) of a vector `v` at a specified probability or vector `p`. The
+keyword argument `sorted` indicates whether `v` can be assumed to be sorted.
+
+The `p` should be on the interval [0,1], and `v` should not have any `NaN` values.
+
+Quantiles are computed via linear interpolation between the points `((k-1)/(n-1), v[k])`,
+for `k = 1:n` where `n = length(v)`. This corresponds to Definition 7 of Hyndman and Fan
+(1996), and is the same as the R default.
+
+* Hyndman, R.J and Fan, Y. (1996) "Sample Quantiles in Statistical Packages",
+  *The American Statistician*, Vol. 50, No. 4, pp. 361-365
+"""
+quantile(v::AbstractVector, p; sorted::Bool=false) =
+    quantile!(sorted ? v : copy!(similar(v),v), p; sorted=sorted)
 
 
 ##### histogram #####
@@ -684,7 +743,7 @@ function hist2d!{HT}(H::AbstractArray{HT,2}, v::AbstractMatrix,
     if init
         fill!(H, zero(HT))
     end
-    for i = 1:size(v,1)
+    for i = 1:size(v,1)             # fixme (iter): update when #15459 is done
         x = searchsortedfirst(edg1, v[i,1]) - 1
         y = searchsortedfirst(edg2, v[i,2]) - 1
         if 1 <= x <= n && 1 <= y <= m

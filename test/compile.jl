@@ -2,27 +2,34 @@
 
 using Base.Test
 
+function redirected_stderr()
+    rd, wr = redirect_stderr()
+    @async readall(rd) # make sure the kernel isn't being forced to buffer the output
+    nothing
+end
+
+olderr = STDERR
 dir = mktempdir()
+dir2 = mktempdir()
 insert!(LOAD_PATH, 1, dir)
 insert!(Base.LOAD_CACHE_PATH, 1, dir)
 Foo_module = :Foo4b3a94a1a081a8cb
 try
     Foo_file = joinpath(dir, "$Foo_module.jl")
 
-    open(Foo_file, "w") do f
-        print(f, """
-              __precompile__(true)
-              module $Foo_module
-              @doc "foo function" foo(x) = x + 1
-              include_dependency("foo.jl")
-              include_dependency("foo.jl")
-              module Bar
-              @doc "bar function" bar(x) = x + 2
-              include_dependency("bar.jl")
-              end
-              end
-              """)
-    end
+    write(Foo_file,
+          """
+          __precompile__(true)
+          module $Foo_module
+          @doc "foo function" foo(x) = x + 1
+          include_dependency("foo.jl")
+          include_dependency("foo.jl")
+          module Bar
+          @doc "bar function" bar(x) = x + 2
+          include_dependency("bar.jl")
+          end
+          end
+          """)
 
     # Issue #12623
     @test __precompile__(true) === nothing
@@ -32,8 +39,12 @@ try
 
     # use _require_from_serialized to ensure that the test fails if
     # the module doesn't load from the image:
-    println(STDERR, "\nNOTE: The following 'replacing module' warning indicates normal operation:")
-    @test nothing !== Base._require_from_serialized(myid(), Foo_module, true)
+    try
+        redirected_stderr()
+        @test nothing !== Base._require_from_serialized(myid(), Foo_module, #=broadcast-load=#false)
+    finally
+        redirect_stderr(olderr)
+    end
 
     let Foo = eval(Main, Foo_module)
         @test Foo.foo(17) == 18
@@ -50,42 +61,69 @@ try
     end
 
     Baz_file = joinpath(dir, "Baz.jl")
-    open(Baz_file, "w") do f
-        print(f, """
-              __precompile__(false)
-              module Baz
-              end
-              """)
+    write(Baz_file,
+          """
+          __precompile__(false)
+          module Baz
+          end
+          """)
+
+    try
+        redirected_stderr()
+        Base.compilecache("Baz") # from __precompile__(false)
+        error("__precompile__ disabled test failed")
+    catch exc
+        redirect_stderr(olderr)
+        isa(exc, ErrorException) || rethrow(exc)
+        !isempty(search(exc.msg, "__precompile__(false)")) && rethrow(exc)
     end
-    println(STDERR, "\nNOTE: The following 'LoadError: __precompile__(false)' indicates normal operation")
-    @test_throws ErrorException Base.compilecache("Baz") # from __precompile__(false)
 
     # Issue #12720
     FooBar_file = joinpath(dir, "FooBar.jl")
-    open(FooBar_file, "w") do f
-        print(f, """
-              __precompile__(true)
-              module FooBar
-              end
-              """)
-    end
+    write(FooBar_file,
+          """
+          __precompile__(true)
+          module FooBar
+          end
+          """)
+
     Base.compilecache("FooBar")
     sleep(2)
-    open(FooBar_file, "w") do f
-        print(f, """
-              __precompile__(true)
-              module FooBar
-              error("break me")
-              end
-              """)
-    end
-    println(STDERR, "\nNOTE: The following 'LoadError: break me' indicates normal operation")
-    @test_throws ErrorException Base.require(:FooBar)
+    @test isfile(joinpath(dir, "FooBar.ji"))
 
+    touch(FooBar_file)
+    insert!(Base.LOAD_CACHE_PATH, 1, dir2)
+    Base.recompile_stale(:FooBar, joinpath(dir, "FooBar.ji"))
+    sleep(2)
+    @test isfile(joinpath(dir2, "FooBar.ji"))
+    @test Base.stale_cachefile(FooBar_file, joinpath(dir, "FooBar.ji"))
+    @test !Base.stale_cachefile(FooBar_file, joinpath(dir2, "FooBar.ji"))
+
+    write(FooBar_file,
+          """
+          __precompile__(true)
+          module FooBar
+          error("break me")
+          end
+          """)
+
+    try
+        redirected_stderr()
+        Base.require(:FooBar)
+        error("\"LoadError: break me\" test failed")
+    catch exc
+        redirect_stderr(olderr)
+        isa(exc, ErrorException) || rethrow(exc)
+        !isempty(search(exc.msg, "ERROR: LoadError: break me")) && rethrow(exc)
+    end
 finally
-    splice!(Base.LOAD_CACHE_PATH, 1)
+    if STDERR != olderr
+        redirect_stderr(olderr)
+    end
+    splice!(Base.LOAD_CACHE_PATH, 1:2)
     splice!(LOAD_PATH, 1)
     rm(dir, recursive=true)
+    rm(dir2, recursive=true)
 end
 
 # test --compilecache=no command line option
@@ -94,14 +132,13 @@ let dir = mktempdir(),
     Time_module = :Time4b3a94a1a081a8cb
 
     try
-        open(joinpath(dir, "$Time_module.jl"), "w") do io
-            write(io, """
-            module $Time_module
-                __precompile__(true)
-                time = Base.time()
-            end
-            """)
-        end
+        write(joinpath(dir, "$Time_module.jl"),
+              """
+              module $Time_module
+                  __precompile__(true)
+                  time = Base.time()
+              end
+              """)
 
         eval(quote
             insert!(LOAD_PATH, 1, $(dir))
@@ -109,7 +146,7 @@ let dir = mktempdir(),
             Base.compilecache(:Time4b3a94a1a081a8cb)
         end)
 
-        exename = `$(joinpath(JULIA_HOME, Base.julia_exename())) --precompiled=yes`
+        exename = `$(Base.julia_cmd()) --precompiled=yes`
 
         testcode = """
             insert!(LOAD_PATH, 1, $(repr(dir)))
@@ -132,4 +169,16 @@ let dir = mktempdir(),
         splice!(LOAD_PATH, 1)
         rm(dir, recursive=true)
     end
+end
+
+let module_name = string("a",randstring())
+    insert!(LOAD_PATH, 1, pwd())
+    file_name = string(module_name, ".jl")
+    touch(file_name)
+    code = """module $(module_name)\nend\n"""
+    write(file_name, code)
+    reload(module_name)
+    @test typeof(eval(symbol(module_name))) == Module
+    deleteat!(LOAD_PATH,1)
+    rm(file_name)
 end

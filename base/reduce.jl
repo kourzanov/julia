@@ -93,12 +93,12 @@ foldr(op, itr) = mapfoldr(IdFun(), op, itr)
 
 # mapreduce_***_impl require ifirst < ilast
 function mapreduce_seq_impl(f, op, A::AbstractArray, ifirst::Int, ilast::Int)
-    @inbounds fx1 = r_promote(op, f(A[ifirst]))
-    @inbounds fx2 = f(A[ifirst+=1])
-    @inbounds v = op(fx1, fx2)
+    fx1 = r_promote(op, f(A[ifirst]))
+    fx2 = f(A[ifirst+=1])
+    v = op(fx1, fx2)
     while ifirst < ilast
-        @inbounds fx = f(A[ifirst+=1])
-        v = op(v, fx)
+        @inbounds Ai = A[ifirst+=1]
+        v = op(v, f(Ai))
     end
     return v
 end
@@ -140,13 +140,13 @@ function _mapreduce{T}(f, op, ::LinearFast, A::AbstractArray{T})
     elseif n == 1
         return r_promote(op, f(A[1]))
     elseif n < 16
-        @inbounds fx1 = r_promote(op, f(A[1]))
-        @inbounds fx2 = r_promote(op, f(A[2]))
+        fx1 = r_promote(op, f(A[1]))
+        fx2 = r_promote(op, f(A[2]))
         s = op(fx1, fx2)
         i = 2
         while i < n
-            @inbounds fx = f(A[i+=1])
-            s = op(s, fx)
+            @inbounds Ai = A[i+=1]
+            s = op(s, f(Ai))
         end
         return s
     else
@@ -184,7 +184,7 @@ sc_finish(::OrFun)  = false
 ## short-circuiting (sc) mapreduce definitions
 
 function mapreduce_sc_impl(f, op, itr::AbstractArray)
-    @inbounds for x in itr
+    for x in itr
         shortcircuits(op, f(x)) && return shorted(op)
     end
     return sc_finish(op)
@@ -224,11 +224,10 @@ mapreduce(f, op::ShortCircuiting, itr::Any)           = mapreduce_sc(f,op,itr)
 ## sum
 
 function mapreduce_seq_impl(f, op::AddFun, a::AbstractArray, ifirst::Int, ilast::Int)
-    @inbounds begin
-        s = r_promote(op, f(a[ifirst])) + f(a[ifirst+1])
-        @simd for i = ifirst+2:ilast
-            s += f(a[i])
-        end
+    s = r_promote(op, f(a[ifirst])) + f(a[ifirst+1])
+    @simd for i = ifirst+2:ilast
+        @inbounds ai = a[i]
+        s += f(ai)
     end
     s
 end
@@ -277,9 +276,6 @@ end
 prod(f::Union{Callable,Func{1}}, a) = mapreduce(f, MulFun(), a)
 prod(a) = mapreduce(IdFun(), MulFun(), a)
 
-prod(A::AbstractArray{Bool}) =
-    error("use all() instead of prod() for boolean arrays")
-
 ## maximum & minimum
 
 function mapreduce_impl(f, op::MaxFun, A::AbstractArray, first::Int, last::Int)
@@ -287,11 +283,13 @@ function mapreduce_impl(f, op::MaxFun, A::AbstractArray, first::Int, last::Int)
     v = f(A[first])
     i = first + 1
     while v != v && i <= last
-        @inbounds v = f(A[i])
+        @inbounds Ai = A[i]
+        v = f(Ai)
         i += 1
     end
     while i <= last
-        @inbounds x = f(A[i])
+        @inbounds Ai = A[i]
+        x = f(Ai)
         if x > v
             v = x
         end
@@ -305,11 +303,13 @@ function mapreduce_impl(f, op::MinFun, A::AbstractArray, first::Int, last::Int)
     v = f(A[first])
     i = first + 1
     while v != v && i <= last
-        @inbounds v = f(A[i])
+        @inbounds Ai = A[i]
+        v = f(Ai)
         i += 1
     end
     while i <= last
-        @inbounds x = f(A[i])
+        @inbounds Ai = A[i]
+        x = f(Ai)
         if x < v
             v = x
         end
@@ -332,6 +332,11 @@ minabs(a) = mapreduce(AbsFun(), MinFun(), a)
 extrema(r::Range) = (minimum(r), maximum(r))
 extrema(x::Real) = (x, x)
 
+"""
+    extrema(itr) -> Tuple
+
+Compute both the minimum and maximum element in a single pass, and return them as a 2-tuple.
+"""
 function extrema(itr)
     s = start(itr)
     done(itr, s) && throw(ArgumentError("collection must be non-empty"))
@@ -353,6 +358,43 @@ function extrema(itr)
     return (vmin, vmax)
 end
 
+"""
+    extrema(A,dims) -> Array{Tuple}
+
+Compute the minimum and maximum elements of an array over the given dimensions.
+"""
+function extrema(A::AbstractArray, dims)
+    sz = [size(A)...]
+    sz[[dims...]] = 1
+    B = Array{Tuple{eltype(A),eltype(A)}}(sz...)
+    extrema!(B, A)
+end
+
+@generated function extrema!{T,N}(B, A::Array{T,N})
+    quote
+        sA = size(A)
+        sB = size(B)
+        @nloops $N i B begin
+            AI = @nref $N A i
+            (@nref $N B i) = (AI, AI)
+        end
+        Bmax = sB
+        Istart = ones(Int,ndims(A))
+        Istart[([sB...].==1) & ([sA...].!=1)] = 2
+        @inbounds @nloops $N i d->(Istart[d]:size(A,d)) begin
+            AI = @nref $N A i
+            @nexprs $N d->(j_d = min(Bmax[d], i_{d}))
+            BJ = @nref $N B j
+            if AI < BJ[1]
+              (@nref $N B j) = (AI, BJ[2])
+            elseif AI > BJ[2]
+              (@nref $N B j) = (BJ[1], AI)
+            end
+        end
+        B
+    end
+end
+
 ## all & any
 
 any(itr) = any(IdFun(), itr)
@@ -363,14 +405,14 @@ any(f::Predicate, itr) = mapreduce_sc_impl(f, OrFun(), itr)
 any(f::IdFun,     itr) =
     eltype(itr) <: Bool ?
         mapreduce_sc_impl(f, OrFun(), itr) :
-        nonboolean_any(itr)
+        reduce(or_bool_only, itr)
 
 all(f::Any,       itr) = all(Predicate(f), itr)
 all(f::Predicate, itr) = mapreduce_sc_impl(f, AndFun(), itr)
 all(f::IdFun,     itr) =
     eltype(itr) <: Bool ?
         mapreduce_sc_impl(f, AndFun(), itr) :
-        nonboolean_all(itr)
+        reduce(and_bool_only, itr)
 
 ## in & contains
 
@@ -393,14 +435,14 @@ end
 
 function count(pred, itr)
     n = 0
-    @inbounds for x in itr
+    for x in itr
         n += pred(x)
     end
     return n
 end
 
 immutable NotEqZero <: Func{1} end
-call(::NotEqZero, x) = x != 0
+(::NotEqZero)(x) = x != 0
 
 """
     countnz(A)

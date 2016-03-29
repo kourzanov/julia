@@ -37,6 +37,10 @@
 
 @test getindex((5,6,7,8), []) === ()
 
+## filling to specified length
+@test @inferred(Base.fill_to_length((1,2,3), -1, Val{5})) == (1,2,3,-1,-1)
+@test_throws ErrorException Base.fill_to_length((1,2,3), -1, Val{2})
+
 ## iterating ##
 @test start((1,2,3)) === 1
 
@@ -49,6 +53,8 @@
 @test_throws BoundsError next((5,6,7), 0)
 @test_throws BoundsError next((), 1)
 
+@test collect(eachindex((2,5,"foo"))) == collect(1:3)
+@test collect(eachindex((2,5,"foo"), (1,2,5,7))) == collect(1:4)
 
 
 ## eltype ##

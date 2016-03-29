@@ -4,7 +4,7 @@
 
 const (<:) = issubtype
 
-super(T::DataType) = T.super
+supertype(T::DataType) = T.super
 
 ## generic comparison ##
 
@@ -45,7 +45,7 @@ const .≥ = .>=
 isless(x::Real, y::Real) = x<y
 lexcmp(x::Real, y::Real) = isless(x,y) ? -1 : ifelse(isless(y,x), 1, 0)
 
-ifelse(c::Bool, x, y) = Intrinsics.select_value(c, x, y)
+ifelse(c::Bool, x, y) = select_value(c, x, y)
 
 cmp(x,y) = isless(x,y) ? -1 : ifelse(isless(y,x), 1, 0)
 lexcmp(x,y) = cmp(x,y)
@@ -89,10 +89,10 @@ function afoldl(op,a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,qs...)
 end
 
 immutable ElementwiseMaxFun end
-call(::ElementwiseMaxFun, x, y) = max(x,y)
+(::ElementwiseMaxFun)(x, y) = max(x,y)
 
 immutable ElementwiseMinFun end
-call(::ElementwiseMinFun, x, y) = min(x, y)
+(::ElementwiseMinFun)(x, y) = min(x, y)
 
 for (op,F) in ((:+,:(AddFun())), (:*,:(MulFun())), (:&,:(AndFun())), (:|,:(OrFun())),
                (:$,:(XorFun())), (:min,:(ElementwiseMinFun())), (:max,:(ElementwiseMaxFun())), (:kron,:kron))
@@ -126,13 +126,103 @@ end
 const .≤ = .<=
 const .≠ = .!=
 
-# core << >> and >>> takes Int as second arg
-<<(x,y::Int)  = no_op_err("<<", typeof(x))
->>(x,y::Int)  = no_op_err(">>", typeof(x))
->>>(x,y::Int) = no_op_err(">>>", typeof(x))
-<<(x,y::Integer)  = typemax(Int) < y ? zero(x) : x <<  (y % Int)
->>(x,y::Integer)  = typemax(Int) < y ? zero(x) : x >>  (y % Int)
->>>(x,y::Integer) = typemax(Int) < y ? zero(x) : x >>> (y % Int)
+# Core <<, >>, and >>> take either Int or UInt as second arg. Signed shift
+# counts can shift in either direction, and are translated here to unsigned
+# counts. Integer datatypes only need to implement the unsigned version.
+
+"""
+    <<(x, n)
+
+Left bit shift operator, `x << n`. For `n >= 0`, the result is `x` shifted left
+by `n` bits, filling with `0`s. This is equivalent to `x * 2^n`. For `n < 0`,
+this is equivalent to `x >> -n`.
+
+```jldoctest
+julia> Int8(3) << 2
+12
+
+julia> bits(Int8(3))
+"00000011"
+
+julia> bits(Int8(12))
+"00001100"
+```
+See also [`>>`](:func:`>>`), [`>>>`](:func:`>>>`).
+"""
+function <<(x, c::Integer)
+    typemin(Int) <= c <= typemax(Int) && return x << (c % Int)
+    (x >= 0 || c >= 0) && return zero(x)
+    oftype(x, -1)
+end
+<<(x, c::Unsigned) = c <= typemax(UInt) ? x << (c % UInt) : zero(x)
+<<(x, c::Int) = c >= 0 ? x << unsigned(c) : x >> unsigned(-c)
+
+"""
+    >>(x, n)
+
+Right bit shift operator, `x >> n`. For `n >= 0`, the result is `x` shifted
+right by `n` bits, where `n >= 0`, filling with `0`s if `x >= 0`, `1`s if `x <
+0`, preserving the sign of `x`. This is equivalent to `fld(x, 2^n)`. For `n <
+0`, this is equivalent to `x << -n`.
+
+
+```jldoctest
+julia> Int8(13) >> 2
+3
+
+julia> bits(Int8(13))
+"00001101"
+
+julia> bits(Int8(3))
+"00000011"
+
+julia> Int8(-14) >> 2
+-4
+
+julia> bits(Int8(-14))
+"11110010"
+
+julia> bits(Int8(-4))
+"11111100"
+```
+See also [`>>>`](:func:`>>>`), [`<<`](:func:`<<`).
+"""
+function >>(x, c::Integer)
+    typemin(Int) <= c <= typemax(Int) && return x >> (c % Int)
+    (x >= 0 || c < 0) && return zero(x)
+    oftype(x, -1)
+end
+>>(x, c::Unsigned) = c <= typemax(UInt) ? x >> (c % UInt) : zero(x)
+>>(x, c::Int) = c >= 0 ? x >> unsigned(c) : x << unsigned(-c)
+
+"""
+    >>>(x, n)
+
+Unsigned right bit shift operator, `x >>> n`. For `n >= 0`, the result is `x`
+shifted right by `n` bits, where `n >= 0`, filling with `0`s. For `n < 0`, this
+is equivalent to `x [<<](:func:`<<`) -n`].
+
+For `Unsigned` integer types, this is eqivalent to [`>>`](:func:`>>`). For
+`Signed` integer types, this is equivalent to `signed(unsigned(x) >> n)`.
+
+```jldoctest
+julia> Int8(-14) >>> 2
+60
+
+julia> bits(Int8(-14))
+"11110010"
+
+julia> bits(Int8(60))
+"00111100"
+```
+`BigInt`s are treated as if having infinite size, so no filling is required and this
+is equivalent to [`>>`](:func:`>>`).
+
+See also [`>>`](:func:`>>`), [`<<`](:func:`<<`).
+"""
+>>>(x, c::Integer) = typemin(Int) <= c <= typemax(Int) ? x >>> (c % Int) : zero(x)
+>>>(x, c::Unsigned) = c <= typemax(UInt) ? x >>> (c % UInt) : zero(x)
+>>>(x, c::Int) = c >= 0 ? x >>> unsigned(c) : x << unsigned(-c)
 
 # fallback div, fld, and cld implementations
 # NOTE: C89 fmod() and x87 FPREM implicitly provide truncating float division,
@@ -148,11 +238,17 @@ modCeil{T<:Real}(x::T, y::T) = convert(T,x-y*ceil(x/y))
 const % = rem
 .%(x::Real, y::Real) = x%y
 const ÷ = div
+.÷(x::Real, y::Real) = x÷y
 
-# mod returns in [0,y) whereas mod1 returns in (0,y]
+# mod returns in [0,y) or (y,0] (for negative y),
+# whereas mod1 returns in (0,y] or [y,0)
 mod1{T<:Real}(x::T, y::T) = (m=mod(x,y); ifelse(m==0, y, m))
-rem1{T<:Real}(x::T, y::T) = rem(x-1,y)+1
-fld1{T<:Real}(x::T, y::T) = fld(x-1,y)+1
+fld1{T<:Real}(x::T, y::T) = (m=mod(x,y); fld(x-m,y))
+fldmod1{T<:Real}(x::T, y::T) = (fld1(x,y), mod1(x,y))
+# efficient version for integers
+mod1{T<:Integer}(x::T, y::T) = mod(x+y-T(1),y)+T(1)
+fld1{T<:Integer}(x::T, y::T) = fld(x+y-T(1),y)
+fldmod1{T<:Integer}(x::T, y::T) = (fld1(x,y), mod1(x,y))
 
 # transpose
 transpose(x) = x
@@ -187,11 +283,11 @@ widen{T<:Number}(x::T) = convert(widen(T), x)
 
 eltype(::Type) = Any
 eltype(::Type{Any}) = Any
-eltype(t::DataType) = eltype(super(t))
+eltype(t::DataType) = eltype(supertype(t))
 eltype(x) = eltype(typeof(x))
 
 # copying immutable things
-copy(x::Union{Symbol,Number,AbstractString,Function,Tuple,LambdaStaticData,
+copy(x::Union{Symbol,Number,AbstractString,Function,Tuple,LambdaInfo,
               TopNode,QuoteNode,DataType,Union}) = x
 
 # function pipelining
@@ -381,7 +477,7 @@ macro vectorize_1arg(S,f)
         ($f){$T<:$S}(x::AbstractArray{$T,2}) =
             [ ($f)(x[i,j]) for i=1:size(x,1), j=1:size(x,2) ]
         ($f){$T<:$S}(x::AbstractArray{$T}) =
-            reshape([ ($f)(x[i]) for i in eachindex(x) ], size(x))
+            reshape([ ($f)(y) for y in x ], size(x))
     end
 end
 
@@ -389,13 +485,13 @@ macro vectorize_2arg(S,f)
     S = esc(S); f = esc(f); T1 = esc(:T1); T2 = esc(:T2)
     quote
         ($f){$T1<:$S, $T2<:$S}(x::($T1), y::AbstractArray{$T2}) =
-            reshape([ ($f)(x, y[i]) for i in eachindex(y) ], size(y))
+            reshape([ ($f)(x, z) for z in y ], size(y))
         ($f){$T1<:$S, $T2<:$S}(x::AbstractArray{$T1}, y::($T2)) =
-            reshape([ ($f)(x[i], y) for i in eachindex(x) ], size(x))
+            reshape([ ($f)(z, y) for z in x ], size(x))
 
         function ($f){$T1<:$S, $T2<:$S}(x::AbstractArray{$T1}, y::AbstractArray{$T2})
             shp = promote_shape(size(x),size(y))
-            reshape([ ($f)(x[i], y[i]) for i in eachindex(x,y) ], shp)
+            reshape([ ($f)(xx, yy) for (xx, yy) in zip(x, y) ], shp)
         end
     end
 end
@@ -445,9 +541,10 @@ isless(p::Pair, q::Pair) = ifelse(!isequal(p.first,q.first), isless(p.first,q.fi
                                                              isless(p.second,q.second))
 getindex(p::Pair,i::Int) = getfield(p,i)
 getindex(p::Pair,i::Real) = getfield(p, convert(Int, i))
-reverse(p::Pair) = Pair(p.second, p.first)
+reverse{A,B}(p::Pair{A,B}) = Pair{B,A}(p.second, p.first)
 
 endof(p::Pair) = 2
+length(p::Pair) = 2
 
 # some operators not defined yet
 global //, >:, <|, hcat, hvcat, ⋅, ×, ∈, ∉, ∋, ∌, ⊆, ⊈, ⊊, ∩, ∪, √, ∛
@@ -463,6 +560,8 @@ export
     $,
     %,
     .%,
+    ÷,
+    .÷,
     &,
     *,
     +,
@@ -505,7 +604,6 @@ export
     |>,
     <|,
     ~,
-    ÷,
     ⋅,
     ×,
     ∈,
@@ -526,13 +624,12 @@ export
     getindex,
     setindex!,
     transpose,
-    ctranspose,
-    call
+    ctranspose
 
-import ..this_module: !, !=, $, %, .%, &, *, +, -, .!=, .+, .-, .*, ./, .<, .<=, .==, .>,
+import ..this_module: !, !=, $, %, .%, ÷, .÷, &, *, +, -, .!=, .+, .-, .*, ./, .<, .<=, .==, .>,
     .>=, .\, .^, /, //, <, <:, <<, <=, ==, >, >=, >>, .>>, .<<, >>>,
     <|, |>, \, ^, |, ~, !==, ===, >:, colon, hcat, vcat, hvcat, getindex, setindex!,
-    transpose, ctranspose, call,
-    ≥, ≤, ≠, .≥, .≤, .≠, ÷, ⋅, ×, ∈, ∉, ∋, ∌, ⊆, ⊈, ⊊, ∩, ∪, √, ∛
+    transpose, ctranspose,
+    ≥, ≤, ≠, .≥, .≤, .≠, ⋅, ×, ∈, ∉, ∋, ∌, ⊆, ⊈, ⊊, ∩, ∪, √, ∛
 
 end

@@ -59,7 +59,7 @@
 #    name::Symbol
 #end
 
-#type LambdaStaticData
+#type LambdaInfo
 #    ast::Expr
 #    sparams::Tuple
 #    tfunc
@@ -69,10 +69,6 @@
 #    file::Symbol
 #    line::Int
 #    module::Module
-#end
-
-#type Box
-#    contents::Any
 #end
 
 #abstract Ref{T}
@@ -129,7 +125,7 @@ export
     Tuple, Type, TypeConstructor, TypeName, TypeVar, Union, Void,
     SimpleVector, AbstractArray, DenseArray,
     # special objects
-    Box, Function, IntrinsicFunction, LambdaStaticData, Method, MethodTable,
+    Function, LambdaInfo, Method, MethodTable,
     Module, Symbol, Task, Array, WeakRef,
     # numeric types
     Number, Real, Integer, Bool, Ref, Ptr,
@@ -147,34 +143,13 @@ export
     GlobalRef, NewvarNode, GenSym,
     # object model functions
     fieldtype, getfield, setfield!, nfields, throw, tuple, is, ===, isdefined, eval,
-    # arrayref, arrayset, arraysize,
-    # _apply, kwcall,
     # sizeof    # not exported, to avoid conflicting with Base.sizeof
     # type reflection
     issubtype, typeof, isa,
-    # typeassert, apply_type,
     # method reflection
     applicable, invoke,
     # constants
-    nothing, Main,
-    # intrinsics module
-    Intrinsics
-    #ccall, cglobal, llvmcall, abs_float, add_float, add_int, and_int, ashr_int,
-    #box, bswap_int, checked_fptosi, checked_fptoui, checked_sadd,
-    #checked_smul, checked_ssub, checked_uadd, checked_umul, checked_usub,
-    #checked_trunc_sint, checked_trunc_uint, check_top_bit,
-    #nan_dom_err, copysign_float, ctlz_int, ctpop_int, cttz_int,
-    #div_float, eq_float, eq_int, eqfsi64, eqfui64, flipsign_int, select_value,
-    #sqrt_llvm, powi_llvm,
-    #sqrt_llvm_fast,
-    #fpext, fpiseq, fpislt, fpsiround, fpuiround, fptosi, fptoui,
-    #fptrunc, le_float, lefsi64, lefui64, lesif64,
-    #leuif64, lshr_int, lt_float, ltfsi64, ltfui64, ltsif64, ltuif64, mul_float,
-    #mul_int, ne_float, ne_int, neg_float, neg_int, not_int, or_int, rem_float,
-    #sdiv_int, shl_int, sitofp, sle_int, slt_int, smod_int,
-    #srem_int, sub_float, sub_int, trunc_int, udiv_int, uitofp,
-    #ule_int, ult_int, unbox, urem_int, xor_int, sext_int, zext_int, arraylen
-
+    nothing, Main
 
 const (===) = is
 
@@ -210,6 +185,9 @@ else
 end
 
 abstract AbstractString
+
+function Typeof end
+(f::typeof(Typeof))(x::ANY) = isa(x,Type) ? Type{x} : typeof(x)
 
 abstract Exception
 immutable BoundsError        <: Exception
@@ -249,10 +227,12 @@ abstract DirectIndexString <: AbstractString
 
 immutable ASCIIString <: DirectIndexString
     data::Array{UInt8,1}
+    ASCIIString(d::Array{UInt8,1}) = new(d)
 end
 
 immutable UTF8String <: AbstractString
     data::Array{UInt8,1}
+    UTF8String(d::Array{UInt8,1}) = new(d)
 end
 
 typealias ByteString Union{ASCIIString,UTF8String}
@@ -261,6 +241,16 @@ include(fname::ByteString) = ccall(:jl_load_, Any, (Any,), fname)
 
 eval(e::ANY) = eval(Main, e)
 eval(m::Module, e::ANY) = ccall(:jl_toplevel_eval_in, Any, (Any, Any), m, e)
+
+kwfunc(f::ANY) = ccall(:jl_get_keyword_sorter, Any, (Any,), f)
+
+kwftype(t::ANY) = typeof(ccall(:jl_get_kwsorter, Any, (Any,), t.name))
+
+type Box
+    contents::Any
+    Box(x::ANY) = new(x)
+    Box() = new()
+end
 
 # constructors for built-in types
 
@@ -289,19 +279,19 @@ Void() = nothing
 
 Expr(args::ANY...) = _expr(args...)
 
-_new(typ::Symbol, argty::Symbol) = eval(:(Core.call(::Type{$typ}, n::$argty) = $(Expr(:new, typ, :n))))
+_new(typ::Symbol, argty::Symbol) = eval(:((::Type{$typ})(n::$argty) = $(Expr(:new, typ, :n))))
 _new(:LabelNode, :Int)
 _new(:GotoNode, :Int)
 _new(:TopNode, :Symbol)
 _new(:NewvarNode, :Symbol)
 _new(:QuoteNode, :ANY)
 _new(:GenSym, :Int)
-eval(:(Core.call(::Type{LineNumberNode}, f::Symbol, l::Int) = $(Expr(:new, :LineNumberNode, :f, :l))))
-eval(:(Core.call(::Type{GlobalRef}, m::Module, s::Symbol) = $(Expr(:new, :GlobalRef, :m, :s))))
+eval(:((::Type{LineNumberNode})(f::Symbol, l::Int) = $(Expr(:new, :LineNumberNode, :f, :l))))
+eval(:((::Type{GlobalRef})(m::Module, s::Symbol) = $(Expr(:new, :GlobalRef, :m, :s))))
 
 Module(name::Symbol=:anonymous, std_imports::Bool=true) = ccall(:jl_f_new_module, Any, (Any, Bool), name, std_imports)::Module
 
-Task(f::ANY) = ccall(:jl_new_task, Any, (Any, Int), f::Function, 0)::Task
+Task(f::ANY) = ccall(:jl_new_task, Any, (Any, Int), f, 0)::Task
 
 # simple convert for use by constructors of types in Core
 # note that there is no actual conversion defined here,
@@ -311,4 +301,40 @@ convert{T}(::Type{T}, x::T) = x
 cconvert(T::Type, x) = convert(T, x)
 unsafe_convert{T}(::Type{T}, x::T) = x
 
+# primitive array constructors
+(::Type{Array{T,N}}){T,N}(d::NTuple{N,Int}) =
+    ccall(:jl_new_array, Array{T,N}, (Any,Any), Array{T,N}, d)
+(::Type{Array{T,1}}){T}(m::Int) =
+    ccall(:jl_alloc_array_1d, Array{T,1}, (Any,Int), Array{T,1}, m)
+(::Type{Array{T,2}}){T}(m::Int, n::Int) =
+    ccall(:jl_alloc_array_2d, Array{T,2}, (Any,Int,Int), Array{T,2}, m, n)
+(::Type{Array{T,3}}){T}(m::Int, n::Int, o::Int) =
+    ccall(:jl_alloc_array_3d, Array{T,3}, (Any,Int,Int,Int), Array{T,3}, m, n, o)
+
+(::Type{Array{T}}){T,N}(d::NTuple{N,Int}) = Array{T,N}(d)
+(::Type{Array{T}}){T}(m::Int) = Array{T,1}(m)
+(::Type{Array{T}}){T}(m::Int, n::Int) = Array{T,2}(m, n)
+(::Type{Array{T}}){T}(m::Int, n::Int, o::Int) = Array{T,3}(m, n, o)
+
+(::Type{Array{T,1}}){T}() = Array{T,1}(0)
+(::Type{Array{T,2}}){T}() = Array{T,2}(0, 0)
+
+# TODO: possibly turn these into deprecations
+Array{T,N}(::Type{T}, d::NTuple{N,Int}) = Array{T}(d)
+Array{T}(::Type{T}, d::Int...) = Array{T}(d)
+Array{T}(::Type{T}, m::Int)               = Array{T,1}(m)
+Array{T}(::Type{T}, m::Int,n::Int)        = Array{T,2}(m,n)
+Array{T}(::Type{T}, m::Int,n::Int,o::Int) = Array{T,3}(m,n,o)
+
+module TopModule
+    # this defines the types that lowering expects to be defined in a (top) module
+    # that are usually inherited from Core, but could be defined custom for a module
+    using Core: Box, IntrinsicFunction, Builtin,
+            arrayref, arrayset, arraysize,
+            _expr, _apply, typeassert, apply_type, svec, kwfunc
+    export Box, IntrinsicFunction, Builtin,
+            arrayref, arrayset, arraysize,
+            _expr, _apply, typeassert, apply_type, svec, kwfunc
+end
+using .TopModule
 ccall(:jl_set_istopmod, Void, (Bool,), true)

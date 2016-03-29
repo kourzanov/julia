@@ -195,7 +195,7 @@ conditional expression is anything but ``true`` or ``false``:
     ERROR: TypeError: non-boolean (Int64) used in boolean context
 
 This error indicates that the conditional was of the wrong type:
-:obj:`Int64`` rather than the required :obj:`Bool`.
+:obj:`Int64` rather than the required :obj:`Bool`.
 
 The so-called "ternary operator", ``?:``, is closely related to the
 ``if``-``elseif``-``else`` syntax, but is used where a conditional
@@ -350,22 +350,22 @@ For example, a recursive factorial routine could be defined like this:
 
 .. doctest::
 
-    julia> function factorial(n::Int)
+    julia> function fact(n::Int)
                n >= 0 || error("n must be non-negative")
                n == 0 && return 1
-               n * factorial(n-1)
+               n * fact(n-1)
            end
-    factorial (generic function with 1 method)
+    fact (generic function with 1 method)
 
-    julia> factorial(5)
+    julia> fact(5)
     120
 
-    julia> factorial(0)
+    julia> fact(0)
     1
 
-    julia> factorial(-1)
+    julia> fact(-1)
     ERROR: n must be non-negative
-     in factorial at none:2
+     in fact at none:2
 
 
 Boolean operations *without* short-circuit evaluation can be done with the
@@ -483,8 +483,8 @@ See :ref:`man-variables-and-scoping` for a detailed
 explanation of variable scope and how it works in Julia.
 
 In general, the ``for`` loop construct can iterate over any container.
-In these cases, the alternative (but fully equivalent) keyword ``in`` is
-typically used instead of ``=``, since it makes the code read more
+In these cases, the alternative (but fully equivalent) keyword ``in``
+or ``∈`` is typically used instead of ``=``, since it makes the code read more
 clearly:
 
 .. doctest::
@@ -496,7 +496,7 @@ clearly:
     4
     0
 
-    julia> for s in ["foo","bar","baz"]
+    julia> for s ∈ ["foo","bar","baz"]
              println(s)
            end
     foo

@@ -51,6 +51,9 @@ endif
 $(foreach dir,$(DIRS),$(eval $(call dir_target,$(dir))))
 $(foreach link,base test,$(eval $(call symlink_target,$(link),$(build_datarootdir)/julia)))
 
+julia_flisp.boot.inc.phony: julia-deps
+	@$(MAKE) $(QUIET_MAKE) -C $(BUILDROOT)/src julia_flisp.boot.inc.phony
+
 # Build the HTML docs (skipped if already exists, notably in tarballs)
 $(BUILDROOT)/doc/_build/html:
 	@$(MAKE) -C $(BUILDROOT)/doc html
@@ -83,7 +86,7 @@ julia-base: julia-deps $(build_sysconfdir)/julia/juliarc.jl $(build_man1dir)/jul
 julia-libccalltest: julia-deps
 	@$(MAKE) $(QUIET_MAKE) -C $(BUILDROOT)/src libccalltest
 
-julia-src-release julia-src-debug : julia-src-% : julia-deps
+julia-src-release julia-src-debug : julia-src-% : julia-deps julia_flisp.boot.inc.phony
 	@$(MAKE) $(QUIET_MAKE) -C $(BUILDROOT)/src libjulia-$*
 
 julia-ui-release julia-ui-debug : julia-ui-% : julia-src-%
@@ -103,7 +106,7 @@ julia-debug julia-release : julia-% : julia-ui-% julia-sysimg-% julia-symlink ju
 debug release : % : julia-%
 
 julia-genstdlib: julia-sysimg-$(JULIA_BUILD_MODE)
-	@$(call PRINT_JULIA, $(JULIA_EXECUTABLE) $(JULIAHOME)/doc/genstdlib.jl)
+	@$(call PRINT_JULIA, $(JULIA_EXECUTABLE) $(call cygpath_w, $(JULIAHOME)/doc/genstdlib.jl))
 
 docs: julia-genstdlib
 	@$(MAKE) $(QUIET_MAKE) -C $(BUILDROOT)/doc
@@ -188,6 +191,7 @@ CORE_SRCS := $(addprefix $(JULIAHOME)/, \
 		base/dict.jl \
 		base/error.jl \
 		base/essentials.jl \
+		base/generator.jl \
 		base/expr.jl \
 		base/functors.jl \
 		base/hashing.jl \
@@ -222,13 +226,13 @@ COMMA:=,
 define sysimg_builder
 $$(build_private_libdir)/sys$1.o: $$(build_private_libdir)/inference.ji $$(JULIAHOME)/VERSION $$(BASE_SRCS)
 	@$$(call PRINT_JULIA, cd $$(JULIAHOME)/base && \
-	$$(call spawn,$2) -C $$(JULIA_CPU_TARGET) --output-o $$(call cygpath_w,$$@) $$(JULIA_SYSIMG_BUILD_FLAGS) -f \
+	$$(call spawn,$3) $2 -C $$(JULIA_CPU_TARGET) --output-o $$(call cygpath_w,$$@) $$(JULIA_SYSIMG_BUILD_FLAGS) -f \
 		-J $$(call cygpath_w,$$<) sysimg.jl $$(RELBUILDROOT) \
 		|| { echo '*** This error is usually fixed by running `make clean`. If the error persists$$(COMMA) try `make cleanall`. ***' && false; } )
 .SECONDARY: $(build_private_libdir)/sys$1.o
 endef
-$(eval $(call sysimg_builder,,$(JULIA_EXECUTABLE_release)))
-$(eval $(call sysimg_builder,-debug,$(JULIA_EXECUTABLE_debug)))
+$(eval $(call sysimg_builder,,-O3,$(JULIA_EXECUTABLE_release)))
+$(eval $(call sysimg_builder,-debug,-O0,$(JULIA_EXECUTABLE_debug)))
 
 $(build_bindir)/stringreplace: $(JULIAHOME)/contrib/stringreplace.c | $(build_bindir)
 	@$(call PRINT_CC, $(HOSTCC) -o $(build_bindir)/stringreplace $(JULIAHOME)/contrib/stringreplace.c)
@@ -364,15 +368,13 @@ ifeq ($(OS),WINNT)
 endif
 	$(INSTALL_F) $(build_includedir)/uv* $(DESTDIR)$(includedir)/julia
 endif
-	$(INSTALL_F) $(addprefix $(JULIAHOME)/,src/julia.h src/julia_version.h src/support/*.h) $(DESTDIR)$(includedir)/julia
+	$(INSTALL_F) $(addprefix $(JULIAHOME)/,src/julia.h src/julia_threads.h src/julia_version.h src/support/*.h) $(DESTDIR)$(includedir)/julia
 	# Copy system image
 	-$(INSTALL_F) $(build_private_libdir)/sys.ji $(DESTDIR)$(private_libdir)
 	$(INSTALL_M) $(build_private_libdir)/sys.$(SHLIB_EXT) $(DESTDIR)$(private_libdir)
 	$(INSTALL_M) $(build_private_libdir)/sys-debug.$(SHLIB_EXT) $(DESTDIR)$(private_libdir)
 	# Copy in system image build script
 	$(INSTALL_M) $(JULIAHOME)/contrib/build_sysimg.jl $(DESTDIR)$(datarootdir)/julia/
-	# Copy in standalone executable build script
-	$(INSTALL_M) $(JULIAHOME)/contrib/build_executable.jl $(DESTDIR)$(datarootdir)/julia/
 	# Copy in standalone julia-config script
 	$(INSTALL_M) $(JULIAHOME)/contrib/julia-config.jl $(DESTDIR)$(datarootdir)/julia/
 	# Copy in all .jl sources as well
@@ -568,7 +570,7 @@ test: check-whitespace $(JULIA_BUILD_MODE)
 	@$(MAKE) $(QUIET_MAKE) -C $(BUILDROOT)/test default JULIA_BUILD_MODE=$(JULIA_BUILD_MODE)
 
 testall: check-whitespace $(JULIA_BUILD_MODE)
-	cp $(build_private_libdir)/sys$(JULIA_LIBSUFFIX).$(SHLIB_EXT) $(BUILDROOT)/local.$(SHLIB_EXT) && $(JULIA_EXECUTABLE) -J $(BUILDROOT)/local.$(SHLIB_EXT) -e 'true' && rm $(BUILDROOT)/local.$(SHLIB_EXT)
+	cp $(build_private_libdir)/sys$(JULIA_LIBSUFFIX).$(SHLIB_EXT) $(BUILDROOT)/local.$(SHLIB_EXT) && $(JULIA_EXECUTABLE) -J $(call cygpath_w,$(BUILDROOT)/local.$(SHLIB_EXT)) -e 'true' && rm $(BUILDROOT)/local.$(SHLIB_EXT)
 	@$(MAKE) $(QUIET_MAKE) -C $(BUILDROOT)/test all JULIA_BUILD_MODE=$(JULIA_BUILD_MODE)
 
 testall1: check-whitespace $(JULIA_BUILD_MODE)
@@ -597,7 +599,14 @@ ifneq (,$(filter $(ARCH), i386 i486 i586 i686))
 	$(JLDOWNLOAD) http://downloads.sourceforge.net/sevenzip/7z920.exe && \
 	7z x -y 7z920.exe 7z.exe 7z.dll && \
 	../contrib/windows/winrpm.sh http://download.opensuse.org/repositories/windows:/mingw:/win32/openSUSE_13.2 \
-		"mingw32-libgfortran3 mingw32-libquadmath0 mingw32-libstdc++6 mingw32-libgcc_s_sjlj1 mingw32-libssp0 mingw32-libexpat1 mingw32-zlib1" && \
+		"mingw32-libexpat1 mingw32-zlib1" && \
+	$(JLDOWNLOAD) https://juliacache.s3.amazonaws.com/mingw32-libgfortran3-5.3.0-1.1.noarch.rpm && \
+	$(JLDOWNLOAD) https://juliacache.s3.amazonaws.com/mingw32-libquadmath0-5.3.0-1.1.noarch.rpm && \
+	$(JLDOWNLOAD) https://juliacache.s3.amazonaws.com/mingw32-libstdc++6-5.3.0-1.1.noarch.rpm && \
+	$(JLDOWNLOAD) https://juliacache.s3.amazonaws.com/mingw32-libgcc_s_sjlj1-5.3.0-1.1.noarch.rpm && \
+	$(JLDOWNLOAD) https://juliacache.s3.amazonaws.com/mingw32-libssp0-5.3.0-1.1.noarch.rpm && \
+	for i in *.rpm; do 7z x -y $$i; done && \
+	for i in *.cpio; do 7z x -y $$i; done && \
 	cp usr/i686-w64-mingw32/sys-root/mingw/bin/*.dll . && \
 	$(JLDOWNLOAD) PortableGit.7z https://github.com/git-for-windows/git/releases/download/v2.6.1.windows.1/PortableGit-2.6.1-32-bit.7z.exe
 else ifeq ($(ARCH),x86_64)
@@ -607,7 +616,14 @@ else ifeq ($(ARCH),x86_64)
 	mv _7z.dll 7z.dll && \
 	mv _7z.exe 7z.exe && \
 	../contrib/windows/winrpm.sh http://download.opensuse.org/repositories/windows:/mingw:/win64/openSUSE_13.2 \
-		"mingw64-libgfortran3 mingw64-libquadmath0 mingw64-libstdc++6 mingw64-libgcc_s_seh1 mingw64-libssp0 mingw64-libexpat1 mingw64-zlib1" && \
+		"mingw64-libexpat1 mingw64-zlib1" && \
+	$(JLDOWNLOAD) https://juliacache.s3.amazonaws.com/mingw64-libgfortran3-5.3.0-1.1.noarch.rpm && \
+	$(JLDOWNLOAD) https://juliacache.s3.amazonaws.com/mingw64-libquadmath0-5.3.0-1.1.noarch.rpm && \
+	$(JLDOWNLOAD) https://juliacache.s3.amazonaws.com/mingw64-libstdc++6-5.3.0-1.1.noarch.rpm && \
+	$(JLDOWNLOAD) https://juliacache.s3.amazonaws.com/mingw64-libgcc_s_seh1-5.3.0-1.1.noarch.rpm && \
+	$(JLDOWNLOAD) https://juliacache.s3.amazonaws.com/mingw64-libssp0-5.3.0-1.1.noarch.rpm && \
+	for i in *.rpm; do 7z x -y $$i; done && \
+	for i in *.cpio; do 7z x -y $$i; done && \
 	cp usr/x86_64-w64-mingw32/sys-root/mingw/bin/*.dll . && \
 	$(JLDOWNLOAD) PortableGit.7z https://github.com/git-for-windows/git/releases/download/v2.6.1.windows.1/PortableGit-2.6.1-64-bit.7z.exe
 else
@@ -620,3 +636,17 @@ endif
 	chmod a+x 7z.dll && \
 	$(call spawn,./7z.exe) x -y -onsis nsis-2.46.5-Unicode-setup.exe && \
 	chmod a+x ./nsis/makensis.exe
+
+# various statistics about the build that may interest the user
+ifeq ($(USE_SYSTEM_LLVM), 1)
+LLVM_SIZE := llvm-size$(EXE)
+else
+LLVM_SIZE := $(build_bindir)/llvm-size$(EXE)
+endif
+build-stats:
+	@echo $(JULCOLOR)' ==> ./julia binary sizes'$(ENDCOLOR)
+	$(call spawn,$(LLVM_SIZE) -A $(build_private_libdir)/sys.$(SHLIB_EXT) $(build_shlibdir)/libjulia.$(SHLIB_EXT) $(build_bindir)/julia$(EXE))
+	@echo $(JULCOLOR)' ==> ./julia launch speedtest'$(ENDCOLOR)
+	@time $(call spawn,$(build_bindir)/julia$(EXE) -e '')
+	@time $(call spawn,$(build_bindir)/julia$(EXE) -e '')
+	@time $(call spawn,$(build_bindir)/julia$(EXE) -e '')

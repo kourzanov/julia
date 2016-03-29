@@ -2,15 +2,24 @@
 
 # generic operations on associative collections
 
-abstract Associative{K,V}
-
 const secret_table_token = :__c782dbf1cf4d6a2e5e3865d7e95634f2e09b5902__
 
 haskey(d::Associative, k) = in(k,keys(d))
 
-function in(p::Pair, a::Associative)
+function in(p::Pair, a::Associative, valcmp=(==))
     v = get(a,p[1],secret_table_token)
-    !is(v, secret_table_token) && (v == p[2])
+    if !is(v, secret_table_token)
+        if valcmp === is
+            is(v, p[2]) && return true
+        elseif valcmp === (==)
+            ==(v, p[2]) && return true
+        elseif valcmp === isequal
+            isequal(v, p[2]) && return true
+        else
+            valcmp(v, p[2]) && return true
+        end
+    end
+    return false
 end
 
 function in(p, a::Associative)
@@ -50,87 +59,81 @@ function _truncate_at_width_or_chars(str, width, chars="", truncmark="…")
 end
 
 showdict(t::Associative; kw...) = showdict(STDOUT, t; kw...)
-function showdict{K,V}(io::IO, t::Associative{K,V}; limit::Bool = false, compact = false,
-                       sz=(s = tty_size(); (s[1]-3, s[2])))
-    shown_set = get(task_local_storage(), :SHOWNSET, nothing)
-    if shown_set === nothing
-        shown_set = ObjectIdDict()
-        task_local_storage(:SHOWNSET, shown_set)
+function showdict{K,V}(io::IO, t::Associative{K,V}; compact = false)
+    (:SHOWN_SET => t) in io && (print(io, "#= circular reference =#"); return)
+
+    recur_io = IOContext(io, :SHOWN_SET => t)
+    limit::Bool = limit_output(io)
+    if compact
+        # show in a Julia-syntax-like form: Dict(k=>v, ...)
+        if isempty(t)
+            print(io, typeof(t), "()")
+        else
+            if isleaftype(K) && isleaftype(V)
+                print(io, typeof(t).name)
+            else
+                print(io, typeof(t))
+            end
+            print(io, '(')
+            first = true
+            n = 0
+            for (k, v) in t
+                first || print(io, ',')
+                first = false
+                show(recur_io, k)
+                print(io, "=>")
+                show(recur_io, v)
+                n+=1
+                limit && n >= 10 && (print(io, "…"); break)
+            end
+            print(io, ')')
+        end
+        return
     end
-    t in keys(shown_set) && (print(io, "#= circular reference =#"); return)
 
-    try
-        shown_set[t] = true
-        if compact
-            # show in a Julia-syntax-like form: Dict(k=>v, ...)
-            if isempty(t)
-                print(io, typeof(t), "()")
-            else
-                if isleaftype(K) && isleaftype(V)
-                    print(io, typeof(t).name)
-                else
-                    print(io, typeof(t))
-                end
-                print(io, '(')
-                first = true
-                n = 0
-                for (k, v) in t
-                    first || print(io, ',')
-                    first = false
-                    show(io, k)
-                    print(io, "=>")
-                    show(io, v)
-                    n+=1
-                    limit && n >= 10 && (print(io, "…"); break)
-                end
-                print(io, ')')
-            end
-            return
+    # Otherwise show more descriptively, with one line per key/value pair
+    print(io, summary(t))
+    isempty(t) && return
+    print(io, ":")
+    if limit
+        sz = displaysize(io)
+        rows, cols = sz[1] - 3, sz[2]
+        rows < 2   && (print(io, " …"); return)
+        cols < 12  && (cols = 12) # Minimum widths of 2 for key, 4 for value
+        cols -= 6 # Subtract the widths of prefix "  " separator " => "
+        rows -= 2 # Subtract the summary and final ⋮ continuation lines
+
+        # determine max key width to align the output, caching the strings
+        ks = Array(AbstractString, min(rows, length(t)))
+        keylen = 0
+        for (i, k) in enumerate(keys(t))
+            i > rows && break
+            ks[i] = sprint(0, show, k, env=recur_io)
+            keylen = clamp(length(ks[i]), keylen, div(cols, 3))
         end
+    else
+        rows = cols = 0
+    end
 
-        # Otherwise show more descriptively, with one line per key/value pair
-        rows, cols = sz
-        print(io, summary(t))
-        isempty(t) && return
-        print(io, ":")
+    for (i, (k, v)) in enumerate(t)
+        print(io, "\n  ")
+        limit && i > rows && (print(io, rpad("⋮", keylen), " => ⋮"); break)
+
         if limit
-            rows < 2   && (print(io, " …"); return)
-            cols < 12  && (cols = 12) # Minimum widths of 2 for key, 4 for value
-            cols -= 6 # Subtract the widths of prefix "  " separator " => "
-            rows -= 2 # Subtract the summary and final ⋮ continuation lines
-
-            # determine max key width to align the output, caching the strings
-            ks = Array(AbstractString, min(rows, length(t)))
-            keylen = 0
-            for (i, k) in enumerate(keys(t))
-                i > rows && break
-                ks[i] = sprint(show, k)
-                keylen = clamp(length(ks[i]), keylen, div(cols, 3))
-            end
+            key = rpad(_truncate_at_width_or_chars(ks[i], keylen, "\r\n"), keylen)
+        else
+            key = sprint(0, show, k, env=recur_io)
         end
+        print(recur_io, key)
+        print(io, " => ")
 
-        for (i, (k, v)) in enumerate(t)
-            print(io, "\n  ")
-            limit && i > rows && (print(io, rpad("⋮", keylen), " => ⋮"); break)
-
-            if limit
-                key = rpad(_truncate_at_width_or_chars(ks[i], keylen, "\r\n"), keylen)
-            else
-                key = sprint(show, k)
-            end
-            print(io, key)
-            print(io, " => ")
-
-            if limit
-                val = with_output_limit(()->sprint(show, v))
-                val = _truncate_at_width_or_chars(val, cols - keylen, "\r\n")
-                print(io, val)
-            else
-                show(io, v)
-            end
+        if limit
+            val = sprint(0, show, v, env=recur_io)
+            val = _truncate_at_width_or_chars(val, cols - keylen, "\r\n")
+            print(io, val)
+        else
+            show(recur_io, v)
         end
-    finally
-        delete!(shown_set, t)
     end
 end
 
@@ -146,18 +149,21 @@ summary{T<:Union{KeyIterator,ValueIterator}}(iter::T) =
 
 show(io::IO, iter::Union{KeyIterator,ValueIterator}) = show(io, collect(iter))
 
-showkv(iter::Union{KeyIterator,ValueIterator}; kw...) = showkv(STDOUT, iter; kw...)
-function showkv{T<:Union{KeyIterator,ValueIterator}}(io::IO, iter::T; limit::Bool = false,
-                                                     sz=(s = tty_size(); (s[1]-3, s[2])))
-    rows, cols = sz
+showkv(iter::Union{KeyIterator,ValueIterator}) = showkv(STDOUT, iter)
+function showkv{T<:Union{KeyIterator,ValueIterator}}(io::IO, iter::T)
     print(io, summary(iter))
     isempty(iter) && return
     print(io, ". ", T<:KeyIterator ? "Keys" : "Values", ":")
+    limit::Bool = limit_output(io)
     if limit
+        sz = displaysize(io)
+        rows, cols = sz[1] - 3, sz[2]
         rows < 2 && (print(io, " …"); return)
         cols < 4 && (cols = 4)
         cols -= 2 # For prefix "  "
         rows -= 2 # For summary and final ⋮ continuation lines
+    else
+        rows = cols = 0
     end
 
     for (i, v) in enumerate(iter)
@@ -165,7 +171,7 @@ function showkv{T<:Union{KeyIterator,ValueIterator}}(io::IO, iter::T; limit::Boo
         limit && i >= rows && (print(io, "⋮"); break)
 
         if limit
-            str = with_output_limit(()->sprint(show, v))
+            str = sprint(0, show, v, env=io)
             str = _truncate_at_width_or_chars(str, cols, "\r\n")
             print(io, str)
         else
@@ -217,11 +223,21 @@ function merge!(d::Associative, others::Associative...)
     end
     return d
 end
+
+# very similar to `merge!`, but accepts any iterable and extends code
+# that would otherwise only use `copy!` with arrays.
+function copy!(dest::Union{Associative,AbstractSet}, src)
+    for x in src
+        push!(dest, x)
+    end
+    return dest
+end
+
 keytype{K,V}(::Type{Associative{K,V}}) = K
 keytype(a::Associative) = keytype(typeof(a))
-keytype{A<:Associative}(::Type{A}) = keytype(super(A))
+keytype{A<:Associative}(::Type{A}) = keytype(supertype(A))
 valtype{K,V}(::Type{Associative{K,V}}) = V
-valtype{A<:Associative}(::Type{A}) = valtype(super(A))
+valtype{A<:Associative}(::Type{A}) = valtype(supertype(A))
 valtype(a::Associative) = valtype(typeof(a))
 function merge(d::Associative, others::Associative...)
     K, V = keytype(d), valtype(d)
@@ -233,24 +249,38 @@ function merge(d::Associative, others::Associative...)
 end
 
 function filter!(f, d::Associative)
+    badkeys = Array(keytype(d), 0)
     for (k,v) in d
-        if !f(k,v)
-            delete!(d,k)
-        end
+        # don't delete!(d, k) here, since associative types
+        # may not support mutation during iteration
+        f(k,v) || push!(badkeys, k)
+    end
+    for k in badkeys
+        delete!(d, k)
     end
     return d
 end
-filter(f, d::Associative) = filter!(f,copy(d))
+function filter(f, d::Associative)
+    # don't just do filter!(f, copy(d)): avoid making a whole copy of d
+    df = similar(d)
+    for (k,v) in d
+        if f(k,v)
+            df[k] = v
+        end
+    end
+    return df
+end
 
 eltype{K,V}(::Type{Associative{K,V}}) = Pair{K,V}
 
 function isequal(l::Associative, r::Associative)
+    l === r && return true
     if isa(l,ObjectIdDict) != isa(r,ObjectIdDict)
         return false
     end
     if length(l) != length(r) return false end
-    for (key, value) in l
-        if !isequal(value, get(r, key, secret_table_token))
+    for pair in l
+        if !in(pair, r, isequal)
             return false
         end
     end
@@ -258,12 +288,13 @@ function isequal(l::Associative, r::Associative)
 end
 
 function ==(l::Associative, r::Associative)
+    l === r && return true
     if isa(l,ObjectIdDict) != isa(r,ObjectIdDict)
         return false
     end
     if length(l) != length(r) return false end
-    for (key, value) in l
-        if value != get(r, key, secret_table_token)
+    for pair in l
+        if !in(pair, r, ==)
             return false
         end
     end
@@ -272,7 +303,7 @@ end
 
 const hasha_seed = UInt === UInt64 ? 0x6d35bb51952d5539 : 0x952d5539
 function hash(a::Associative, h::UInt)
-    h += hasha_seed
+    h = hash(hasha_seed, h)
     for (k,v) in a
         h $= hash(k, hash(v))
     end
@@ -377,6 +408,10 @@ SerializationState(io::IO) = SerializationState{typeof(io)}(io)
 
 # dict
 
+# These can be changed, to trade off better performance for space
+const global maxallowedprobe = 16
+const global maxprobeshift   = 6
+
 type Dict{K,V} <: Associative{K,V}
     slots::Array{UInt8,1}
     keys::Array{K,1}
@@ -385,10 +420,11 @@ type Dict{K,V} <: Associative{K,V}
     count::Int
     dirty::Bool
     idxfloor::Int  # an index <= the indexes of all used slots
+    maxprobe::Int
 
     function Dict()
         n = 16
-        new(zeros(UInt8,n), Array(K,n), Array(V,n), 0, 0, false, 1)
+        new(zeros(UInt8,n), Array(K,n), Array(V,n), 0, 0, false, 1, 0)
     end
     function Dict(kv)
         h = Dict{K,V}()
@@ -411,7 +447,8 @@ type Dict{K,V} <: Associative{K,V}
             rehash!(d)
         end
         @assert d.ndel == 0
-        new(copy(d.slots), copy(d.keys), copy(d.vals), 0, d.count, d.dirty, d.idxfloor)
+        new(copy(d.slots), copy(d.keys), copy(d.vals), 0, d.count, d.dirty, d.idxfloor,
+            d.maxprobe)
     end
 end
 Dict() = Dict{Any,Any}()
@@ -419,19 +456,6 @@ Dict(kv::Tuple{}) = Dict()
 copy(d::Dict) = Dict(d)
 
 const AnyDict = Dict{Any,Any}
-
-# TODO: this can probably be simplified using `eltype` as a THT (Tim Holy trait)
-Dict{K,V}(kv::Tuple{Vararg{Tuple{K,V}}})          = Dict{K,V}(kv)
-Dict{K  }(kv::Tuple{Vararg{Tuple{K,Any}}})        = Dict{K,Any}(kv)
-Dict{V  }(kv::Tuple{Vararg{Tuple{Any,V}}})        = Dict{Any,V}(kv)
-Dict{K,V}(kv::Tuple{Vararg{Pair{K,V}}})           = Dict{K,V}(kv)
-Dict{K  }(kv::Tuple{Vararg{Pair{K}}})             = Dict{K,Any}(kv)
-Dict{V  }(kv::Tuple{Vararg{Pair{TypeVar(:K),V}}}) = Dict{Any,V}(kv)
-Dict(     kv::Tuple{Vararg{Pair}})                = Dict{Any,Any}(kv)
-
-Dict{K,V}(kv::AbstractArray{Tuple{K,V}}) = Dict{K,V}(kv)
-Dict{K,V}(kv::AbstractArray{Pair{K,V}})  = Dict{K,V}(kv)
-Dict{K,V}(kv::Associative{K,V})          = Dict{K,V}(kv)
 
 Dict{K,V}(ps::Pair{K,V}...)            = Dict{K,V}(ps)
 Dict{K  }(ps::Pair{K}...,)             = Dict{K,Any}(ps)
@@ -453,9 +477,27 @@ end
 
 dict_with_eltype{K,V}(kv, ::Type{Tuple{K,V}}) = Dict{K,V}(kv)
 dict_with_eltype{K,V}(kv, ::Type{Pair{K,V}}) = Dict{K,V}(kv)
-dict_with_eltype(kv, t) = Dict{Any,Any}(kv)
+dict_with_eltype(kv, t) = grow_to!(Dict{Union{},Union{}}(), kv)
+
+# this is a special case due to (1) allowing both Pairs and Tuples as elements,
+# and (2) Pair being invariant. a bit annoying.
+function grow_to!{K,V}(dest::Associative{K,V}, itr, st = start(itr))
+    while !done(itr, st)
+        (k,v), st = next(itr, st)
+        if isa(k,K) && isa(v,V)
+            dest[k] = v
+        else
+            new = similar(dest, Pair{typejoin(K,typeof(k)), typejoin(V,typeof(v))})
+            copy!(new, dest)
+            new[k] = v
+            return grow_to!(new, itr, st)
+        end
+    end
+    return dest
+end
 
 similar{K,V}(d::Dict{K,V}) = Dict{K,V}()
+similar{K,V}(d::Dict, ::Type{Pair{K,V}}) = Dict{K,V}()
 
 # conversion between Dict types
 function convert{K,V}(::Type{Dict{K,V}},d::Associative)
@@ -500,15 +542,18 @@ function rehash!{K,V}(h::Dict{K,V}, newsz = length(h.keys))
     vals = Array(V, newsz)
     count0 = h.count
     count = 0
+    maxprobe = h.maxprobe
 
     for i = 1:sz
         if olds[i] == 0x1
             k = oldk[i]
             v = oldv[i]
-            index = hashindex(k, newsz)
+            index0 = index = hashindex(k, newsz)
             while slots[index] != 0
                 index = (index & (newsz-1)) + 1
             end
+            probe = (index - index0) & (newsz-1)
+            probe > maxprobe && (maxprobe = probe)
             slots[index] = 0x1
             keys[index] = k
             vals[index] = v
@@ -526,6 +571,7 @@ function rehash!{K,V}(h::Dict{K,V}, newsz = length(h.keys))
     h.vals = vals
     h.count = count
     h.ndel = 0
+    h.maxprobe = maxprobe
 
     return h
 end
@@ -561,7 +607,7 @@ end
 function ht_keyindex{K,V}(h::Dict{K,V}, key)
     sz = length(h.keys)
     iter = 0
-    maxprobe = max(16, sz>>6)
+    maxprobe = h.maxprobe
     index = hashindex(key, sz)
     keys = h.keys
 
@@ -574,10 +620,9 @@ function ht_keyindex{K,V}(h::Dict{K,V}, key)
         end
 
         index = (index & (sz-1)) + 1
-        iter+=1
+        iter += 1
         iter > maxprobe && break
     end
-
     return -1
 end
 
@@ -587,7 +632,7 @@ end
 function ht_keyindex2{K,V}(h::Dict{K,V}, key)
     sz = length(h.keys)
     iter = 0
-    maxprobe = max(16, sz>>6)
+    maxprobe = h.maxprobe
     index = hashindex(key, sz)
     avail = 0
     keys = h.keys
@@ -609,11 +654,22 @@ function ht_keyindex2{K,V}(h::Dict{K,V}, key)
         end
 
         index = (index & (sz-1)) + 1
-        iter+=1
+        iter += 1
         iter > maxprobe && break
     end
 
     avail < 0 && return avail
+
+    maxallowed = max(maxallowedprobe, sz>>maxprobeshift)
+    # Check if key is not present, may need to keep searching to find slot
+    while iter < maxallowed
+        if !isslotfilled(h,index)
+            h.maxprobe = iter
+            return -index
+        end
+        index = (index & (sz-1)) + 1
+        iter += 1
+    end
 
     rehash!(h, h.count > 64000 ? sz*2 : sz*4)
 
@@ -855,3 +911,99 @@ function next{K,V}(t::WeakKeyDict{K,V}, i)
     (Pair{K,V}(kv[1].value::K,kv[2]), i)
 end
 length(t::WeakKeyDict) = length(t.ht)
+
+# For these Associative types, it is safe to implement filter!
+# by deleting keys during iteration.
+function filter!(f, d::Union{ObjectIdDict,Dict,WeakKeyDict})
+     for (k,v) in d
+        if !f(k,v)
+            delete!(d,k)
+        end
+     end
+     return d
+ end
+
+immutable ImmutableDict{K, V} <: Associative{K,V}
+    parent::ImmutableDict{K, V}
+    key::K
+    value::V
+    ImmutableDict() = new() # represents an empty dictionary
+    ImmutableDict(key, value) = (empty = new(); new(empty, key, value))
+    ImmutableDict(parent::ImmutableDict, key, value) = new(parent, key, value)
+end
+
+"""
+    ImmutableDict
+
+ImmutableDict is a Dictionary implemented as an immutable linked list,
+which is optimal for small dictionaries that are constructed over many individual insertions
+Note that it is not possible to remove a value, although it can be partially overridden and hidden
+by inserting a new value with the same key
+
+    ImmutableDict(KV::Pair)
+
+Create a new entry in the Immutable Dictionary for the key => value pair
+
+ - use `(key => value) in dict` to see if this particular combination is in the properties set
+ - use `get(dict, key, default)` to retrieve the most recent value for a particular key
+
+"""
+ImmutableDict
+ImmutableDict{K,V}(KV::Pair{K,V}) = ImmutableDict{K,V}(KV[1], KV[2])
+ImmutableDict{K,V}(t::ImmutableDict{K,V}, KV::Pair) = ImmutableDict{K,V}(t, KV[1], KV[2])
+
+function in(key_value::Pair, dict::ImmutableDict, valcmp=(==))
+    key, value = key_value
+    while isdefined(dict, :parent)
+        if dict.key == key
+            if valcmp === is
+                is(value, dict.value) && return true
+            elseif valcmp === (==)
+                ==(value, dict.value) && return true
+            elseif valcmp === isequal
+                isequal(value, dict.value) && return true
+            else
+                valcmp(value, dict.value) && return true
+            end
+        end
+        dict = dict.parent
+    end
+    return false
+end
+
+function haskey(dict::ImmutableDict, key)
+    while isdefined(dict, :parent)
+        dict.key == key && return true
+        dict = dict.parent
+    end
+    return false
+end
+
+function getindex(dict::ImmutableDict, key)
+    while isdefined(dict, :parent)
+        dict.key == key && return dict.value
+        dict = dict.parent
+    end
+    throw(KeyError(key))
+end
+function get(dict::ImmutableDict, key, default)
+    while isdefined(dict, :parent)
+        dict.key == key && return dict.value
+        dict = dict.parent
+    end
+    return default
+end
+
+# this actually defines reverse iteration (e.g. it should not be used for merge/copy/filter type operations)
+start(t::ImmutableDict) = t
+next{K,V}(::ImmutableDict{K,V}, t) = (Pair{K,V}(t.key, t.value), t.parent)
+done(::ImmutableDict, t) = !isdefined(t, :parent)
+length(t::ImmutableDict) = count(x->1, t)
+isempty(t::ImmutableDict) = done(t, start(t))
+copy(t::ImmutableDict) = t
+function similar(t::ImmutableDict)
+    while isdefined(t, :parent)
+        t = t.parent
+    end
+    return t
+end

@@ -2,11 +2,12 @@
 
 module Enums
 
+import Core.Intrinsics.box
 export Enum, @enum
 
 abstract Enum
 
-Base.convert{T<:Integer}(::Type{T}, x::Enum) = convert(T, Intrinsics.box(Int32, x))
+Base.convert{T<:Integer}(::Type{T}, x::Enum) = convert(T, box(Int32, x))
 
 Base.write(io::IO, x::Enum) = write(io, Int32(x))
 Base.read{T<:Enum}(io::IO, ::Type{T}) = T(read(io, Int32))
@@ -77,7 +78,7 @@ macro enum(T,syms...)
         Base.@__doc__(bitstype 32 $(esc(T)) <: Enum)
         function Base.convert(::Type{$(esc(typename))}, x::Integer)
             $(membershiptest(:x, values)) || enum_argument_error($(Expr(:quote, typename)), x)
-            Intrinsics.box($(esc(typename)), convert(Int32, x))
+            box($(esc(typename)), convert(Int32, x))
         end
         Base.typemin(x::Type{$(esc(typename))}) = $(esc(typename))($lo)
         Base.typemax(x::Type{$(esc(typename))}) = $(esc(typename))($hi)
@@ -93,9 +94,12 @@ macro enum(T,syms...)
             end
         end
         function Base.show(io::IO,x::$(esc(typename)))
-            print(io, x, "::", $(esc(typename)), " = ", Int(x))
+            if Base.limit_output(io)
+                print(io, x)
+            else
+                print(io, x, "::", $(esc(typename)), " = ", Int(x))
+            end
         end
-        Base.showcompact(io::IO,x::$(esc(typename))) = print(io, x)
         function Base.writemime(io::IO,::MIME"text/plain",::Type{$(esc(typename))})
             print(io, "Enum ", $(esc(typename)), ":")
             for (sym, i) in $vals

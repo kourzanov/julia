@@ -294,9 +294,9 @@ end
 
 # bits types
 if WORD_SIZE == 64
-    @test isa((()->Intrinsics.box(Ptr{Int8},Intrinsics.unbox(Int64,0)))(), Ptr{Int8})
+    @test isa((()->Core.Intrinsics.box(Ptr{Int8},Core.Intrinsics.unbox(Int64,0)))(), Ptr{Int8})
 else
-    @test isa((()->Intrinsics.box(Ptr{Int8},Intrinsics.unbox(Int32,0)))(), Ptr{Int8})
+    @test isa((()->Core.Intrinsics.box(Ptr{Int8},Core.Intrinsics.unbox(Int32,0)))(), Ptr{Int8})
 end
 @test isa(convert(Char,65), Char)
 
@@ -319,15 +319,17 @@ function fooo_3()
     y
 end
 @test fooo_3() === 100
-function foo()
-    local x::Int8
-    function bar()
-        x = 100
-    end
+let
+    function foo()
+        local x::Int8
+        function bar()
+            x = 100
+        end
     bar()
-    x
+        x
+    end
+    @test foo() === convert(Int8,100)
 end
-@test foo() === convert(Int8,100)
 
 function bar{T}(x::T)
     local z::Complex{T}
@@ -421,14 +423,14 @@ glotest()
 # issue #7234
 begin
     glob_x2 = 24
-    f7234() = (glob_x2 += 1)
+    f7234_a() = (glob_x2 += 1)
 end
-@test_throws UndefVarError f7234()
+@test_throws UndefVarError f7234_a()
 begin
     global glob_x2 = 24
-    f7234() = (glob_x2 += 1)
+    f7234_b() = (glob_x2 += 1)
 end
-@test_throws UndefVarError f7234()
+@test_throws UndefVarError f7234_b()
 # existing globals can be inherited by non-function blocks
 for i = 1:2
     glob_x2 += 1
@@ -689,7 +691,7 @@ let A = [1]
 end
 
 # Module() constructor
-@test names(Module(:anonymous), true, true) != [:anonymous]
+@test names(Module(:anonymous), true, true) == [:anonymous]
 @test names(Module(:anonymous, false), true, true) == [:anonymous]
 
 # exception from __init__()
@@ -810,8 +812,7 @@ let
     local my_func, a, c
     my_func{T}(P::Vector{T}, Q::Vector{T}) = 0
     my_func{T}(x::T, P::Vector{T}) = 1
-    # todo: this gives an ambiguity warning
-    #my_func{T}(P::Vector{T}, x::T) = 2
+    my_func{T}(P::Vector{T}, x::T) = 2
     a = Int[3]
     c = Vector[a]
 
@@ -1021,33 +1022,6 @@ let
     @test g1632(:a, 2) == 1
 end
 
-# issue #1628
-type I1628{X}
-    x::X
-end
-let
-    # here the potential problem is that the run-time value of static
-    # parameter X in the I1628 constructor is (DataType,DataType),
-    # but type inference will track it more accurately as
-    # (Type{Integer}, Type{Int}).
-    f1628() = I1628((Integer,Int))
-    @test isa(f1628(), I1628{Tuple{DataType,DataType}})
-end
-
-let
-    fT{T}(x::T) = T
-    @test fT(Any) === DataType
-    @test fT(Int) === DataType
-    @test fT(Type{Any}) === DataType
-    @test fT(Type{Int}) === DataType
-
-    ff{T}(x::Type{T}) = T
-    @test ff(Type{Any}) === Type{Any}
-    @test ff(Type{Int}) === Type{Int}
-    @test ff(Any) === Any
-    @test ff(Int) === Int
-end
-
 # issue #2098
 let
     i2098() = begin
@@ -1157,18 +1131,6 @@ end
 @M2982.bad(T2982)
 @test T2982.super === M2982.U
 
-# issue #3182
-f3182{T}(::Type{T}) = 0
-f3182(x) = 1
-function g3182(t::DataType)
-    # tricky thing here is that DataType is a concrete type, and a
-    # subtype of Type, but we cannot infer the T in Type{T} just
-    # by knowing (at compile time) that the argument is a DataType.
-    # however the ::Type{T} method should still match at run time.
-    f3182(t)
-end
-@test g3182(Complex) == 0
-
 # issue #3221
 let x = fill(nothing, 1)
     @test_throws MethodError x[1] = 1
@@ -1233,14 +1195,15 @@ end
 @test isa(foo4075(Foo4075(Int64(1),2.0),:y), Float64)
 
 # issue #3167
-function foo(x)
-    ret=Array(typeof(x[1]), length(x))
-    for j = 1:length(x)
-        ret[j] = x[j]
+let
+    function foo(x)
+        ret=Array(typeof(x[1]), length(x))
+        for j = 1:length(x)
+            ret[j] = x[j]
+        end
+        return ret
     end
-    return ret
-end
-let x = Array(Union{Dict{Int64,AbstractString},Array{Int64,3},Number,AbstractString,Void}, 3)
+    x = Array(Union{Dict{Int64,AbstractString},Array{Int64,3},Number,AbstractString,Void}, 3)
     x[1] = 1.0
     x[2] = 2.0
     x[3] = 3.0
@@ -1381,7 +1344,7 @@ f4518(x::ByteString, y::Union{Int32,Int64}) = 1
 # issue #4581
 bitstype 64 Date4581{T}
 let
-    x = Intrinsics.box(Date4581{Int}, Intrinsics.unbox(Int64,Int64(1234)))
+    x = Core.Intrinsics.box(Date4581{Int}, Core.Intrinsics.unbox(Int64,Int64(1234)))
     xs = Date4581[x]
     ys = copy(xs)
     @test ys !== xs
@@ -1390,10 +1353,10 @@ end
 
 # issue #6591
 function f6591(d)
-    Intrinsics.box(Int64, d)
+    Core.Intrinsics.box(Int64, d)
     (f->f(d))(identity)
 end
-let d = Intrinsics.box(Date4581{Int}, Int64(1))
+let d = Core.Intrinsics.box(Date4581{Int}, Int64(1))
     @test isa(f6591(d), Date4581)
 end
 
@@ -1677,32 +1640,6 @@ let
     @test Test()() === nothing
 end
 
-# issue #5906
-
-abstract Outer5906{T}
-
-immutable Inner5906{T}
-   a:: T
-end
-
-immutable Empty5906{T} <: Outer5906{T}
-end
-
-immutable Hanoi5906{T} <: Outer5906{T}
-    a::T
-    succ :: Outer5906{Inner5906{T}}
-    Hanoi5906(a) = new(a, Empty5906{Inner5906{T}}())
-end
-
-function f5906{T}(h::Hanoi5906{T})
-    if isa(h.succ, Empty5906) return end
-    f5906(h.succ)
-end
-
-# can cause infinite recursion in type inference via instantiation of
-# the type of the `succ` field
-@test f5906(Hanoi5906{Int}(1)) === nothing
-
 # make sure front end can correctly print values to error messages
 let
     ex = expand(parse("\"a\"=1"))
@@ -1834,13 +1771,6 @@ f6502() = convert(Tuple{Vararg{Int}}, (10,))
 @test convert(Tuple{Bool,Vararg{Int}}, (true,10)) === (true,10)
 @test convert(Tuple{Int,Vararg{Bool}}, (true,1,0)) === (1,true,false)
 
-# issue on the flight from DFW
-# (type inference deducing Type{:x} rather than Symbol)
-type FooBarDFW{s}; end
-fooDFW(p::Type{FooBarDFW}) = string(p.parameters[1])
-fooDFW(p) = string(p.parameters[1])
-@test fooDFW(FooBarDFW{:x}) == "x" # not ":x"
-
 # issue #6611
 function crc6611(spec)
     direcn = spec ? 1 : 2
@@ -1892,7 +1822,7 @@ obj = ObjMember(DateRange6387{Int64}())
 
 function v6387{T}(r::Range{T})
     a = Array(T,1)
-    a[1] = Intrinsics.box(Date6387{Int64}, Intrinsics.unbox(Int64,Int64(1)))
+    a[1] = Core.Intrinsics.box(Date6387{Int64}, Core.Intrinsics.unbox(Int64,Int64(1)))
     a
 end
 
@@ -2027,13 +1957,6 @@ i7652()
 # issue #7679
 @test map(f->f(), Any[ ()->i for i=1:3 ]) == Any[1,2,3]
 
-# issue #7810
-type Foo7810{T<:AbstractVector}
-    v::T
-end
-bar7810() = [Foo7810([(a,b) for a in 1:2]) for b in 3:4]
-@test Base.return_types(bar7810,Tuple{})[1] == Array{Foo7810{Array{Tuple{Int,Int},1}},1}
-
 # issue 7897
 function issue7897!(data, arr)
     data = reinterpret(UInt32, data)
@@ -2081,7 +2004,7 @@ let ex = Expr(:(=), :(f8338(x;y=4)), :(x*y))
 end
 
 # call overloading (#2403)
-Base.call(x::Int, y::Int) = x + 3y
+(x::Int)(y::Int) = x + 3y
 issue2403func(f) = f(7)
 let x = 10
     @test x(3) == 19
@@ -2091,7 +2014,7 @@ end
 type Issue2403
     x
 end
-Base.call(i::Issue2403, y) = i.x + 2y
+(i::Issue2403)(y) = i.x + 2y
 let x = Issue2403(20)
     @test x(3) == 26
     @test issue2403func(x) == 34
@@ -2184,10 +2107,10 @@ call_lambda1() = (()->x)(1)
 call_lambda2() = ((x)->x)()
 call_lambda3() = ((x)->x)(1,2)
 call_lambda4() = ((x,y...)->x)()
-@test (try call_lambda1(); false; catch e; (e::ErrorException).msg; end) == "wrong number of arguments"
-@test (try call_lambda2(); false; catch e; (e::ErrorException).msg; end) == "wrong number of arguments"
-@test (try call_lambda3(); false; catch e; (e::ErrorException).msg; end) == "wrong number of arguments"
-@test (try call_lambda4(); false; catch e; (e::ErrorException).msg; end) == "too few arguments"
+@test_throws MethodError call_lambda1()
+@test_throws MethodError call_lambda2()
+@test_throws MethodError call_lambda3()
+@test_throws MethodError call_lambda4()
 call_lambda5() = ((x...)->x)()
 call_lambda6() = ((x...)->x)(1)
 call_lambda7() = ((x...)->x)(1,2)
@@ -2205,9 +2128,14 @@ let x = [1,2,3]
 end
 
 # sig 2 is SIGINT per the POSIX.1-1990 standard
-if Base.is_unix(OS_NAME)
+@unix_only begin
     ccall(:jl_exit_on_sigint, Void, (Cint,), 0)
-    @test_throws InterruptException ccall(:raise, Void, (Cint,), 2)
+    @test_throws InterruptException begin
+        #ccall(:raise, Void, (Cint,), 2) # llvm installs a custom version on Darwin that resolves to pthread_kill(pthread_self(), sig), which isn't what we want
+        Libc.systemsleep(0.1)
+        ccall(:kill, Void, (Cint, Cint,), getpid(), 2)
+        Libc.systemsleep(0.2) # wait for SIGINT to arrive
+    end
     ccall(:jl_exit_on_sigint, Void, (Cint,), 1)
 end
 
@@ -2257,15 +2185,9 @@ g9535() = (f9535(),f9535())
 @test g9535() == (1,2)
 @test g9535() == (3,4)
 
-# issue #9617
-let p = 15
-    @test 2p+1 == 31  # not a hex float literal
-end
-@test_throws ParseError parse("0x0.1")  # must have p or P
-
 # weak references
 type Obj; x; end
-function mk_wr(r, wr)
+@noinline function mk_wr(r, wr)
     x = Obj(1)
     push!(r, x)
     push!(wr, WeakRef(x))
@@ -2293,13 +2215,6 @@ function f9947()
     end
 end
 @test f9947() == UInt128(1)
-
-# Type inference for tuple parameters
-immutable fooTuple{s}; end
-barTuple1() = fooTuple{(:y,)}()
-barTuple2() = fooTuple{tuple(:y)}()
-
-@test Base.return_types(barTuple1,Tuple{})[1] == Base.return_types(barTuple2,Tuple{})[1] == fooTuple{(:y,)}
 
 #issue #9835
 module M9835
@@ -2373,13 +2288,13 @@ type newtype10373
 end
 let f
     for f in (f10373,g10373)
-        f(x::newtype10373) = println("$f")
+        (::typeof(f))(x::newtype10373) = println("$f")
     end
 end
-@test f10373.env.defs.func.code.name == :f10373
-@test f10373.env.defs.next.func.code.name == :f10373
-@test g10373.env.defs.func.code.name == :g10373
-@test g10373.env.defs.next.func.code.name == :g10373
+@test methods(f10373).defs.func.name == :f10373
+@test methods(f10373).defs.next.func.name == :f10373
+@test methods(g10373).defs.func.name == :g10373
+@test methods(g10373).defs.next.func.name == :g10373
 
 # issue #7221
 f7221{T<:Number}(::T) = 1
@@ -2387,16 +2302,10 @@ f7221(::BitArray) = 2
 f7221(::AbstractVecOrMat) = 3
 @test f7221(trues(1)) == 2
 
-# issue #9232
-arithtype9232{T<:Real}(::Type{T},::Type{T}) = arithtype9232(T)
-result_type9232{T1<:Number,T2<:Number}(::Type{T1}, ::Type{T2}) = arithtype9232(T1, T2)
-# this gave a "type too large", but not reliably
-@test length(code_typed(result_type9232, Tuple{Type{TypeVar(:_, Union{Float32,Float64})}, Type{TypeVar(:T2, Number)}})) == 1
-
 # test functionality of non-power-of-2 bitstype constants
 bitstype 24 Int24
-Int24(x::Int) = Intrinsics.box(Int24,Intrinsics.trunc_int(Int24,Intrinsics.unbox(Int,x)))
-Int(x::Int24) = Intrinsics.box(Int,Intrinsics.zext_int(Int,Intrinsics.unbox(Int24,x)))
+Int24(x::Int) = Core.Intrinsics.box(Int24,Core.Intrinsics.trunc_int(Int24,Core.Intrinsics.unbox(Int,x)))
+Int(x::Int24) = Core.Intrinsics.box(Int,Core.Intrinsics.zext_int(Int,Core.Intrinsics.unbox(Int24,x)))
 let x,y,f
     x = Int24(Int(0x12345678)) # create something (via truncation)
     @test Int(0x345678) === Int(x)
@@ -2928,11 +2837,6 @@ gc()
 @test collect(enumerate((Tuple,Int))) == [(1,Tuple), (2,Int)]
 @test collect(enumerate((Tuple,3))) == [(1,Tuple), (2,3)]
 
-# issue #10878
-function g10878(x; kw...); end
-invoke_g10878() = invoke(g10878, Tuple{Any}, 1)
-@code_typed invoke_g10878()
-
 # issue #10978
 typealias TupleType10978{T<:Tuple} Type{T}
 f10978(T::TupleType10978) = isa(T, TupleType10978)
@@ -2989,7 +2893,7 @@ end
 
 # issue #8283
 function func8283 end
-@test isa(func8283,Function) && isgeneric(func8283)
+@test isa(func8283,Function)
 @test_throws MethodError func8283()
 
 # issue #11243
@@ -2997,10 +2901,6 @@ let a = [Pair(1,2), Pair("a","b")]
     @test typeof(a) == Vector{Pair}
     @test typeof(a) <: Vector{Pair}
 end
-
-# issue #11366
-f11366{T}(x::Type{Ref{T}}) = Ref{x}
-@test !isleaftype(Base.return_types(f11366, (Any,))[1])
 
 # issue #11065, #1571
 function f11065()
@@ -3085,17 +2985,19 @@ end
 # issue 11858
 type Foo11858
     x::Float64
+    Foo11858(x::Float64) = new(x)
 end
 
 type Bar11858
     x::Float64
+    Bar11858(x::Float64) = new(x)
 end
 
 g11858(x::Float64) = x
 f11858(a) = for Baz in a
-    Baz(x) = Baz(float(x))
+    (f::Baz)(x) = f(float(x))
 end
-f11858(Any[Foo11858, Bar11858, g11858])
+f11858(Any[Type{Foo11858}, Type{Bar11858}, typeof(g11858)])
 
 @test g11858(1) == 1.0
 @test Foo11858(1).x == 1.0
@@ -3155,26 +3057,15 @@ end
 @test_throws ErrorException NTuple{-1, Int}
 @test_throws TypeError Union{Int, 1}
 
-# issue #10930
-@test isa(code_typed(promote,(Any,Any,Vararg{Any})), Array)
-find_tvar10930{T<:Tuple}(sig::Type{T}) = 1
-function find_tvar10930(arg)
-    if arg<:Tuple
-        find_tvar10930(arg[random_var_name])
-    end
-    return 1
-end
-@test find_tvar10930(Vararg{Int}) === 1
-
 # issue #12003
 const DATE12003 = DateTime(1917,1,1)
 failure12003(dt=DATE12003) = Dates.year(dt)
 @test isa(failure12003(), Integer)
 
 # issue #12023 Test error checking in bitstype
-@test_throws ErrorException bitstype 0 SPJa12023
-@test_throws ErrorException bitstype 4294967312 SPJb12023
-@test_throws ErrorException bitstype -4294967280 SPJc12023
+@test_throws ErrorException (@eval bitstype 0 SPJa12023)
+@test_throws ErrorException (@eval bitstype 4294967312 SPJb12023)
+@test_throws ErrorException (@eval bitstype -4294967280 SPJc12023)
 
 # issue #12089
 type A12089{K, N}
@@ -3278,13 +3169,6 @@ let x = (1,2)
     @test f12517() === Val{(1,2)}
 end
 
-# issue #12476
-function f12476(a)
-    (k, v) = a
-    v
-end
-@inferred f12476(1.0 => 1)
-
 # don't allow Vararg{} in Union{} type constructor
 @test_throws TypeError Union{Int,Vararg{Int}}
 
@@ -3298,44 +3182,6 @@ end
 typealias PossiblyInvalidUnion{T} Union{T,Int}
 @test_throws TypeError PossiblyInvalidUnion{1}
 
-# issue #12551 (make sure these don't throw in inference)
-Base.return_types(unsafe_load, (Ptr{nothing},))
-Base.return_types(getindex, (Vector{nothing},))
-
-# issue #12636
-module MyColors
-
-abstract Paint{T}
-immutable RGB{T<:AbstractFloat} <: Paint{T}
-    r::T
-    g::T
-    b::T
-end
-
-myeltype{T}(::Type{Paint{T}}) = T
-myeltype{P<:Paint}(::Type{P}) = myeltype(super(P))
-myeltype(::Type{Any}) = Any
-
-end
-
-@test @inferred(MyColors.myeltype(MyColors.RGB{Float32})) == Float32
-@test @inferred(MyColors.myeltype(MyColors.RGB)) == Any
-
-# issue #12612 (handle the case when `call` is not defined)
-Main.eval(:(type Foo12612 end))
-
-baremodule A12612
-import Main: Foo12612
-f1() = Foo12612()
-f2() = Main.Foo12612()
-end
-
-## Don't panic in type inference if call is not defined
-code_typed(A12612.f1, Tuple{})
-code_typed(A12612.f2, Tuple{})
-@test_throws ErrorException A12612.f1()
-@test_throws ErrorException A12612.f2()
-
 # issue #12569
 @test_throws ArgumentError symbol("x"^10_000_000)
 @test_throws ArgumentError gensym("x"^10_000_000)
@@ -3343,11 +3189,7 @@ code_typed(A12612.f2, Tuple{})
 @test split(string(gensym("abc")),'#')[3] == "abc"
 
 # meta nodes for optional positional arguments
-@test Base.uncompressed_ast(expand(:(@inline f(p::Int=2) = 3)).args[1].args[3]).args[3].args[1].args[1] === :inline
-
-# issue #12826
-f12826{I<:Integer}(v::Vector{I}) = v[1]
-@test Base.return_types(f12826,Tuple{Array{TypeVar(:I, Integer),1}})[1] == Integer
+@test Base.uncompressed_ast(expand(:(@inline f(p::Int=2) = 3)).args[2].args[3]).args[3].args[1].args[1] === :inline
 
 # issue #13007
 call13007{T,N}(::Type{Array{T,N}}) = 0
@@ -3464,8 +3306,7 @@ end
 
 # issue #11327 and #13547
 @test_throws MethodError convert(Type{Int}, Float32)
-# TODO: this should probably be a MethodError in `convert`; not sure what's going on
-@test_throws TypeError Array{Type{Int64}}([Float32])
+@test_throws MethodError Array{Type{Int64}}([Float32])
 abstract A11327
 abstract B11327 <: A11327
 f11327{T}(::Type{T},x::T) = x
@@ -3475,11 +3316,23 @@ let T=TypeVar(:T,true)
 end
 
 # issue 13855
-@eval @noinline function foo13855(x)
-    $(Expr(:localize, :(() -> () -> x)))
+macro m13855()
+    Expr(:localize, :(() -> x))
+end
+@noinline function foo13855(x)
+    @m13855()
 end
 @test foo13855(Base.AddFun())() == Base.AddFun()
 @test foo13855(Base.MulFun())() == Base.MulFun()
+
+# issue #8487
+@test [x for x in 1:3] == [x for x ∈ 1:3] == [x for x = 1:3]
+let A = Array(Int, 4,3)
+    for i ∈ 1:size(A,1), j ∈ 1:size(A,2)
+        A[i,j] = 17*i + 51*j
+    end
+    @test A == [17*i + 51*j for i ∈ 1:size(A,1), j ∈ 1:size(A,2)]
+end
 
 # check if finalizers for the old gen can be triggered manually
 # issue #13986
@@ -3498,4 +3351,393 @@ let
     # GC_MARKED; age = 1
     finalize(obj)
     @test finalized == 1
+end
+
+# check if finalizers for the old gen can be triggered manually
+# PR #14181
+let
+    # The following three `gc(false)` clears the `finalizer_list`. It is
+    # not strictly necessary to make the test pass but should make the failure
+    # more repeatable if something breaks.
+    gc(false)
+    # At least: GC_CLEAN; age = 1
+    gc(false)
+    # At least: GC_QUEUED; age = 1
+    gc(false)
+    # all objects in `finalizer_list` are now moved to `finalizer_list_marked`
+
+    obj1 = Ref(1)
+    obj2 = Ref(1)
+    finalized = 0
+    finalizer(obj1, (obj) -> (finalized += 1))
+    finalizer(obj1, (obj) -> (finalized += 1))
+    finalizer(obj2, (obj) -> (finalized += 1; finalize(obj1)))
+    finalizer(obj2, (obj) -> (finalized += 1; finalize(obj1)))
+    finalize(obj2)
+    @test finalized == 4
+end
+
+# issue #14323
+@test_throws ErrorException eval(Expr(:body, :(1)))
+
+# issue #14339
+f14339{T<:Union{}}(x::T, y::T) = 0
+@test_throws MethodError f14339(1, 2)
+
+# Make sure jlcall objects are rooted
+# PR #14301
+module JLCall14301
+
+# Define f
+function f end
+
+let i = Any[[1.23], [2.34]]
+    # f() with capture variables
+    # Intentionally type unstable so that the dynamic dispatch will
+    # read the corrupted tag if the object is incorrectly GC'd.
+    global @noinline f() = i[1][1] * i[2][1]
+end
+
+# Another function that use f()
+g() = f() * 100
+# Compile it
+g()
+
+let i = 9.0
+    # Override f()
+    global @noinline f() = i + 1
+end
+
+# Make sure the old f() method is GC'd if it was not rooted properly
+gc()
+gc()
+gc()
+
+# Run again.
+g()
+
+end
+
+# make sure codegen doesn't remove argument to `isa`
+@noinline __g_isa_test_1(a) = push!(a,1)
+function __f_isa_arg_1()
+    a = []
+    isa(__g_isa_test_1(a), Any)
+    length(a)
+end
+@test __f_isa_arg_1() == 1
+
+# issue #14477
+immutable Z14477
+    fld::Z14477
+    Z14477() = new(new())
+end
+let z1 = Z14477()
+    @test isa(z1, Z14477)
+    @test isa(z1.fld, Z14477)
+end
+
+# issue #14482
+let T = TypeVar(:T, true)
+    @test typeintersect(T, Type{Int8}) == Type{Int8}
+    @test typeintersect(Tuple{T}, Tuple{Type{Int8}}) == Tuple{Type{Int8}}
+end
+
+# issue #8846, generic macros
+macro m8846(a, b=0)
+    a, b
+end
+@test @m8846(a) === (:a, 0)
+@test @m8846(a,1) === (:a, 1)
+@test_throws MethodError eval(:(@m8846(a,b,c)))
+
+# a simple case of parametric dispatch with unions
+let foo{T}(x::Union{T,Void},y::Union{T,Void}) = 1
+    @test foo(1, nothing) === 1
+    @test_throws MethodError foo(nothing, nothing)  # can't determine T
+end
+
+module TestMacroGlobalFunction
+macro makefn(f,g)
+    quote
+        global $(f)
+        function $(f)(x)
+            x+1
+        end
+        global $(g)
+        $(g)(x) = x+2
+    end
+end
+@makefn ff gg
+end
+@test TestMacroGlobalFunction.ff(1) == 2
+@test TestMacroGlobalFunction.gg(1) == 3
+
+# issue #14564
+@test isa(object_id(Tuple.name.cache), Integer)
+
+# issue #14691
+type T14691; a::UInt; end
+@test (T14691(0).a = 0) === 0
+
+# issue #14245
+f14245() = (v = []; push!(v, length(v)); v)
+@test f14245()[1] == 0
+
+# issue #9677
+@generated function foo9677{T,N}(x::AbstractArray{T,N})
+    quote
+        x=$N
+        y=x+1
+        return y
+    end
+end
+foo9677(x::Array) = invoke(foo9677,(AbstractArray,),x)
+@test foo9677(1:5) == foo9677(randn(3))
+
+# issue #6846
+f6846() = (please6846; 2)
+@test_throws UndefVarError f6846()
+
+# issue #14758
+@test isa(eval(:(f14758(; $([]...)) = ())), Function)
+
+# issue #14767
+@inline f14767(x) = x ? A14767 : ()
+const A14767 = f14767(false)
+@test A14767 === ()
+
+# issue #10985
+f10985(::Any...) = 1
+@test f10985(1, 2, 3) == 1
+
+# a tricky case for closure conversion
+type _CaptureInCtor
+    yy
+    function _CaptureInCtor(list_file::AbstractString="")
+        y = 0
+        f = x->add_node(y)
+        new(f(2))
+    end
+    add_node(y) = y+1
+end
+@test _CaptureInCtor().yy == 1
+
+# issue #14610
+let sometypes = (Int,Int8)
+    f(::Union{ntuple(i->Type{sometypes[i]}, length(sometypes))...}) = 1
+    @test method_exists(f, (Union{Type{Int},Type{Int8}},))
+end
+
+let
+    b=()->c
+    c=1
+    @test b() == 1
+end
+
+# issue #14825
+abstract abstest_14825
+
+type t1_14825{A <: abstest_14825, B}
+  x::A
+  y::B
+end
+
+type t2_14825{C, B} <: abstest_14825
+  x::C
+  y::t1_14825{t2_14825{C, B}, B}
+end
+
+@test t2_14825{Int,Int}.types[2] <: t1_14825
+
+# issue #14917
+@test isa(let generic
+          function generic end
+          end,
+          Function)
+
+# let syntax with multiple lhs
+let z = (3,9,42)
+    let (a,b,c) = z
+        @test a == 3 && b == 9 && c == 42
+    end
+    let (a,b::Float64,c::Int8) = z
+        @test a == 3 && b === 9.0 && c === Int8(42)
+    end
+    z = (1, z, 10)
+    let (a, (b,c,d), e) = z
+        @test (a,b,c,d,e) == (1,3,9,42,10)
+    end
+end
+
+# issue #15072
+let grphtest = ((1, [2]),)
+    for (s, g) in grphtest
+        g_ = map(s -> s+1, g)
+        @test g_ == [3]
+    end
+    for s = 1:1
+    end
+end
+
+# issue #13229
+module I13229
+    using Base.Test
+    global z = 0
+    @timed @profile for i = 1:5
+        function f(x)
+            return x + i
+        end
+        global z = f(i)
+    end
+    @test z == 10
+end
+
+# issue #15186
+let ex = quote
+             $(if true; :(test); end)
+         end
+    @test ex.args[2] == :test
+end
+
+# issue #15180
+function f15180{T}(x::T)
+    X = Array(T, 1)
+    X[1] = x
+    @noinline ef{J}(::J) = (J,X[1]) # Use T
+    ef{J}(::J, ::Int) = (T,J)
+    return ef
+end
+@test map(f15180(1), [1,2]) == [(Int,1),(Int,1)]
+
+let ary = Vector{Any}(10)
+    check_undef_and_fill(ary, rng) = for i in rng
+        @test !isdefined(ary, i)
+        ary[i] = (Float64(i), i) # some non-cached content
+        @test isdefined(ary, i)
+    end
+    # Check if the memory is initially zerod and fill it with value
+    # to check if these values are not reused later.
+    check_undef_and_fill(ary, 1:10)
+    # Check if the memory grown at the end are zerod
+    ccall(:jl_array_grow_end, Void, (Any, Csize_t), ary, 10)
+    check_undef_and_fill(ary, 11:20)
+    # Make sure the content of the memory deleted at the end are not reused
+    ccall(:jl_array_del_end, Void, (Any, Csize_t), ary, 5)
+    ccall(:jl_array_grow_end, Void, (Any, Csize_t), ary, 5)
+    check_undef_and_fill(ary, 16:20)
+
+    # Now check grow/del_end
+    ary = Vector{Any}(1010)
+    check_undef_and_fill(ary, 1:1010)
+    # This del_beg should move the buffer
+    ccall(:jl_array_del_beg, Void, (Any, Csize_t), ary, 1000)
+    ccall(:jl_array_grow_beg, Void, (Any, Csize_t), ary, 1000)
+    check_undef_and_fill(ary, 1:1000)
+    ary = Vector{Any}(1010)
+    check_undef_and_fill(ary, 1:1010)
+    # This del_beg should not move the buffer
+    ccall(:jl_array_del_beg, Void, (Any, Csize_t), ary, 10)
+    ccall(:jl_array_grow_beg, Void, (Any, Csize_t), ary, 10)
+    check_undef_and_fill(ary, 1:10)
+
+    ary = Vector{Any}(1010)
+    check_undef_and_fill(ary, 1:1010)
+    ccall(:jl_array_grow_end, Void, (Any, Csize_t), ary, 10)
+    check_undef_and_fill(ary, 1011:1020)
+    ccall(:jl_array_del_end, Void, (Any, Csize_t), ary, 10)
+    ccall(:jl_array_grow_beg, Void, (Any, Csize_t), ary, 10)
+    check_undef_and_fill(ary, 1:10)
+
+    # Make sure newly malloc'd buffers are filled with 0
+    # test this for a few different sizes since we need to make sure
+    # we are malloc'ing the buffer after the grow_end and malloc is not using
+    # mmap directly (which may return a zero'd new page).
+    for n in [50, 51, 100, 101, 200, 201, 300, 301]
+        ary = Vector{Any}(n)
+        # Try to free the previous buffer that was filled with random content
+        # and to increase the chance of getting a non-zero'd buffer next time
+        gc()
+        gc()
+        gc()
+        ccall(:jl_array_grow_beg, Void, (Any, Csize_t), ary, 4)
+        ccall(:jl_array_del_beg, Void, (Any, Csize_t), ary, 4)
+        ccall(:jl_array_grow_end, Void, (Any, Csize_t), ary, n)
+        ccall(:jl_array_grow_beg, Void, (Any, Csize_t), ary, 4)
+        check_undef_and_fill(ary, 1:(2n + 4))
+    end
+end
+
+# issue #15283
+j15283 = 0
+let
+    k15283 = j15283+=1
+end
+@test j15283 == 1
+@test !isdefined(:k15283)
+
+# issue #15264
+module Test15264
+    mod1{T}(x::T) = x < 1 ? x : mod1(x-1)
+end
+@test Test15264.mod1 !== Base.mod1
+
+module M15455
+function rpm_provides{T}(r::T)
+    push!([], select(r,T))
+end
+select(a,b) = 0
+end
+@test M15455.select(1,2)==0
+
+# check that medium-sized array is 64-byte aligned (#15139)
+@test Int(pointer(Vector{Float64}(1024))) % 64 == 0
+
+# PR #15413
+# Make sure arrayset can handle `Array{T}` (where `T` is a type and not a
+# `TypeVar`) without crashing
+let
+    function arrayset_unknown_dim{T}(::Type{T}, n)
+        Base.arrayset(reshape(Vector{T}(1), ones(Int, n)...), 2, 1)
+    end
+    arrayset_unknown_dim(Any, 1)
+    arrayset_unknown_dim(Any, 2)
+    arrayset_unknown_dim(Any, 3)
+    arrayset_unknown_dim(Int, 1)
+    arrayset_unknown_dim(Int, 2)
+    arrayset_unknown_dim(Int, 3)
+end
+
+# issue #15370
+@test isdefined(Core, :Box)
+@test isdefined(Base, :Box)
+@test !isdefined(Main, :Box)
+
+# issue #1784
+let a = [false]
+function foo1784()
+    (a,b) = try
+        return true
+        (0,1)
+    finally
+         a[1] = true
+    end
+end
+@test foo1784()
+@test a[1] == true
+end
+
+# issue #14113
+module A14113
+    using Base.Test
+    # show that making several thousand methods (and lots of AST constants)
+    # doesn't cause any serious issues (for example, for the serializer)
+    # although to keep runtime on the order of several seconds for this test,
+    # only several hundred of them are compiled / called
+    for i = 1:2^14 + 256
+        r = rand(2^4)
+        code = Expr(:tuple, r...)
+        f = @eval () -> $code
+        i > (2^14 - 256) && @test [f()...] == r
+    end
 end

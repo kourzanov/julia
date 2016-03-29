@@ -1,11 +1,8 @@
 # This file is a part of Julia. License is MIT: http://julialang.org/license
 
-import Core.Intrinsics.ccall
-
 baremodule Base
 
-using Core: Intrinsics, arrayref, arrayset, arraysize, _expr,
-            kwcall, _apply, typeassert, apply_type, svec
+using Core.TopModule, Core.Intrinsics
 ccall(:jl_set_istopmod, Void, (Bool,), true)
 
 include = Core.include
@@ -19,7 +16,7 @@ if false
     # simple print definitions for debugging. enable these if something
     # goes wrong during bootstrap before printing code is available.
     show(x::ANY) = ccall(:jl_static_show, Void, (Ptr{Void}, Any),
-                         Intrinsics.pointerref(Intrinsics.cglobal(:jl_uv_stdout,Ptr{Void}),1), x)
+                         pointerref(cglobal(:jl_uv_stdout,Ptr{Void}),1), x)
     print(x::ANY) = show(x)
     println(x::ANY) = ccall(:jl_, Void, (Any,), x)
     print(a::ANY...) = for x=a; print(x); end
@@ -30,6 +27,7 @@ end
 include("essentials.jl")
 include("docs/bootstrap.jl")
 include("base.jl")
+include("generator.jl")
 include("reflection.jl")
 include("options.jl")
 
@@ -47,12 +45,34 @@ include("int.jl")
 include("operators.jl")
 include("pointer.jl")
 include("refpointer.jl")
+(::Type{T}){T}(arg) = convert(T, arg)::T
 include("functors.jl")
+include("checked.jl")
+importall .Checked
 
 # array structures
 include("abstractarray.jl")
 include("subarray.jl")
 include("array.jl")
+
+# Array convenience converting constructors
+(::Type{Array{T}}){T}(m::Integer) = Array{T,1}(Int(m))
+(::Type{Array{T}}){T}(m::Integer, n::Integer) = Array{T,2}(Int(m), Int(n))
+(::Type{Array{T}}){T}(m::Integer, n::Integer, o::Integer) = Array{T,3}(Int(m), Int(n), Int(o))
+(::Type{Array{T}}){T}(d::Integer...) = Array{T}(convert(Tuple{Vararg{Int}}, d))
+
+(::Type{Vector})() = Array{Any,1}(0)
+(::Type{Vector{T}}){T}(m::Integer) = Array{T,1}(Int(m))
+(::Type{Vector})(m::Integer) = Array{Any,1}(Int(m))
+(::Type{Matrix})() = Array{Any,2}(0, 0)
+(::Type{Matrix{T}}){T}(m::Integer, n::Integer) = Matrix{T}(Int(m), Int(n))
+(::Type{Matrix})(m::Integer, n::Integer) = Matrix{Any}(Int(m), Int(n))
+
+# TODO: possibly turn these into deprecations
+Array{T}(::Type{T}, d::Integer...) = Array{T}(convert(Tuple{Vararg{Int}}, d))
+Array{T}(::Type{T}, m::Integer)                       = Array{T,1}(Int(m))
+Array{T}(::Type{T}, m::Integer,n::Integer)            = Array{T,2}(Int(m),Int(n))
+Array{T}(::Type{T}, m::Integer,n::Integer,o::Integer) = Array{T,3}(Int(m),Int(n),Int(o))
 
 # numeric operations
 include("hashing.jl")
@@ -61,6 +81,8 @@ importall .Rounding
 include("float.jl")
 include("complex.jl")
 include("rational.jl")
+include("multinverses.jl")
+using .MultiplicativeInverses
 include("abstractarraymath.jl")
 include("arraymath.jl")
 
@@ -78,27 +100,34 @@ include("dict.jl")
 include("set.jl")
 include("iterator.jl")
 
+# StridedArrays
+typealias StridedArray{T,N,A<:DenseArray,I<:Tuple{Vararg{Union{RangeIndex, NoSlice, AbstractCartesianIndex}}}} Union{DenseArray{T,N}, SubArray{T,N,A,I}}
+typealias StridedVector{T,A<:DenseArray,I<:Tuple{Vararg{Union{RangeIndex, NoSlice, AbstractCartesianIndex}}}}  Union{DenseArray{T,1}, SubArray{T,1,A,I}}
+typealias StridedMatrix{T,A<:DenseArray,I<:Tuple{Vararg{Union{RangeIndex, NoSlice, AbstractCartesianIndex}}}}  Union{DenseArray{T,2}, SubArray{T,2,A,I}}
+typealias StridedVecOrMat{T} Union{StridedVector{T}, StridedMatrix{T}}
+
 # For OS specific stuff
 include(UTF8String(vcat(length(Core.ARGS)>=2?Core.ARGS[2].data:"".data, "build_h.jl".data))) # include($BUILDROOT/base/build_h.jl)
 include(UTF8String(vcat(length(Core.ARGS)>=2?Core.ARGS[2].data:"".data, "version_git.jl".data))) # include($BUILDROOT/base/version_git.jl)
-include("c.jl")
 include("osutils.jl")
+include("c.jl")
+
+# Core I/O
+include("io.jl")
+include("iostream.jl")
+include("iobuffer.jl")
 
 # strings & printing
 include("char.jl")
 include("ascii.jl")
-include("iobuffer.jl")
 include("string.jl")
 include("unicode.jl")
 include("parse.jl")
 include("shell.jl")
 include("regex.jl")
+include("show.jl")
 include("base64.jl")
 importall .Base64
-
-# Core I/O
-include("io.jl")
-include("iostream.jl")
 
 # system & environment
 include("libc.jl")
@@ -111,10 +140,13 @@ include("intfuncs.jl")
 # nullable types
 include("nullable.jl")
 
-# I/O
+# Scheduling
+include("libuv.jl")
+include("event.jl")
 include("task.jl")
 include("lock.jl")
-include("show.jl")
+
+# I/O
 include("stream.jl")
 include("socket.jl")
 include("filesystem.jl")
@@ -201,7 +233,9 @@ include("serialize.jl")
 importall .Serializer
 include("channels.jl")
 include("multi.jl")
+include("workerpool.jl")
 include("managers.jl")
+include("mapiterator.jl")
 
 # code loading
 include("loading.jl")
@@ -222,6 +256,7 @@ include("i18n.jl")
 using .I18n
 
 # frontend
+include("initdefs.jl")
 include("Terminals.jl")
 include("LineEdit.jl")
 include("REPLCompletions.jl")
@@ -270,6 +305,10 @@ include("libgit2.jl")
 include("pkg.jl")
 const Git = Pkg.Git
 
+# Stack frames and traces
+include("stacktraces.jl")
+importall .StackTraces
+
 # profiler
 include("profile.jl")
 importall .Profile
@@ -289,15 +328,16 @@ include("docs/Docs.jl")
 using .Docs
 using .Markdown
 
+# threads
+include("threads.jl")
+include("threadcall.jl")
+
 # deprecated functions
 include("deprecated.jl")
 
 # Some basic documentation
 include("docs/helpdb.jl")
 include("docs/basedocs.jl")
-
-# threads
-include("threads.jl")
 
 function __init__()
     # Base library init
@@ -306,6 +346,7 @@ function __init__()
     early_init()
     init_load_path()
     init_parallel()
+    init_threadcall()
 end
 
 include = include_from_node1

@@ -47,6 +47,11 @@
 @test typeof(Dates.today()) <: Dates.Date
 @test typeof(Dates.now(Dates.UTC)) <: Dates.DateTime
 
+@osx_only withenv("TZ" => "UTC") do
+    @test abs(Dates.now() - now(Dates.UTC)) < Dates.Second(1)
+end
+@test abs(Dates.now() - now(Dates.UTC)) < Dates.Hour(16)
+
 # Issue #9171, #9169
 let t = Dates.Period[Dates.Week(2), Dates.Day(14), Dates.Hour(14*24), Dates.Minute(14*24*60), Dates.Second(14*24*60*60), Dates.Millisecond(14*24*60*60*1000)]
     for i = 1:length(t)
@@ -80,3 +85,18 @@ let dt = DateTime(1915,1,1,12)
     @test Dates.unix2datetime(unix) == dt
     @test Dates.julian2datetime(julian) == dt
 end
+
+# Conversions to/from numbers
+a = Dates.DateTime(2000)
+b = Dates.Date(2000)
+@test convert(Real,b) == 730120
+@test convert(Float64,b) == 730120.0
+@test convert(Int32,b) == 730120
+@test convert(Real,a) == 63082368000000
+@test convert(Float64,a) == 63082368000000.0
+@test convert(Int64,a) == 63082368000000
+@test convert(DateTime,63082368000000) == a
+@test convert(DateTime,63082368000000.0) == a
+@test convert(Date,730120) == b
+@test convert(Date,730120.0) == b
+@test convert(Date,Int32(730120)) == b

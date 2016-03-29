@@ -24,6 +24,15 @@ b = a+a
 @test isequal(1./[1,2,5], [1.0,0.5,0.2])
 @test isequal([1,2,3]/5, [0.2,0.4,0.6])
 
+@test isequal(2.%[1,2,3], [0,0,2])
+@test isequal([1,2,3].%2, [1,0,1])
+@test isequal(2.÷[1,2,3], [2,1,0])
+@test isequal([1,2,3].÷2, [0,1,1])
+@test isequal(-2.%[1,2,3], [0,0,-2])
+@test isequal([-1,-2,-3].%2, [-1,0,-1])
+@test isequal(-2.÷[1,2,3], [-2,-1,0])
+@test isequal([-1,-2,-3].÷2, [0,-1,-1])
+
 @test isequal(1.<<[1,2,5], [2,4,32])
 @test isequal(128.>>[1,2,5], [64,32,4])
 @test isequal(2.>>1, 1)
@@ -306,7 +315,7 @@ for i = 1:3
 end
 @test isequal(a,findn(z))
 
-#argmin argmax
+#findmin findmax indmin indmax
 @test indmax([10,12,9,11]) == 2
 @test indmin([10,12,9,11]) == 3
 @test findmin([NaN,3.2,1.8]) == (1.8,3)
@@ -315,6 +324,16 @@ end
 @test findmax([NaN,3.2,1.8,NaN]) == (3.2,2)
 @test findmin([3.2,1.8,NaN,2.0]) == (1.8,2)
 @test findmax([3.2,1.8,NaN,2.0]) == (3.2,1)
+
+# #14085
+@test findmax(4:9) == (9,6)
+@test indmax(4:9) == 6
+@test findmin(4:9) == (4,1)
+@test indmin(4:9) == 1
+@test findmax(5:-2:1) == (5,1)
+@test indmax(5:-2:1) == 1
+@test findmin(5:-2:1) == (1,3)
+@test indmin(5:-2:1) == 3
 
 ## permutedims ##
 
@@ -838,6 +857,11 @@ end
 @test isequal([1,2,3], [a for (a,b) in enumerate(2:4)])
 @test isequal([2,3,4], [b for (a,b) in enumerate(2:4)])
 
+# comprehension in let-bound function
+let x⊙y = sum([x[i]*y[i] for i=1:length(x)])
+    @test [1,2] ⊙ [3,4] == 11
+end
+
 @test_throws DomainError (10.^[-1])[1] == 0.1
 @test (10.^[-1.])[1] == 0.1
 
@@ -940,7 +964,7 @@ end
 
 # Handle block matrices
 A = [randn(2,2) for i = 1:2, j = 1:2]
-@test issym(A.'A)
+@test issymmetric(A.'A)
 A = [complex(randn(2,2), randn(2,2)) for i = 1:2, j = 1:2]
 @test ishermitian(A'A)
 
@@ -1086,9 +1110,20 @@ I2 = CartesianIndex((-1,5,2))
 @test I2 + I1 == CartesianIndex((1,8,2))
 @test I1 - I2 == CartesianIndex((3,-2,-2))
 @test I2 - I1 == CartesianIndex((-3,2,2))
+@test I1 + 1 == CartesianIndex((3,4,1))
+@test I1 - 2 == CartesianIndex((0,1,-2))
 
 @test min(CartesianIndex((2,3)), CartesianIndex((5,2))) == CartesianIndex((2,2))
 @test max(CartesianIndex((2,3)), CartesianIndex((5,2))) == CartesianIndex((5,3))
+
+# CartesianIndex allows construction at a particular dimensionality
+@test length(CartesianIndex{3}()) == 3
+@test length(CartesianIndex{3}(1,2)) == 3
+@test length(CartesianIndex{3}((1,2))) == 3
+@test length(CartesianIndex{3}(1,2,3)) == 3
+@test length(CartesianIndex{3}((1,2,3))) == 3
+@test_throws DimensionMismatch CartesianIndex{3}(1,2,3,4)
+@test_throws DimensionMismatch CartesianIndex{3}((1,2,3,4))
 
 @test length(I1) == 3
 
@@ -1113,6 +1148,9 @@ indexes = collect(R)
 @test length(indexes) == 12
 @test length(R) == 12
 @test ndims(R) == 2
+
+@test CartesianRange((3:5,-7:7)) == CartesianRange(CartesianIndex{2}(3,-7),CartesianIndex{2}(5,7))
+@test CartesianRange((3,-7:7)) == CartesianRange(CartesianIndex{2}(3,-7),CartesianIndex{2}(3,7))
 
 r = 2:3
 itr = eachindex(r)
@@ -1424,3 +1462,25 @@ let A = zeros(Int, 2, 2), B = zeros(Float64, 2, 2)
         @test isleaftype(Base.return_types(f, ())[1])
     end
 end
+
+# issue #14482
+@inferred map(Int8, Int[0])
+
+# make sure @inbounds isn't used too much
+type OOB_Functor{T}; a::T; end
+(f::OOB_Functor)(i::Int) = f.a[i]
+let f = OOB_Functor([1,2])
+    @test_throws BoundsError map(f, [1,2,3,4,5])
+end
+
+
+# issue 15654
+@test cumprod([5], 2) == [5]
+@test cumprod([1 2; 3 4], 3) == [1 2; 3 4]
+@test cumprod([1 2; 3 4], 1) == [1 2; 3 8]
+@test cumprod([1 2; 3 4], 2) == [1 2; 3 12]
+
+@test cumsum([5], 2) == [5]
+@test cumsum([1 2; 3 4], 1) == [1 2; 4 6]
+@test cumsum([1 2; 3 4], 2) == [1 3; 3 7]
+@test cumsum([1 2; 3 4], 3) == [1 2; 3 4]

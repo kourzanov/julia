@@ -22,9 +22,9 @@ let
                        ("5.≥x", "5.>=x"),
                        ("5.≤x", "5.<=x")]
         ex1 = parse(ex1); ex2 = parse(ex2)
-        @test ex1.head === :comparison && (ex1.head === ex2.head)
-        @test ex1.args[1] === 5 && ex2.args[1] === 5
-        @test is(eval(Main, ex1.args[2]), eval(Main, ex2.args[2]))
+        @test ex1.head === :call && (ex1.head === ex2.head)
+        @test ex1.args[2] === 5 && ex2.args[2] === 5
+        @test is(eval(Main, ex1.args[1]), eval(Main, ex2.args[1]))
         @test ex1.args[3] === :x && (ex1.args[3] === ex2.args[3])
     end
 end
@@ -99,9 +99,6 @@ macro test999_str(args...); args; end
 # issue #10994
 @test parse("1 + #= \0 =# 2") == :(1 + 2)
 
-# issue #10985
-@test expand(:(f(::Int...) = 1)).head == :method
-
 # issue #10910
 @test parse(":(using A)") == Expr(:quote, Expr(:using, :A))
 @test parse(":(using A.b, B)") == Expr(:quote,
@@ -153,6 +150,27 @@ macro f(args...) end; @f ""
 """) == Expr(:toplevel,
             Expr(:macro, Expr(:call, :f, Expr(:..., :args)), Expr(:block,)),
             Expr(:macrocall, symbol("@f"), ""))
+
+# blocks vs. tuples
+@test parse("()") == Expr(:tuple)
+@test parse("(;)") == Expr(:block)
+@test parse("(;;;;)") == Expr(:block)
+@test_throws ParseError parse("(,)")
+@test_throws ParseError parse("(;,)")
+@test_throws ParseError parse("(,;)")
+@test parse("(x;)") == Expr(:block, :x)
+@test parse("(;x)") == Expr(:tuple, Expr(:parameters, :x))
+@test parse("(;x,)") == Expr(:tuple, Expr(:parameters, :x))
+@test parse("(x,)") == Expr(:tuple, :x)
+@test parse("(x,;)") == Expr(:tuple, :x)
+@test parse("(x;y)") == Expr(:block, :x, :y)
+@test parse("(x=1;y=2)") == Expr(:block, Expr(:(=), :x, 1), Expr(:(=), :y, 2))
+@test parse("(x,;y)") == Expr(:tuple, Expr(:parameters, :y), :x)
+@test parse("(x,;y=1)") == Expr(:tuple, Expr(:parameters, Expr(:kw, :y, 1)), :x)
+@test parse("(x,a;y=1)") == Expr(:tuple, Expr(:parameters, Expr(:kw, :y, 1)), :x, :a)
+@test parse("(x,a;y=1,z=2)") == Expr(:tuple, Expr(:parameters, Expr(:kw,:y,1), Expr(:kw,:z,2)), :x, :a)
+@test parse("(a=1, b=2)") == Expr(:tuple, Expr(:(=), :a, 1), Expr(:(=), :b, 2))
+@test_throws ParseError parse("(1 2)") # issue #15248
 
 # integer parsing
 @test is(parse(Int32,"0",36),Int32(0))
@@ -273,7 +291,7 @@ for T in (UInt8,UInt16,UInt32,UInt64)
     @test_throws OverflowError parse(T,string(big(typemax(T))+1))
 end
 
-@test parse("1 == 2|>3") == Expr(:comparison, 1, :(==), Expr(:call, :(|>), 2, 3))
+@test parse("1 == 2|>3") == Expr(:call, :(==), 1, Expr(:call, :(|>), 2, 3))
 
 # issue #12501 and pr #12502
 parse("""
@@ -310,3 +328,71 @@ end
 @test parse("a||b→c&&d") == Expr(:call, :→,
                                  Expr(symbol("||"), :a, :b),
                                  Expr(symbol("&&"), :c, :d))
+
+# issue #11988 -- normalize \r and \r\n in literal strings to \n
+@test "foo\nbar" == parse("\"\"\"\r\nfoo\r\nbar\"\"\"") == parse("\"\"\"\nfoo\nbar\"\"\"") == parse("\"\"\"\rfoo\rbar\"\"\"") == parse("\"foo\r\nbar\"") == parse("\"foo\rbar\"") == parse("\"foo\nbar\"")
+@test '\r' == first("\r") == first("\r\n") # still allow explicit \r
+
+# issue #14561 - generating 0-method generic function def
+let fname = :f
+    @test :(function $fname end) == Expr(:function, :f)
+end
+
+# issue #14977
+@test parse("x = 1", 1) == (:(x = 1), 6)
+@test parse("x = 1", 6) == (nothing, 6)
+@test_throws BoundsError parse("x = 1", 0)
+@test_throws BoundsError parse("x = 1", -1)
+@test_throws BoundsError parse("x = 1", 7)
+
+# issue #14683
+@test_throws ParseError parse("'\\A\"'")
+@test parse("'\"'") == parse("'\\\"'") == '"' == "\""[1] == '\42'
+
+@test_throws ParseError parse("f(2x for x=1:10, y")
+
+# issue #15223
+call0(f) = f()
+call1(f,x) = f(x)
+call2(f,x,y) = f(x,y)
+@test (call0() do; 42 end) == 42
+@test (call1(42) do x; x+1 end) == 43
+@test (call2(42,1) do x,y; x+y+1 end) == 44
+
+# definitions using comparison syntax
+let a⊂b = reduce(&, x ∈ b for x in a) && length(b)>length(a)
+    @test [1,2] ⊂ [1,2,3,4]
+    @test !([1,2] ⊂ [1,3,4])
+    @test !([1,2] ⊂ [1,2])
+end
+
+# issue #9503
+@test parse("x<:y") == Expr(:(<:), :x, :y)
+@test parse("x>:y") == Expr(:(>:), :x, :y)
+@test parse("x<:y<:z").head === :comparison
+@test parse("x>:y<:z").head === :comparison
+
+# issue #11169
+uncalled(x) = @test false
+fret() = uncalled(return true)
+@test fret()
+
+# issue #9617
+let p = 15
+    @test 2p+1 == 31  # not a hex float literal
+end
+
+# issue #15597
+function test_parseerror(str, msg)
+    try
+        parse(str)
+        @test false
+    catch e
+        @test isa(e,ParseError) && e.msg == msg
+    end
+end
+test_parseerror("0x", "invalid numeric constant \"0x\"")
+test_parseerror("0b", "invalid numeric constant \"0b\"")
+test_parseerror("0o", "invalid numeric constant \"0o\"")
+test_parseerror("0x0.1", "hex float literal must contain \"p\" or \"P\"")
+test_parseerror("0x1.0p", "invalid numeric constant \"0x1.0\"")

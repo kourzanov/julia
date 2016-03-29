@@ -60,13 +60,13 @@
 #ifdef _OS_WINDOWS_
 #define STDCALL __stdcall
 # ifdef LIBRARY_EXPORTS
-#  define DLLEXPORT __declspec(dllexport)
+#  define JL_DLLEXPORT __declspec(dllexport)
 # else
-#  define DLLEXPORT __declspec(dllimport)
+#  define JL_DLLEXPORT __declspec(dllimport)
 # endif
 #else
 #define STDCALL
-#define DLLEXPORT __attribute__ ((visibility("default")))
+#define JL_DLLEXPORT __attribute__ ((visibility("default")))
 #endif
 
 #ifdef _OS_LINUX_
@@ -120,6 +120,18 @@
 #  define NOINLINE_DECL(f) f __attribute__((noinline))
 #endif
 
+#ifdef _COMPILER_MICROSOFT_
+# ifdef _P64
+#  define JL_ATTRIBUTE_ALIGN_PTRSIZE(x) __declspec(align(8)) x
+# else
+#  define JL_ATTRIBUTE_ALIGN_PTRSIZE(x) __declspec(align(4)) x
+# endif
+#elif defined(__GNUC__)
+#  define JL_ATTRIBUTE_ALIGN_PTRSIZE(x) x __attribute__ ((aligned (sizeof(void*))))
+#else
+#  define JL_ATTRIBUTE_ALIGN_PTRSIZE(x)
+#endif
+
 typedef int bool_t;
 typedef unsigned char  byte_t;   /* 1 byte */
 
@@ -134,18 +146,8 @@ typedef int64_t int_t;
 typedef uint32_t uint_t;
 typedef int32_t int_t;
 #endif
-typedef ptrdiff_t ptrint_t; // pointer-size int
-typedef size_t uptrint_t;
-typedef ptrdiff_t offset_t;
-typedef size_t index_t;
 
-typedef uint8_t  u_int8_t;
-typedef uint16_t u_int16_t;
-typedef uint32_t u_int32_t;
-typedef uint64_t u_int64_t;
-typedef uptrint_t u_ptrint_t;
-
-#define LLT_ALIGN(x, sz) (((x) + (sz-1)) & (-sz))
+#define LLT_ALIGN(x, sz) (((x) + (sz)-1) & -(sz))
 
 // branch prediction annotations
 #ifdef __GNUC__

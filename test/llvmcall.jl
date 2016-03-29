@@ -70,19 +70,12 @@ end
         Int32(1), Int32(2))) == 3
 
 # Test whether declarations work properly
-# This test only work properly for llvm 3.5+
-# On llvm <3.5+ even though the the compilation fails on the first try,
-# llvm still adds the intrinsice declaration to the module and subsequent calls
-# are succesfull.
-if convert(VersionNumber, Base.libllvm_version) > v"3.5-"
-
 function undeclared_ceil(x::Float64)
     llvmcall("""%2 = call double @llvm.ceil.f64(double %0)
         ret double %2""", Float64, Tuple{Float64}, x)
 end
 @test_throws ErrorException undeclared_ceil(4.2)
-
-end
+@test_throws ErrorException undeclared_ceil(4.2)
 
 function declared_floor(x::Float64)
     llvmcall(
@@ -125,7 +118,6 @@ function declared_ceil(x::Float64)
             ret double %2"""),
     Float64, Tuple{Float64}, x)
 end
-
 @test_approx_eq declared_ceil(4.2) 5.0
 
 # Test for multiple lines
@@ -138,5 +130,40 @@ function ceilfloor(x::Float64)
             ret double %3"""),
     Float64, Tuple{Float64}, x)
 end
-
 @test_approx_eq ceilfloor(7.4) 8.0
+
+# Test for proper declaration extraction
+function confuse_declname_parsing()
+    llvmcall(
+        ("""declare i64 addrspace(0)* @foobar()""",
+         """ret void"""),
+    Void, Tuple{})
+end
+confuse_declname_parsing()
+
+
+module ObjLoadTest
+    using Base.Test
+    using Base.llvmcall
+    here = dirname(@__FILE__)
+    didcall = false
+    function callback()
+        global didcall
+        didcall = true
+        nothing
+    end
+    Base.ccallable(callback,Void,Tuple{},:jl_the_callback)
+    Base.ccallable(callback,Void,Tuple{},:_jl_the_callback)
+    # Make sure everything up until here gets compiled
+    callback(); didcall = false
+    function do_the_call()
+        llvmcall(
+        (""" declare void @jl_the_callback()""",
+        """
+        call void @jl_the_callback()
+        ret void
+        """),Void,Tuple{})
+    end
+    do_the_call()
+    @test didcall
+end

@@ -7,9 +7,7 @@
 @test countlines(IOBuffer("\n \n \n \n \n \n \n \n \n \n")) == 10
 @test countlines(IOBuffer("\r\n \r\n \r\n \r\n \r\n")) == 5
 file = tempname()
-open(file,"w") do f
-    write(f,"Spiffy header\nspectacular first row\neven better 2nd row\nalmost done\n")
-end
+write(file,"Spiffy header\nspectacular first row\neven better 2nd row\nalmost done\n")
 @test countlines(file) == 4
 @test countlines(file,'\r') == 0
 @test countlines(file,'\n') == 4
@@ -91,6 +89,18 @@ let x = [1,2,3], y = [4,5,6], io = IOBuffer()
     writedlm(io, zip(x,y), ",  ")
     seek(io, 0)
     @test readcsv(io) == [x y]
+end
+
+let x = [0.1 0.3 0.5], io = IOBuffer()
+    writedlm(io, x, ", ")
+    seek(io, 0)
+    @test readstring(io) == "0.1, 0.3, 0.5\n"
+end
+
+let x = [0.1 0.3 0.5], io = IOBuffer()
+    writedlm(io, x, ", ")
+    seek(io, 0)
+    @test readcsv(io) == [0.1 0.3 0.5]
 end
 
 let x = ["abc", "def\"ghi", "jk\nl"], y = [1, ",", "\"quoted\""], io = IOBuffer()
@@ -249,7 +259,7 @@ for writefunc in ((io,x) -> writemime(io, "text/csv", x),
     let x = ["foo", "bar"], io = IOBuffer()
         writefunc(io, x)
         seek(io, 0)
-        @test collect(readcsv(io)) == x
+        @test vec(readcsv(io)) == x
     end
 end
 

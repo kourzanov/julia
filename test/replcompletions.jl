@@ -42,6 +42,8 @@ module CompletionFoo
 
     array = [1, 1]
     varfloat = 0.1
+
+    const tuple = (1, 2)
 end
 
 function temp_pkg_dir(fn::Function)
@@ -281,9 +283,9 @@ c, r, res = test_complete(s)
 @test c[1] == string(methods(CompletionFoo.test5, Tuple{BitArray{1}})[1])
 
 ########## Test where the current inference logic fails ########
-# Fails due to inferrence fails to determine a concrete type from the map
+# Fails due to inferrence fails to determine a concrete type for arg 1
 # But it returns AbstractArray{T,N} and hence is able to remove test5(x::Float64) from the suggestions
-s = "CompletionFoo.test5(map(x-> x==\"\",push!(Base.split(\"\",' '),\"\",\"\")),"
+s = "CompletionFoo.test5(AbstractArray[[]][1],"
 c, r, res = test_complete(s)
 @test !res
 @test length(c) == 2
@@ -431,6 +433,27 @@ c, r, res = test_scomplete(s)
     @test r == 6:7
     @test s[r] == "Pk"
 
+    # Pressing tab after having entered "/tmp " should not
+    # attempt to complete "/tmp" but rather work on the current
+    # working directory again.
+    let
+        file = joinpath(path, "repl completions")
+        s = "/tmp "
+        c,r = test_scomplete(s)
+        @test r == 6:5
+    end
+
+    # Test completing paths with an escaped trailing space
+    let
+        file = joinpath(tempdir(), "repl completions")
+        touch(file)
+        s = string(tempdir(), "/repl\\ ")
+        c,r = test_scomplete(s)
+        @test ["repl\\ completions"] == c
+        @test s[r] == "repl\\ "
+        rm(file)
+    end
+
     # Tests homedir expansion
     let
         path = homedir()
@@ -451,19 +474,52 @@ c, r, res = test_scomplete(s)
     let
         oldpath = ENV["PATH"]
         path = tempdir()
-        ENV["PATH"] = path
+        # PATH can also contain folders which we aren't actually allowed to read.
+        unreadable = joinpath(tempdir(), "replcompletion-unreadable")
+        ENV["PATH"] = string(path, ":", unreadable)
+
         file = joinpath(path, "tmp-executable")
         touch(file)
         chmod(file, 0o755)
+        mkdir(unreadable)
+        chmod(unreadable, 0o000)
+
         s = "tmp-execu"
         c,r = test_scomplete(s)
         @test "tmp-executable" in c
         @test r == 1:9
         @test s[r] == "tmp-execu"
+
         rm(file)
+        rm(unreadable)
         ENV["PATH"] = oldpath
     end
 
+    # Make sure completion results are unique in case things are in the env path twice.
+    let
+        file0 = joinpath(tempdir(), "repl-completion")
+        dir = joinpath(tempdir(), "repl-completion-subdir")
+        file1 = joinpath(dir, "repl-completion")
+
+        try
+            # Create /tmp/repl-completion and /tmp/repl-completion-subdir/repl-completion
+            mkdir(dir)
+            touch(file0)
+            touch(file1)
+
+            withenv("PATH" => string(tempdir(), ":", dir)) do
+                s = string("repl-completio")
+                c,r = test_scomplete(s)
+                @test [utf8("repl-completion")] == c
+                @test s[r] == "repl-completio"
+            end
+
+        finally
+            rm(file0)
+            rm(file1)
+            rm(dir)
+        end
+    end
 end
 
 let #test that it can auto complete with spaces in file/path
@@ -525,3 +581,16 @@ c,r = test_complete("cd(\"folder_do_not_exist_77/file")
     end
     rm(tmp)
 end
+
+# auto completions of true and false... issue #14101
+s = "tru"
+c, r, res = test_complete(s)
+@test "true" in c
+s = "fals"
+c, r, res = test_complete(s)
+@test "false" in c
+
+# Don't crash when attempting to complete a tuple, #15329
+s = "CompletionFoo.tuple."
+c, r, res = test_complete(s)
+@test isempty(c)

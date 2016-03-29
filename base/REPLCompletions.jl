@@ -35,7 +35,7 @@ function complete_symbol(sym, ffunc)
             b = mod.(s)
             if isa(b, Module)
                 mod = b
-            elseif Base.isstructtype(typeof(b))
+            elseif Base.isstructtype(typeof(b)) && !isa(b, Tuple)
                 lookup_module = false
                 t = typeof(b)
             else
@@ -48,10 +48,10 @@ function complete_symbol(sym, ffunc)
             # We're now looking for a type
             fields = fieldnames(t)
             found = false
-            for i in 1:length(fields)
+            for i in eachindex(fields)
                 s == fields[i] || continue
                 t = t.types[i]
-                Base.isstructtype(t) || return UTF8String[]
+                (Base.isstructtype(t) && !(t <: Tuple)) || return UTF8String[]
                 found = true
                 break
             end
@@ -95,10 +95,10 @@ end
 function complete_keyword(s::ByteString)
     const sorted_keywords = [
         "abstract", "baremodule", "begin", "bitstype", "break", "catch", "ccall",
-        "const", "continue", "do", "else", "elseif", "end", "export", "finally",
-        "for", "function", "global", "if", "immutable", "import", "importall",
-        "let", "local", "macro", "module", "quote", "return", "try", "type",
-        "typealias", "using", "while"]
+        "const", "continue", "do", "else", "elseif", "end", "export", "false",
+        "finally", "for", "function", "global", "if", "immutable", "import",
+        "importall", "let", "local", "macro", "module", "quote", "return",
+        "true", "try", "type", "typealias", "using", "while"]
     r = searchsorted(sorted_keywords, s)
     i = first(r)
     n = length(sorted_keywords)
@@ -133,7 +133,7 @@ function complete_path(path::AbstractString, pos; use_envpath=false)
         return UTF8String[], 0:-1, false
     end
 
-    matches = UTF8String[]
+    matches = Set{UTF8String}()
     for file in files
         if startswith(file, prefix)
             id = try isdir(joinpath(dir, file)) catch; false end
@@ -161,7 +161,18 @@ function complete_path(path::AbstractString, pos; use_envpath=false)
                 continue
             end
 
-            local filesinpath = readdir(pathdir)
+            local filesinpath
+            try
+                filesinpath = readdir(pathdir)
+            catch e
+                # Bash allows dirs in PATH that can't be read, so we should as well.
+                if isa(e, SystemError)
+                    continue
+                else
+                    # We only handle SystemErrors here
+                    rethrow(e)
+                end
+            end
 
             for file in filesinpath
                 # In a perfect world, we would filter on whether the file is executable
@@ -173,12 +184,12 @@ function complete_path(path::AbstractString, pos; use_envpath=false)
         end
     end
 
-    matches = UTF8String[replace(s, r"\s", "\\ ") for s in matches]
+    matchList = UTF8String[replace(s, r"\s", "\\ ") for s in matches]
     startpos = pos - endof(prefix) + 1 - length(matchall(r" ", prefix))
     # The pos - endof(prefix) + 1 is correct due to `endof(prefix)-endof(prefix)==0`,
     # hence we need to add one to get the first index. This is also correct when considering
     # pos, because pos is the `endof` a larger string which `endswith(path)==true`.
-    return matches, startpos:pos, !isempty(matches)
+    return matchList, startpos:pos, !isempty(matchList)
 end
 
 # Determines whether method_complete should be tried. It should only be done if
@@ -308,16 +319,17 @@ end
 function complete_methods(ex_org::Expr)
     args_ex = DataType[]
     func, found = get_value(ex_org.args[1], Main)
-    (!found || (found && !isgeneric(func))) && return UTF8String[]
+    !found && return UTF8String[]
     for ex in ex_org.args[2:end]
         val, found = get_type(ex, Main)
         push!(args_ex, val)
     end
     out = UTF8String[]
-    t_in = Tuple{args_ex...} # Input types
+    t_in = Tuple{Core.Typeof(func), args_ex...} # Input types
+    na = length(args_ex)+1
     for method in methods(func)
         # Check if the method's type signature intersects the input types
-        typeintersect(Tuple{method.sig.parameters[1 : min(length(args_ex), end)]...}, t_in) != Union{} &&
+        typeintersect(Tuple{method.sig.parameters[1 : min(na, end)]...}, t_in) != Union{} &&
             push!(out,string(method))
     end
     return out
@@ -473,8 +485,17 @@ function shell_completions(string, pos)
     arg = args.args[end].args[end]
     if all(s -> isa(s, AbstractString), args.args[end].args)
         # Treat this as a path
+
+        # As Base.shell_parse throws away trailing spaces (unless they are escaped),
+        # we need to special case here.
+        # If the last char was a space, but shell_parse ignored it search on "".
+        ignore_last_word = arg != " " && scs[end] == ' '
+        prefix = ignore_last_word ? "" : join(args.args[end].args)
+
         # Also try looking into the env path if the user wants to complete the first argument
-        return complete_path(join(args.args[end].args), pos, use_envpath=length(args.args) < 2)
+        use_envpath = !ignore_last_word && length(args.args) < 2
+
+        return complete_path(prefix, pos, use_envpath=use_envpath)
     elseif isexpr(arg, :escape) && (isexpr(arg.args[1], :incomplete) || isexpr(arg.args[1], :error))
         r = first(last_parse):prevind(last_parse, last(last_parse))
         partial = scs[r]

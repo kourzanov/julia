@@ -112,12 +112,7 @@ translates these symbols into LLVM instructions during code generation.
 <https://github.com/JuliaLang/julia/blob/master/src/builtins.c>`_
 hooks C functions up to Julia function symbols. e.g. the symbol
 :func:`Base.is` is bound to C function pointer :c:func:`jl_f_is`
-by calling :code:`add_builtin_func("eval", jl_f_top_eval)`, which does::
-
-    jl_set_const(jl_core_module,
-                 jl_symbol("is"),
-                 jl_new_closure(jl_f_top_eval, jl_symbol("eval"), NULL));
-
+by calling :code:`add_builtin_func("eval", jl_f_top_eval)`.
 
 `jl_new_main_module()
 <https://github.com/JuliaLang/julia/blob/master/src/toplevel.c>`_
@@ -126,7 +121,7 @@ creates the global "Main" module and sets
 
 Note: _julia_init() `then sets <https://github.com/JuliaLang/julia/blob/master/src/init.c>`_ :code:`jl_root_task->current_module = jl_core_module`. :code:`jl_root_task` is an alias of :code:`jl_current_task` at this point, so the current_module set by :c:func:`jl_new_main_module` above is overwritten.
 
-`jl_load("boot.jl", sizeof("boot.jl")) <https://github.com/JuliaLang/julia/blob/master/src/init.c>`_ calls `jl_parse_eval_all("boot.jl") <https://github.com/JuliaLang/julia/blob/master/src/toplevel.c>`_ which repeatedly calls `jl_parse_next() <https://github.com/JuliaLang/julia/blob/master/src/ast.c>`_ and `jl_toplevel_eval_flex() <https://github.com/JuliaLang/julia/blob/master/src/toplevel.c>`_ to parse and execute `boot.jl <https://github.com/JuliaLang/julia/blob/master/base/boot.jl>`_. TODO -- drill down into eval?
+`jl_load("boot.jl", sizeof("boot.jl")) <https://github.com/JuliaLang/julia/blob/master/src/init.c>`_ calls `jl_parse_eval_all <https://github.com/JuliaLang/julia/blob/master/src/ast.c>`_ which repeatedly calls `jl_toplevel_eval_flex() <https://github.com/JuliaLang/julia/blob/master/src/toplevel.c>`_ to execute `boot.jl <https://github.com/JuliaLang/julia/blob/master/base/boot.jl>`_. TODO -- drill down into eval?
 
 `jl_get_builtin_hooks() <https://github.com/JuliaLang/julia/blob/master/src/init.c>`_ initialises global C pointers to Julia globals defined in ``boot.jl``.
 
@@ -168,7 +163,7 @@ true_main()
 
 `true_main() <https://github.com/JuliaLang/julia/blob/master/ui/repl.c>`_ loads the contents of :code:`argv[]` into :data:`Base.ARGS`.
 
-If a .jl "program" file was supplied on the command line, then `exec_program() <https://github.com/JuliaLang/julia/blob/master/ui/repl.c>`_ calls `jl_load(program,len) <https://github.com/JuliaLang/julia/blob/master/src/toplevel.c>`_ which calls `jl_parse_eval_all() <https://github.com/JuliaLang/julia/blob/master/src/toplevel.c>`_ which repeatedly calls `jl_parse_next() <https://github.com/JuliaLang/julia/blob/master/src/ast.c>`_ and `jl_toplevel_eval_flex() <https://github.com/JuliaLang/julia/blob/master/src/toplevel.c>`_ to parse and execute the program.
+If a .jl "program" file was supplied on the command line, then `exec_program() <https://github.com/JuliaLang/julia/blob/master/ui/repl.c>`_ calls `jl_load(program,len) <https://github.com/JuliaLang/julia/blob/master/src/toplevel.c>`_ which calls `jl_parse_eval_all <https://github.com/JuliaLang/julia/blob/master/src/ast.c>`_ which repeatedly calls `jl_toplevel_eval_flex() <https://github.com/JuliaLang/julia/blob/master/src/toplevel.c>`_ to execute the program.
 
 However, in our example (:code:`julia -e 'println("Hello World!")'`), `jl_get_global(jl_base_module, jl_symbol("_start")) <https://github.com/JuliaLang/julia/blob/master/src/module.c>`_ looks up `Base._start <https://github.com/JuliaLang/julia/blob/master/base/client.jl>`_ and `jl_apply() <https://github.com/JuliaLang/julia/blob/master/src/julia.h>`_ executes it.
 

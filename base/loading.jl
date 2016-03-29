@@ -146,9 +146,9 @@ function _require_from_serialized(node::Int, mod::Symbol, path_to_try::ByteStrin
         recompile_stale(mod, path_to_try)
         # broadcast top-level import/using from node 1 (only)
         if node == myid()
-            content = open(readbytes, path_to_try)
+            content = open(read, path_to_try)
         else
-            content = remotecall_fetch(open, node, readbytes, path_to_try)
+            content = remotecall_fetch(open, node, read, path_to_try)
         end
         restored = _include_from_serialized(content)
         if restored !== nothing
@@ -164,14 +164,14 @@ function _require_from_serialized(node::Int, mod::Symbol, path_to_try::ByteStrin
         myid() == 1 && recompile_stale(mod, path_to_try)
         restored = ccall(:jl_restore_incremental, Any, (Ptr{UInt8},), path_to_try)
     else
-        content = remotecall_fetch(open, node, readbytes, path_to_try)
+        content = remotecall_fetch(open, node, read, path_to_try)
         restored = _include_from_serialized(content)
     end
     # otherwise, continue search
 
     if restored !== nothing
         for M in restored
-            if isdefined(M, :__META__)
+            if isdefined(M, Base.Docs.META)
                 push!(Base.Docs.modules, M)
             end
         end
@@ -239,6 +239,22 @@ precompilableerror(ex, c) = false
 # Call __precompile__ at the top of a file to force it to be precompiled (true), or
 # to be prevent it from being precompiled (false).  __precompile__(true) is
 # ignored except within "require" call.
+"""
+    __precompile__(isprecompilable::Bool=true)
+
+Specify whether the file calling this function is precompilable. If `isprecompilable` is
+`true`, then `__precompile__` throws an exception when the file is loaded by
+`using`/`import`/`require` *unless* the file is being precompiled, and in a module file it
+causes the module to be automatically precompiled when it is imported. Typically,
+`__precompile__()` should occur before the `module` declaration in the file, or better yet
+`VERSION >= v"0.4" && __precompile__()` in order to be backward-compatible with Julia 0.3.
+
+If a module or file is *not* safely precompilable, it should call `__precompile__(false)` in
+order to throw an error if Julia attempts to precompile it.
+
+`__precompile__()` should *not* be used in a module unless all of its dependencies are also
+using `__precompile__()`. Failure to do so can result in a runtime error when loading the module.
+"""
 function __precompile__(isprecompilable::Bool=true)
     if (myid() == 1 &&
         JLOptions().use_compilecache != 0 &&
@@ -275,7 +291,7 @@ Force reloading of a package, even if it has been loaded before. This is intende
 during package development as code is modified.
 """
 function reload(name::AbstractString)
-    if isfile(name) || contains(name,path_separator)
+    if isfile(name) || contains(name,Filesystem.path_separator)
         # for reload("path/file.jl") just ask for include instead
         error("use `include` instead of `reload` to load source files")
     else
@@ -380,6 +396,15 @@ end
 
 macro __FILE__() source_path() end
 
+"""
+    include(path::AbstractString)
+
+Evaluate the contents of a source file in the current context. During including, a
+task-local include path is set to the directory containing the file. Nested calls to
+`include` will search relative to that path. All paths refer to files on node 1 when running
+in parallel, and files will be fetched from node 1. This function is typically used to load
+source interactively, or to combine files in packages that are broken into multiple source files.
+"""
 function include_from_node1(_path::AbstractString)
     path, prev = _include_dependency(_path)
     tls = task_local_storage()
@@ -392,7 +417,7 @@ function include_from_node1(_path::AbstractString)
             result = Core.include(path)
             nprocs()>1 && sleep(0.005)
         else
-            result = include_string(remotecall_fetch(readall, 1, path), path)
+            result = include_string(remotecall_fetch(readstring, 1, path), path)
         end
     finally
         if prev === nothing
@@ -415,7 +440,7 @@ end
 evalfile(path::AbstractString, args::Vector) = evalfile(path, UTF8String[args...])
 
 function create_expr_cache(input::AbstractString, output::AbstractString)
-    isfile(output) && rm(output)
+    rm(output, force=true)   # Remove file if it exists
     code_object = """
         while !eof(STDIN)
             eval(Main, deserialize(STDIN))
@@ -484,14 +509,14 @@ function cache_dependencies(f::IO)
         n = ntoh(read(f, Int32))
         n == 0 && break
         push!(modules,
-              (symbol(readbytes(f, n)), # module symbol
+              (symbol(read(f, n)), # module symbol
                ntoh(read(f, UInt64)))) # module UUID (timestamp)
     end
     read(f, Int64) # total bytes for file dependencies
     while true
         n = ntoh(read(f, Int32))
         n == 0 && break
-        push!(files, (bytestring(readbytes(f, n)), ntoh(read(f, Float64))))
+        push!(files, (bytestring(read(f, n)), ntoh(read(f, Float64))))
     end
     return modules, files
 end
@@ -540,13 +565,10 @@ end
 function recompile_stale(mod, cachefile)
     path = find_in_path(string(mod), nothing)
     if path === nothing
-        rm(cachefile)
-        error("module $mod not found in current path; removed orphaned cache file $cachefile")
+        error("module $mod not found in current path; you should rm(\"$(escape_string(cachefile))\") to remove the orphaned cache file")
     end
     if stale_cachefile(path, cachefile)
         info("Recompiling stale cache file $cachefile for module $mod.")
-        if !success(create_expr_cache(path, cachefile))
-            error("Failed to precompile $mod to $cachefile")
-        end
+        compilecache(mod)
     end
 end
