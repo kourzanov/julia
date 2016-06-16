@@ -34,9 +34,10 @@ h_noinlined() = g_noinlined()
 
 function foundfunc(bt, funcname)
     for b in bt
-        lkup = StackTraces.lookup(b)
-        if lkup.func == funcname
-            return true
+        for lkup in StackTraces.lookup(b)
+            if lkup.func == funcname
+                return true
+            end
         end
     end
     false
@@ -61,7 +62,7 @@ asts = code_lowered(dummy, Tuple{})
 ast = asts[1]
 
 body = Expr(:block)
-body.args = ast.args[3].args
+body.args = Base.uncompressed_ast(ast)
 
 @test popmeta!(body, :test) == (true, [42])
 @test popmeta!(body, :nonexistent) == (false, [])

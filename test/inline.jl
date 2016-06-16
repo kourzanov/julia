@@ -16,17 +16,18 @@ function walk(func, expr)
 end
 
 """
-Helper to test that every SymbolNode/NewvarNode has a
-corresponding varinfo entry after inlining.
+Helper to test that every slot is in range after inlining.
 """
 function test_inlined_symbols(func, argtypes)
     linfo = code_typed(func, argtypes)[1]
-    locals = linfo.args[2][1]
-    local_names = Set([name for (name, typ, flag) in locals])
-    ast = linfo.args[3]
+    nl = length(linfo.slottypes)
+    ast = Expr(:body); ast.args = Base.uncompressed_ast(linfo)
     walk(ast) do e
-        if isa(e, NewvarNode) || isa(e, SymbolNode)
-            @test e.name in local_names
+        if isa(e, Slot)
+            @test 1 <= e.id <= nl
+        end
+        if isa(e, NewvarNode)
+            @test 1 <= e.slot.id <= nl
         end
     end
 end
@@ -59,10 +60,14 @@ test_inlined_symbols(test_outer, Tuple{Int64})
         return y
     end
 end
-function bar()
+function bar12620()
     for i = 1:3
         foo_inl(i==1)
     end
 end
-@test_throws UndefVarError bar()
+@test_throws UndefVarError bar12620()
 
+# issue #16165
+@inline f16165(x) = (x = UInt(x) + 1)
+g16165(x) = f16165(x)
+@test g16165(1) === (UInt(1) + 1)

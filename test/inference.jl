@@ -185,9 +185,7 @@ end
 end
 let
     ast12474 = code_typed(f12474, Tuple{Float64})
-    for (_, vartype) in ast12474[1].args[2][1]
-        @test isleaftype(vartype)
-    end
+    @test all(isleaftype, ast12474[1].slottypes)
 end
 
 
@@ -200,7 +198,7 @@ end
 @eval f15259(x,y) = (a = $(Expr(:new, :A15259, :x, :y)); (a.x, a.y, getfield(a,1), getfield(a, 2)))
 @test isempty(filter(x -> isa(x,Expr) && x.head === :(=) &&
                           isa(x.args[2], Expr) && x.args[2].head === :new,
-                     code_typed(f15259, (Any,Int))[1].args[3].args))
+                     code_typed(f15259, (Any,Int))[1].code))
 @test f15259(1,2) == (1,2,1,2)
 # check that error cases are still correct
 @eval g15259(x,y) = (a = $(Expr(:new, :A15259, :x, :y)); a.z)
@@ -245,3 +243,12 @@ function foo9222()
     SimpleTest9222(0.0, mu_actual, nu_actual, v0, 0.0, [1.0,1.0], 0.5, 5.0, 20.0)
 end
 @test 0.0 == foo9222()
+
+# branching based on inferrable conditions
+let f(x) = isa(x,Int) ? 1 : ""
+    @test Base.return_types(f, Tuple{Int}) == [Int]
+end
+
+let g() = Int <: Real ? 1 : ""
+    @test Base.return_types(g, Tuple{}) == [Int]
+end
