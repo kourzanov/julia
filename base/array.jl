@@ -12,6 +12,8 @@ typealias DenseVecOrMat{T} Union{DenseVector{T}, DenseMatrix{T}}
 
 ## Basic functions ##
 
+import Core: arraysize, arrayset, arrayref
+
 size(a::Array, d) = arraysize(a, d)
 size(a::Vector) = (arraysize(a,1),)
 size(a::Matrix) = (arraysize(a,1), arraysize(a,2))
@@ -24,10 +26,6 @@ asize_from(a::Array, n) = n > ndims(a) ? () : (arraysize(a,n), asize_from(a, n+1
 length(a::Array) = arraylen(a)
 elsize{T}(a::Array{T}) = isbits(T) ? sizeof(T) : sizeof(Ptr)
 sizeof(a::Array) = elsize(a) * length(a)
-
-strides{T}(a::Array{T,1}) = (1,)
-strides{T}(a::Array{T,2}) = (1, size(a,1))
-strides{T}(a::Array{T,3}) = (1, size(a,1), size(a,1)*size(a,2))
 
 function isassigned{T}(a::Array{T}, i::Int...)
     ii = sub2ind(size(a), i...)
@@ -137,7 +135,11 @@ function getindex(T::Type, vals...)
     end
     return a
 end
+
 getindex(T::Type) = Array{T}(0)
+getindex(T::Type, x) = (a = Array{T}(1); @inbounds a[1] = x; a)
+getindex(T::Type, x, y) = (a = Array{T}(2); @inbounds (a[1] = x; a[2] = y); a)
+getindex(T::Type, x, y, z) = (a = Array{T}(3); @inbounds (a[1] = x; a[2] = y; a[3] = z); a)
 
 function getindex(::Type{Any}, vals::ANY...)
     a = Array{Any}(length(vals))

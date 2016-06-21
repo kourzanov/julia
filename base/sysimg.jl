@@ -2,7 +2,7 @@
 
 baremodule Base
 
-using Core.TopModule, Core.Intrinsics
+using Core.Intrinsics
 ccall(:jl_set_istopmod, Void, (Bool,), true)
 include = Core.include
 include("coreio.jl")
@@ -117,9 +117,9 @@ include("iterator.jl")
 
 # Definition of StridedArray
 typealias StridedReshapedArray{T,N,A<:DenseArray} ReshapedArray{T,N,A}
-typealias StridedArray{T,N,A<:Union{DenseArray,StridedReshapedArray},I<:Tuple{Vararg{Union{RangeIndex, NoSlice, AbstractCartesianIndex}}}} Union{DenseArray{T,N}, SubArray{T,N,A,I}, StridedReshapedArray{T,N}}
-typealias StridedVector{T,A<:Union{DenseArray,StridedReshapedArray},I<:Tuple{Vararg{Union{RangeIndex, NoSlice, AbstractCartesianIndex}}}}  Union{DenseArray{T,1}, SubArray{T,1,A,I}, StridedReshapedArray{T,1}}
-typealias StridedMatrix{T,A<:Union{DenseArray,StridedReshapedArray},I<:Tuple{Vararg{Union{RangeIndex, NoSlice, AbstractCartesianIndex}}}}  Union{DenseArray{T,2}, SubArray{T,2,A,I}, StridedReshapedArray{T,2}}
+typealias StridedArray{T,N,A<:Union{DenseArray,StridedReshapedArray},I<:Tuple{Vararg{Union{RangeIndex, AbstractCartesianIndex}}}} Union{DenseArray{T,N}, SubArray{T,N,A,I}, StridedReshapedArray{T,N}}
+typealias StridedVector{T,A<:Union{DenseArray,StridedReshapedArray},I<:Tuple{Vararg{Union{RangeIndex, AbstractCartesianIndex}}}}  Union{DenseArray{T,1}, SubArray{T,1,A,I}, StridedReshapedArray{T,1}}
+typealias StridedMatrix{T,A<:Union{DenseArray,StridedReshapedArray},I<:Tuple{Vararg{Union{RangeIndex, AbstractCartesianIndex}}}}  Union{DenseArray{T,2}, SubArray{T,2,A,I}, StridedReshapedArray{T,2}}
 typealias StridedVecOrMat{T} Union{StridedVector{T}, StridedMatrix{T}}
 
 # For OS specific stuff
@@ -136,6 +136,7 @@ include("iobuffer.jl")
 
 # strings & printing
 include("char.jl")
+include("intfuncs.jl")
 include("strings/strings.jl")
 include("unicode/unicode.jl")
 include("parse.jl")
@@ -151,7 +152,6 @@ using .Libc: getpid, gethostname, time
 include("libdl.jl")
 using .Libdl: DL_LOAD_PATH
 include("env.jl")
-include("intfuncs.jl")
 
 # nullable types
 include("nullable.jl")
@@ -213,6 +213,8 @@ importall .Sort
 
 # version
 include("version.jl")
+
+function deepcopy_internal end
 
 # BigInts and BigFloats
 include("gmp.jl")

@@ -127,7 +127,6 @@ export
     VersionNumber,
     WeakKeyDict,
     WorkerConfig,
-    WString,
     Zip,
 
 # Ccall types
@@ -587,7 +586,6 @@ export
     shuffle,
     shuffle!,
     size,
-    slice,
     slicedim,
     sort!,
     sort,
@@ -601,7 +599,6 @@ export
     step,
     stride,
     strides,
-    sub,
     sub2ind,
     sum!,
     sum,
@@ -612,6 +609,7 @@ export
     sum_kbn,
     vcat,
     vec,
+    view,
     zeros,
 
 # linear algebra
@@ -707,6 +705,8 @@ export
 
 # sparse
     full,
+    dropzeros,
+    dropzeros!,
 
 # bitarrays
     falses,
@@ -880,7 +880,6 @@ export
     utf16,
     utf32,
     warn,
-    wstring,
 
 # random numbers
     AbstractRNG,

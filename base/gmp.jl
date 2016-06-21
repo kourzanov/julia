@@ -44,13 +44,10 @@ type BigInt <: Integer
     function BigInt()
         b = new(zero(Cint), zero(Cint), C_NULL)
         ccall((:__gmpz_init,:libgmp), Void, (Ptr{BigInt},), &b)
-        finalizer(b, _gmp_clear_func)
+        finalizer(b, cglobal((:__gmpz_clear, :libgmp)))
         return b
     end
 end
-
-_gmp_clear_func = C_NULL
-_mpfr_clear_func = C_NULL
 
 function __init__()
     try
@@ -60,8 +57,6 @@ function __init__()
                          "Please rebuild Julia."))
         end
 
-        global _gmp_clear_func = cglobal((:__gmpz_clear, :libgmp))
-        global _mpfr_clear_func = cglobal((:mpfr_clear, :libmpfr))
         ccall((:__gmp_set_memory_functions, :libgmp), Void,
               (Ptr{Void},Ptr{Void},Ptr{Void}),
               cglobal(:jl_gc_counted_malloc),
@@ -553,5 +548,15 @@ Base.checked_rem(a::BigInt, b::BigInt) = rem(a, b)
 Base.checked_fld(a::BigInt, b::BigInt) = fld(a, b)
 Base.checked_mod(a::BigInt, b::BigInt) = mod(a, b)
 Base.checked_cld(a::BigInt, b::BigInt) = cld(a, b)
+
+function Base.deepcopy_internal(x::BigInt, stackdict::ObjectIdDict)
+    if haskey(stackdict, x)
+        return stackdict[x]
+    end
+    y = BigInt()
+    ccall((:__gmpz_set,:libgmp), Void, (Ptr{BigInt}, Ptr{BigInt}), &y, &x)
+    stackdict[x] = y
+    return y
+end
 
 end # module

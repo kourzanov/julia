@@ -80,6 +80,11 @@ function first(itr)
 end
 last(a) = a[end]
 
+"""
+    stride(A, k)
+
+Returns the distance in memory (in number of elements) between adjacent elements in dimension `k`.
+"""
 function stride(a::AbstractArray, i::Integer)
     if i > ndims(a)
         return length(a)
@@ -91,7 +96,18 @@ function stride(a::AbstractArray, i::Integer)
     return s
 end
 
-strides(a::AbstractArray) = ntuple(i->stride(a,i), ndims(a))::Dims
+strides{T}(A::AbstractArray{T,0}) = ()
+"""
+    strides(A)
+
+Returns a tuple of the memory strides in each dimension.
+"""
+strides(A::AbstractArray) = _strides((1,), A)
+_strides{T,N}(out::NTuple{N}, A::AbstractArray{T,N}) = out
+function _strides{M,T,N}(out::NTuple{M}, A::AbstractArray{T,N})
+    @_inline_meta
+    _strides((out..., out[M]*size(A, M)), A)
+end
 
 function isassigned(a::AbstractArray, i::Int...)
     # TODO
@@ -1400,7 +1416,7 @@ function mapslices(f, A::AbstractArray, dims::AbstractVector)
         idx[d] = Colon()
     end
 
-    r1 = f(slice(A, idx...))
+    r1 = f(view(A, idx...))
 
     # determine result size and allocate
     Rsize = copy(dimsA)
@@ -1432,7 +1448,7 @@ function mapslices(f, A::AbstractArray, dims::AbstractVector)
             for i in 1:nidx
                 idx[otherdims[i]] = ridx[otherdims[i]] = I.I[i]
             end
-            R[ridx...] = f(slice(A, idx...))
+            R[ridx...] = f(view(A, idx...))
         end
     end
 

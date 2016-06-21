@@ -463,6 +463,41 @@ end
 @deprecate String(p::Union{Ptr{Int8},Ptr{UInt8}}) unsafe_string(p)
 @deprecate String(p::Union{Ptr{Int8},Ptr{UInt8}}, len::Integer) unsafe_string(p,len)
 
+@deprecate(
+    convert(::Type{String}, a::Vector{UInt8}, invalids_as::AbstractString),
+    let a = a, invalids_as = invalids_as
+        l = length(a)
+        idx = 1
+        iscopy = false
+        while idx <= l
+            if !is_valid_continuation(a[idx])
+                nextidx = idx+1+utf8_trailing[a[idx]+1]
+                (nextidx <= (l+1)) && (idx = nextidx; continue)
+            end
+            !iscopy && (a = copy(a); iscopy = true)
+            endn = idx
+            while endn <= l
+                !is_valid_continuation(a[endn]) && break
+                endn += 1
+            end
+            (endn > idx) && (endn -= 1)
+            splice!(a, idx:endn, invalids_as.data)
+            l = length(a)
+        end
+        String(a)
+    end
+)
+
+if sizeof(Cwchar_t) == 2
+    @deprecate_binding WString UTF16String
+    @deprecate_binding wstring utf16
+    utf16(s::Cwstring) = utf16(convert(Ptr{Cwchar_t}, s))
+elseif sizeof(Cwchar_t) == 4
+    @deprecate_binding WString UTF32String
+    @deprecate_binding wstring utf32
+    utf32(s::Cwstring) = utf32(convert(Ptr{Cwchar_t}, s))
+end
+
 @deprecate ==(x::Char, y::Integer) UInt32(x) == y
 @deprecate ==(x::Integer, y::Char) x == UInt32(y)
 @deprecate isless(x::Char, y::Integer) UInt32(x) < y
@@ -729,6 +764,28 @@ end
 function first(::Colon)
     depwarn("first(:) is no longer unambiguous, call Base._first(:, A, dim)", :first)
     1
+end
+
+@deprecate slice view
+@deprecate sub view
+
+# Point users to SuiteSparse
+function ereach{Tv,Ti}(A::SparseMatrixCSC{Tv,Ti}, k::Integer, parent::Vector{Ti})
+    error(string("ereach(A, k, parent) now lives in package SuiteSparse.jl. Run",
+        "Pkg.add(\"SuiteSparse\") to install SuiteSparse on Julia v0.5."))
+end
+function etree{Tv,Ti}(A::SparseMatrixCSC{Tv,Ti}, postorder::Bool)
+    error(string("etree(A[, post]) now lives in package SuiteSparse.jl. Run",
+        "Pkg.add(\"SuiteSparse\") to install SuiteSparse on Julia v0.5."))
+end
+etree(A::SparseMatrixCSC) = etree(A, false)
+function csc_permute{Tv,Ti}(A::SparseMatrixCSC{Tv,Ti}, pinv::Vector{Ti}, q::Vector{Ti})
+    error(string("csc_permute(A, pinv, q) now lives in package SuiteSparse.jl. Run",
+        "Pkg.add(\"SuiteSparse\") to install SuiteSparse on Julia v0.5."))
+end
+function symperm{Tv,Ti}(A::SparseMatrixCSC{Tv,Ti}, pinv::Vector{Ti})
+    error(string("symperm(A, pinv) now lives in package SuiteSparse.jl. Run,",
+        "Pkg.add(\"SuiteSparse\") to install SuiteSparse on Julia v0.5."))
 end
 
 # During the 0.5 development cycle, do not add any deprecations below this line

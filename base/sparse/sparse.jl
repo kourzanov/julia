@@ -29,14 +29,13 @@ import Base: @get!, acos, acosd, acot, acotd, acsch, asech, asin, asind, asinh,
 import Base.Broadcast: eltype_plus, broadcast_shape
 
 export AbstractSparseArray, AbstractSparseMatrix, AbstractSparseVector,
-    SparseMatrixCSC, SparseVector, blkdiag, dense, droptol!, dropzeros!, etree,
+    SparseMatrixCSC, SparseVector, blkdiag, dense, droptol!, dropzeros!, dropzeros, etree,
     issparse, nonzeros, nzrange, rowvals, sparse, sparsevec, spdiagm, speye, spones,
     sprand, sprandn, spzeros, symperm, nnz
 
 include("abstractsparse.jl")
 include("sparsematrix.jl")
 include("sparsevector.jl")
-include("csparse.jl")
 
 include("linalg.jl")
 if Base.USE_GPL_LIBS
