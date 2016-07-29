@@ -103,10 +103,10 @@ end
 # sparse matrix * BitArray
 A = sprand(5,5,0.2)
 B = trues(5)
-@test_approx_eq A*B full(A)*B
+@test A*B ≈ full(A)*B
 B = trues(5,5)
-@test_approx_eq A*B full(A)*B
-@test_approx_eq B*A B*full(A)
+@test A*B ≈ full(A)*B
+@test B*A ≈ B*full(A)
 
 # complex matrix-vector multiplication and left-division
 if Base.USE_GPL_LIBS
@@ -288,6 +288,65 @@ end
 cA = sprandn(5,5,0.2) + im*sprandn(5,5,0.2)
 @test full(conj(cA)) == conj(full(cA))
 
+# Test SparseMatrixCSC [c]transpose[!] and permute[!] methods
+let smalldim = 5, largedim = 10, nzprob = 0.4
+    (m, n) = (smalldim, smalldim)
+    A = sprand(m, n, nzprob)
+    X = similar(A)
+    C = transpose(A)
+    p = randperm(m)
+    q = randperm(n)
+    # Test common error checking of [c]transpose! methods (ftranspose!)
+    @test_throws DimensionMismatch transpose!(A[:, 1:(smalldim - 1)], A)
+    @test_throws DimensionMismatch transpose!(A[1:(smalldim - 1), 1], A)
+    @test_throws ArgumentError transpose!((B = similar(A); resize!(B.rowval, nnz(A) - 1); B), A)
+    @test_throws ArgumentError transpose!((B = similar(A); resize!(B.nzval, nnz(A) - 1); B), A)
+    # Test common error checking of permute[!] methods / source-perm compat
+    @test_throws DimensionMismatch permute(A, p[1:(end - 1)], q)
+    @test_throws DimensionMismatch permute(A, p, q[1:(end - 1)])
+    # Test common error checking of permute[!] methods / source-dest compat
+    @test_throws DimensionMismatch permute!(A[1:(m - 1), :], A, p, q)
+    @test_throws DimensionMismatch permute!(A[:, 1:(m - 1)], A, p, q)
+    @test_throws ArgumentError permute!((Y = copy(X); resize!(Y.rowval, nnz(A) - 1); Y), A, p, q)
+    @test_throws ArgumentError permute!((Y = copy(X); resize!(Y.nzval, nnz(A) - 1); Y), A, p, q)
+    # Test common error checking of permute[!] methods / source-workmat compat
+    @test_throws DimensionMismatch permute!(X, A, p, q, C[1:(m - 1), :])
+    @test_throws DimensionMismatch permute!(X, A, p, q, C[:, 1:(m - 1)])
+    @test_throws ArgumentError permute!(X, A, p, q, (D = copy(C); resize!(D.rowval, nnz(A) - 1); D))
+    @test_throws ArgumentError permute!(X, A, p, q, (D = copy(C); resize!(D.nzval, nnz(A) - 1); D))
+    # Test common error checking of permute[!] methods / source-workcolptr compat
+    @test_throws DimensionMismatch permute!(A, p, q, C, Vector{eltype(A.rowval)}(length(A.colptr) - 1))
+    # Test common error checking of permute[!] methods / permutation validity
+    @test_throws ArgumentError permute!(A, (r = copy(p); r[2] = r[1]; r), q)
+    @test_throws ArgumentError permute!(A, (r = copy(p); r[2] = m + 1; r), q)
+    @test_throws ArgumentError permute!(A, p, (r = copy(q); r[2] = r[1]; r))
+    @test_throws ArgumentError permute!(A, p, (r = copy(q); r[2] = n + 1; r))
+    # Test overall functionality of [c]transpose[!] and permute[!]
+    for (m, n) in ((smalldim, smalldim), (smalldim, largedim), (largedim, smalldim))
+        A = sprand(m, n, nzprob)
+        At = transpose(A)
+        # transpose[!]
+        fullAt = transpose(full(A))
+        @test transpose(A) == fullAt
+        @test transpose!(similar(At), A) == fullAt
+        # ctranspose[!]
+        C = A + im*A/2
+        fullCh = ctranspose(full(C))
+        @test ctranspose(C) == fullCh
+        @test ctranspose!(similar(sparse(fullCh)), C) == fullCh
+        # permute[!]
+        p = randperm(m)
+        q = randperm(n)
+        fullPAQ = full(A)[p,q]
+        @test permute(A, p, q) == sparse(full(A[p,q]))
+        @test permute!(similar(A), A, p, q) == fullPAQ
+        @test permute!(similar(A), A, p, q, similar(At)) == fullPAQ
+        @test permute!(copy(A), p, q) == fullPAQ
+        @test permute!(copy(A), p, q, similar(At)) == fullPAQ
+        @test permute!(copy(A), p, q, similar(At), similar(A.colptr)) == fullPAQ
+    end
+end
+
 # transpose of SubArrays
 A = view(sprandn(10, 10, 0.3), 1:4, 1:4)
 @test  transpose(full(A)) == full(transpose(A))
@@ -303,10 +362,10 @@ pA = sparse(rand(3, 7))
 for arr in (se33, sA, pA)
     for f in (sum, prod, minimum, maximum, var)
         farr = full(arr)
-        @test_approx_eq f(arr) f(farr)
-        @test_approx_eq f(arr, 1) f(farr, 1)
-        @test_approx_eq f(arr, 2) f(farr, 2)
-        @test_approx_eq f(arr, (1, 2)) [f(farr)]
+        @test f(arr) ≈ f(farr)
+        @test f(arr, 1) ≈ f(farr, 1)
+        @test f(arr, 2) ≈ f(farr, 2)
+        @test f(arr, (1, 2)) ≈ [f(farr)]
         @test isequal(f(arr, 3), f(farr, 3))
     end
 end
@@ -314,15 +373,15 @@ end
 for f in (sum, prod, minimum, maximum)
     # Test with a map function that maps to non-zero
     for arr in (se33, sA, pA)
-        @test_approx_eq f(x->x+1, arr) f(arr+1)
+        @test f(x->x+1, arr) ≈ f(arr+1)
     end
 
     # case where f(0) would throw
-    @test_approx_eq f(x->sqrt(x-1), pA+1) f(sqrt(pA))
+    @test f(x->sqrt(x-1), pA+1) ≈ f(sqrt(pA))
     # these actually throw due to #10533
-    # @test_approx_eq f(x->sqrt(x-1), pA+1, 1) f(sqrt(pA), 1)
-    # @test_approx_eq f(x->sqrt(x-1), pA+1, 2) f(sqrt(pA), 2)
-    # @test_approx_eq f(x->sqrt(x-1), pA+1, 3) f(pA)
+    # @test f(x->sqrt(x-1), pA+1, 1) ≈ f(sqrt(pA), 1)
+    # @test f(x->sqrt(x-1), pA+1, 2) ≈ f(sqrt(pA), 2)
+    # @test f(x->sqrt(x-1), pA+1, 3) ≈ f(pA)
 end
 
 # empty cases
@@ -518,6 +577,49 @@ let a = spzeros(Int, 10, 10)
     a[:,2] = 2
     @test countnz(a) == 19
     @test a[:,2] == 2*sparse(ones(Int,10))
+    b = copy(a)
+
+    # Zero-assignment behavior of setindex!(A, v, i, j)
+    a[1,3] = 0
+    @test nnz(a) == 19
+    @test countnz(a) == 18
+    a[2,1] = 0
+    @test nnz(a) == 19
+    @test countnz(a) == 18
+
+    # Zero-assignment behavior of setindex!(A, v, I, J)
+    a[1,:] = 0
+    @test nnz(a) == 19
+    @test countnz(a) == 9
+    a[2,:] = 0
+    @test nnz(a) == 19
+    @test countnz(a) == 8
+    a[:,1] = 0
+    @test nnz(a) == 19
+    @test countnz(a) == 8
+    a[:,2] = 0
+    @test nnz(a) == 19
+    @test countnz(a) == 0
+    a = copy(b)
+    a[:,:] = 0
+    @test nnz(a) == 19
+    @test countnz(a) == 0
+
+    # Zero-assignment behavior of setindex!(A, B::SparseMatrixCSC, I, J)
+    a = copy(b)
+    a[1:2,:] = spzeros(2, 10)
+    @test nnz(a) == 19
+    @test countnz(a) == 8
+    a[1:2,1:3] = sparse([1 0 1; 0 0 1])
+    @test nnz(a) == 20
+    @test countnz(a) == 11
+    a = copy(b)
+    a[1:2,:] = let c = sparse(ones(2,10)); fill!(c.nzval, 0); c; end
+    @test nnz(a) == 19
+    @test countnz(a) == 8
+    a[1:2,1:3] = let c = sparse(ones(2,3)); c[1,2] = c[2,1] = c[2,2] = 0; c; end
+    @test nnz(a) == 20
+    @test countnz(a) == 11
 
     a[1,:] = 1:10
     @test a[1,:] == sparse([1:10;])
@@ -597,6 +699,20 @@ let A = speye(Int, 5), I=1:10, X=reshape([trues(10); falses(15)],5,5)
     @test A[I] == A[X] == [1,0,0,0,0,0,1,0,0,0]
     A[I] = [1:10;]
     @test A[I] == A[X] == collect(1:10)
+    A[I] = zeros(Int, 10)
+    @test nnz(A) == 13
+    @test countnz(A) == 3
+    @test A[I] == A[X] == zeros(Int, 10)
+    c = collect(11:20); c[1] = c[3] = 0
+    A[I] = c
+    @test nnz(A) == 13
+    @test countnz(A) == 11
+    @test A[I] == A[X] == c
+    A = speye(Int, 5)
+    A[I] = c
+    @test nnz(A) == 12
+    @test countnz(A) == 11
+    @test A[I] == A[X] == c
 end
 
 let S = sprand(50, 30, 0.5, x->round(Int,rand(x)*100)), I = sprand(Bool, 50, 30, 0.2)
@@ -607,15 +723,21 @@ let S = sprand(50, 30, 0.5, x->round(Int,rand(x)*100)), I = sprand(Bool, 50, 30,
 
     sumS1 = sum(S)
     sumFI = sum(S[FI])
+    nnzS1 = nnz(S)
     S[FI] = 0
-    @test sum(S[FI]) == 0
     sumS2 = sum(S)
+    cnzS2 = countnz(S)
+    @test sum(S[FI]) == 0
+    @test nnz(S) == nnzS1
     @test (sum(S) + sumFI) == sumS1
 
     S[FI] = 10
+    nnzS3 = nnz(S)
     @test sum(S) == sumS2 + 10*sum(FI)
     S[FI] = 0
     @test sum(S) == sumS2
+    @test nnz(S) == nnzS3
+    @test countnz(S) == cnzS2
 
     S[FI] = [1:sum(FI);]
     @test sum(S) == sumS2 + sum(1:sum(FI))
@@ -632,6 +754,60 @@ let S = sprand(50, 30, 0.5, x->round(Int,rand(x)*100))
     S[I] = J
     @test sum(S) == (sumS1 - sumS2 + sum(J))
 end
+
+
+## dropstored! tests
+let A = spzeros(Int, 10, 10)
+    # Introduce nonzeros in row and column two
+    A[1,:] = 1
+    A[:,2] = 2
+    @test nnz(A) == 19
+
+    # Test argument bounds checking for dropstored!(A, i, j)
+    @test_throws BoundsError Base.SparseArrays.dropstored!(A, 0, 1)
+    @test_throws BoundsError Base.SparseArrays.dropstored!(A, 1, 0)
+    @test_throws BoundsError Base.SparseArrays.dropstored!(A, 1, 11)
+    @test_throws BoundsError Base.SparseArrays.dropstored!(A, 11, 1)
+
+    # Test argument bounds checking for dropstored!(A, I, J)
+    @test_throws BoundsError Base.SparseArrays.dropstored!(A, 0:1, 1:1)
+    @test_throws BoundsError Base.SparseArrays.dropstored!(A, 1:1, 0:1)
+    @test_throws BoundsError Base.SparseArrays.dropstored!(A, 10:11, 1:1)
+    @test_throws BoundsError Base.SparseArrays.dropstored!(A, 1:1, 10:11)
+
+    # Test behavior of dropstored!(A, i, j)
+    # --> Test dropping a single stored entry
+    Base.SparseArrays.dropstored!(A, 1, 2)
+    @test nnz(A) == 18
+    # --> Test dropping a single nonstored entry
+    Base.SparseArrays.dropstored!(A, 2, 1)
+    @test nnz(A) == 18
+
+    # Test behavior of dropstored!(A, I, J) and derivs.
+    # --> Test dropping a single row including stored and nonstored entries
+    Base.SparseArrays.dropstored!(A, 1, :)
+    @test nnz(A) == 9
+    # --> Test dropping a single column including stored and nonstored entries
+    Base.SparseArrays.dropstored!(A, :, 2)
+    @test nnz(A) == 0
+    # --> Introduce nonzeros in rows one and two and columns two and three
+    A[1:2,:] = 1
+    A[:,2:3] = 2
+    @test nnz(A) == 36
+    # --> Test dropping multiple rows containing stored and nonstored entries
+    Base.SparseArrays.dropstored!(A, 1:3, :)
+    @test nnz(A) == 14
+    # --> Test dropping multiple columns containing stored and nonstored entries
+    Base.SparseArrays.dropstored!(A, :, 2:4)
+    @test nnz(A) == 0
+    # --> Introduce nonzeros in every other row
+    A[1:2:9, :] = 1
+    @test nnz(A) == 50
+    # --> Test dropping a block of the matrix towards the upper left
+    Base.SparseArrays.dropstored!(A, 2:5, 2:5)
+    @test nnz(A) == 42
+end
+
 
 #Issue 7507
 @test (i7507=sparsevec(Dict{Int64, Float64}(), 10))==spzeros(10)
@@ -742,19 +918,19 @@ function test_getindex_algs{Tv,Ti}(A::SparseMatrixCSC{Tv,Ti}, I::AbstractVector,
 end
 
 let M=2^14, N=2^4
-    Irand = randperm(M);
-    Jrand = randperm(N);
-    SA = [sprand(M, N, d) for d in [1., 0.1, 0.01, 0.001, 0.0001, 0.]];
-    IA = [sort(Irand[1:round(Int,n)]) for n in [M, M*0.1, M*0.01, M*0.001, M*0.0001, 0.]];
+    Irand = randperm(M)
+    Jrand = randperm(N)
+    SA = [sprand(M, N, d) for d in [1., 0.1, 0.01, 0.001, 0.0001, 0.]]
+    IA = [sort(Irand[1:round(Int,n)]) for n in [M, M*0.1, M*0.01, M*0.001, M*0.0001, 0.]]
     debug = false
 
     if debug
-        println("row sizes: $([round(Int,nnz(S)/S.n) for S in SA])");
-        println("I sizes: $([length(I) for I in IA])");
+        println("row sizes: $([round(Int,nnz(S)/S.n) for S in SA])")
+        println("I sizes: $([length(I) for I in IA])")
         @printf("    S    |    I    | binary S | binary I |  linear  | best\n")
     end
 
-    J = Jrand;
+    J = Jrand
     for I in IA
         for S in SA
             res = Any[1,2,3]
@@ -791,7 +967,7 @@ let M = 2^8, N=2^3
     I = sort([Irand; Irand; Irand])
     J = [Jrand; Jrand]
 
-    SA = [sprand(M, N, d) for d in [1., 0.1, 0.01, 0.001, 0.0001, 0.]];
+    SA = [sprand(M, N, d) for d in [1., 0.1, 0.01, 0.001, 0.0001, 0.]]
     for S in SA
         res = Any[1,2,3]
         for searchtype in [0, 1, 2]
@@ -807,8 +983,8 @@ let M = 2^14, N=2^4
     J = randperm(N)
     Jsorted = sort(J)
 
-    SA = [sprand(M, N, d) for d in [1., 0.1, 0.01, 0.001, 0.0001, 0.]];
-    IA = [I[1:round(Int,n)] for n in [M, M*0.1, M*0.01, M*0.001, M*0.0001, 0.]];
+    SA = [sprand(M, N, d) for d in [1., 0.1, 0.01, 0.001, 0.0001, 0.]]
+    IA = [I[1:round(Int,n)] for n in [M, M*0.1, M*0.01, M*0.001, M*0.0001, 0.]]
     debug = false
     if debug
         @printf("         |         |         |        times        |        memory       |\n")
@@ -850,8 +1026,8 @@ end
 # explicit zeros
 if Base.USE_GPL_LIBS
 a = SparseMatrixCSC(2, 2, [1, 3, 5], [1, 2, 1, 2], [1.0, 0.0, 0.0, 1.0])
-@test_approx_eq lufact(a)\[2.0, 3.0] [2.0, 3.0]
-@test_approx_eq cholfact(a)\[2.0, 3.0] [2.0, 3.0]
+@test lufact(a)\[2.0, 3.0] ≈ [2.0, 3.0]
+@test cholfact(a)\[2.0, 3.0] ≈ [2.0, 3.0]
 end
 
 # issue #9917
@@ -1050,28 +1226,28 @@ let smalldim = 5, largedim = 10, nzprob = 0.4, targetnumposzeros = 5, targetnumn
         map!(x -> x == 2 ? 0.0 : x == -2 ? -0.0 : x, Abothsigns.nzval)
         for Awithzeros in (Aposzeros, Anegzeros, Abothsigns)
             # Basic functionality / dropzeros!
-            @test Base.dropzeros!(copy(Awithzeros)) == A
-            @test Base.dropzeros!(copy(Awithzeros), false) == A
+            @test dropzeros!(copy(Awithzeros)) == A
+            @test dropzeros!(copy(Awithzeros), false) == A
             # Basic functionality / dropzeros
-            @test Base.SparseArrays.dropzeros(Awithzeros) == A
-            @test Base.SparseArrays.dropzeros(Awithzeros, false) == A
+            @test dropzeros(Awithzeros) == A
+            @test dropzeros(Awithzeros, false) == A
             # Check trimming works as expected
-            @test length(Base.dropzeros!(copy(Awithzeros)).nzval) == length(A.nzval)
-            @test length(Base.dropzeros!(copy(Awithzeros)).rowval) == length(A.rowval)
-            @test length(Base.dropzeros!(copy(Awithzeros), false).nzval) == length(Awithzeros.nzval)
-            @test length(Base.dropzeros!(copy(Awithzeros), false).rowval) == length(Awithzeros.rowval)
+            @test length(dropzeros!(copy(Awithzeros)).nzval) == length(A.nzval)
+            @test length(dropzeros!(copy(Awithzeros)).rowval) == length(A.rowval)
+            @test length(dropzeros!(copy(Awithzeros), false).nzval) == length(Awithzeros.nzval)
+            @test length(dropzeros!(copy(Awithzeros), false).rowval) == length(Awithzeros.rowval)
         end
     end
     # original lone dropzeros test
     A = sparse([1 2 3; 4 5 6; 7 8 9])
     A.nzval[2] = A.nzval[6] = A.nzval[7] = 0
-    @test Base.dropzeros!(A).colptr == [1, 3, 5, 7]
+    @test dropzeros!(A).colptr == [1, 3, 5, 7]
     # test for issue #5169, modified for new behavior following #15242/#14798
     @test nnz(sparse([1, 1], [1, 2], [0.0, -0.0])) == 2
-    @test nnz(Base.SparseArrays.dropzeros!(sparse([1, 1], [1, 2], [0.0, -0.0]))) == 0
+    @test nnz(dropzeros!(sparse([1, 1], [1, 2], [0.0, -0.0]))) == 0
     # test for issue #5437, modified for new behavior following #15242/#14798
     @test nnz(sparse([1, 2, 3], [1, 2, 3], [0.0, 1.0, 2.0])) == 3
-    @test nnz(Base.SparseArrays.dropzeros!(sparse([1, 2, 3],[1, 2, 3],[0.0, 1.0, 2.0]))) == 2
+    @test nnz(dropzeros!(sparse([1, 2, 3],[1, 2, 3],[0.0, 1.0, 2.0]))) == 2
 end
 
 #trace
@@ -1229,15 +1405,15 @@ end
 Ac = sprandn(10,10,.1) + im* sprandn(10,10,.1)
 Ar = sprandn(10,10,.1)
 Ai = ceil(Int,Ar*100)
-@test_approx_eq norm(Ac,1)     norm(full(Ac),1)
-@test_approx_eq norm(Ac,Inf)   norm(full(Ac),Inf)
-@test_approx_eq vecnorm(Ac)    vecnorm(full(Ac))
-@test_approx_eq norm(Ar,1)     norm(full(Ar),1)
-@test_approx_eq norm(Ar,Inf)   norm(full(Ar),Inf)
-@test_approx_eq vecnorm(Ar)    vecnorm(full(Ar))
-@test_approx_eq norm(Ai,1)     norm(full(Ai),1)
-@test_approx_eq norm(Ai,Inf)   norm(full(Ai),Inf)
-@test_approx_eq vecnorm(Ai)    vecnorm(full(Ai))
+@test norm(Ac,1) ≈ norm(full(Ac),1)
+@test norm(Ac,Inf) ≈ norm(full(Ac),Inf)
+@test vecnorm(Ac) ≈ vecnorm(full(Ac))
+@test norm(Ar,1) ≈ norm(full(Ar),1)
+@test norm(Ar,Inf) ≈ norm(full(Ar),Inf)
+@test vecnorm(Ar) ≈ vecnorm(full(Ar))
+@test norm(Ai,1) ≈ norm(full(Ai),1)
+@test norm(Ai,Inf) ≈ norm(full(Ai),Inf)
+@test vecnorm(Ai) ≈ vecnorm(full(Ai))
 
 # test sparse matrix cond
 A = sparse(reshape([1.0],1,1))
@@ -1338,6 +1514,7 @@ let
     x = UpperTriangular(A)*ones(n)
     @test UpperTriangular(A)\x ≈ ones(n)
     A[2,2] = 0
+    dropzeros!(A)
     @test_throws LinAlg.SingularException LowerTriangular(A)\ones(n)
     @test_throws LinAlg.SingularException UpperTriangular(A)\ones(n)
 end
@@ -1392,3 +1569,6 @@ let m = 5
     ltintmat = LowerTriangular(rand(1:5, m, m))
     @test isapprox(At_ldiv_B(ltintmat, sparse(intmat)), At_ldiv_B(ltintmat, intmat))
 end
+
+# Test temporary fix for issue #16548 in PR #16979. Brittle. Expect to remove with `\` revisions.
+@test which(\, (SparseMatrixCSC, AbstractVecOrMat)).module == Base.SparseArrays

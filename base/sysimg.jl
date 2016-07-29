@@ -12,7 +12,10 @@ eval(m,x) = Core.eval(m,x)
 
 # init core docsystem
 import Core: @doc, @__doc__, @doc_str
-Core.atdoc!(Core.Inference.CoreDocs.docm)
+if isdefined(Core, :Inference)
+    import Core.Inference.CoreDocs
+    Core.atdoc!(CoreDocs.docm)
+end
 
 include("exports.jl")
 
@@ -24,16 +27,6 @@ if false
     show(io::IO, x::ANY) = Core.show(io, x)
     print(io::IO, a::ANY...) = Core.print(io, a...)
     println(io::IO, x::ANY...) = Core.println(io, x...)
-    if false # show that the IO system now (relatively) operational
-        print("HELLO")
-        println(" WORLD")
-        show("αβγ :)"); println()
-        println(STDERR, "TEST")
-        println(STDERR, STDERR)
-        println(STDERR, 'a')
-        println(STDERR, 'α')
-        show(STDOUT, 'α')
-    end
 end
 
 ## Load essential files and libraries
@@ -58,9 +51,18 @@ include("operators.jl")
 include("pointer.jl")
 include("refpointer.jl")
 (::Type{T}){T}(arg) = convert(T, arg)::T
+(::Type{VecElement{T}}){T}(arg) = VecElement{T}(convert(T, arg))
+convert{T<:VecElement}(::Type{T}, arg) = T(arg)
+convert{T<:VecElement}(::Type{T}, arg::T) = arg
 include("checked.jl")
 importall .Checked
 
+# Symbol constructors
+if !isdefined(Core, :Inference)
+    Symbol(s::String) = Symbol(s.data)
+    Symbol(a::Array{UInt8,1}) =
+        ccall(:jl_symbol_n, Ref{Symbol}, (Ptr{UInt8}, Int32), a, length(a))
+end
 # vararg Symbol constructor
 Symbol(x...) = Symbol(string(x...))
 
@@ -83,7 +85,7 @@ include("array.jl")
 (::Type{Matrix})(m::Integer, n::Integer) = Matrix{Any}(Int(m), Int(n))
 
 # TODO: possibly turn these into deprecations
-Array{T}(::Type{T}, d::Integer...) = Array{T}(convert(Tuple{Vararg{Int}}, d))
+Array{T}(::Type{T}, d::Integer...) = Array(T, convert(Tuple{Vararg{Int}}, d))
 Array{T}(::Type{T}, m::Integer)                       = Array{T,1}(Int(m))
 Array{T}(::Type{T}, m::Integer,n::Integer)            = Array{T,2}(Int(m),Int(n))
 Array{T}(::Type{T}, m::Integer,n::Integer,o::Integer) = Array{T,3}(Int(m),Int(n),Int(o))
@@ -99,6 +101,7 @@ include("multinverses.jl")
 using .MultiplicativeInverses
 include("abstractarraymath.jl")
 include("arraymath.jl")
+include("float16.jl")
 
 # SIMD loops
 include("simdloop.jl")
@@ -129,6 +132,11 @@ include("osutils.jl")
 include("c.jl")
 include("sysinfo.jl")
 
+if !isdefined(Core, :Inference)
+    include("docs/core.jl")
+    Core.atdoc!(CoreDocs.docm)
+end
+
 # Core I/O
 include("io.jl")
 include("iostream.jl")
@@ -138,7 +146,6 @@ include("iobuffer.jl")
 include("char.jl")
 include("intfuncs.jl")
 include("strings/strings.jl")
-include("unicode/unicode.jl")
 include("parse.jl")
 include("shell.jl")
 include("regex.jl")
@@ -180,7 +187,6 @@ include("math.jl")
 importall .Math
 const (√)=sqrt
 const (∛)=cbrt
-include("float16.jl")
 
 # multidimensional arrays
 include("cartesian.jl")
@@ -319,7 +325,6 @@ include("libgit2/libgit2.jl")
 
 # package manager
 include("pkg/pkg.jl")
-const Git = Pkg.Git
 
 # Stack frames and traces
 include("stacktraces.jl")
@@ -352,7 +357,7 @@ include("docs/basedocs.jl")
 include("markdown/Markdown.jl")
 include("docs/Docs.jl")
 using .Docs, .Markdown
-Docs.loaddocs(Core.Inference.CoreDocs.DOCS)
+isdefined(Core, :Inference) && Docs.loaddocs(Core.Inference.CoreDocs.DOCS)
 
 function __init__()
     # Base library init

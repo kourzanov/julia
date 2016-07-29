@@ -4,8 +4,8 @@ using Base.Test
 
 # Check that serializer hasn't gone out-of-frame
 @test Serializer.sertag(Symbol) == 2
-@test Serializer.sertag(()) == 46
-@test Serializer.sertag(false) == 122
+@test Serializer.sertag(()) == 44
+@test Serializer.sertag(false) == 120
 
 function create_serialization_stream(f::Function)
     s = IOBuffer()
@@ -288,7 +288,7 @@ create_serialization_stream() do s # user-defined type array
     r = deserialize(s)
     @test r.storage[:v] == 2
     @test r.state == :done
-    @test r.exception == nothing
+    @test r.exception === nothing
 end
 
 immutable MyErrorTypeTest <: Exception end

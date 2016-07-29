@@ -225,6 +225,9 @@ immutable String <: AbstractString
     String(d::Array{UInt8,1}) = new(d)
 end
 
+# This should always be inlined
+getptls() = ccall(:jl_get_ptls_states, Ptr{Void}, ())
+
 include(fname::String) = ccall(:jl_load_, Any, (Any,), fname)
 
 eval(e::ANY) = eval(Main, e)
@@ -245,7 +248,8 @@ end
 type WeakRef
     value
     WeakRef() = WeakRef(nothing)
-    WeakRef(v::ANY) = ccall(:jl_gc_new_weakref, Ref{WeakRef}, (Any,), v)
+    WeakRef(v::ANY) = ccall(:jl_gc_new_weakref_th, Ref{WeakRef},
+                            (Ptr{Void}, Any), getptls(), v)
 end
 
 TypeVar(n::Symbol) =
@@ -268,7 +272,9 @@ Void() = nothing
 
 immutable VecElement{T}
     value::T
+    VecElement(value::T) = new(value) # disable converting constructor in Core
 end
+VecElement{T}(arg::T) = VecElement{T}(arg)
 
 Expr(args::ANY...) = _expr(args...)
 
@@ -319,8 +325,8 @@ typealias NTuple{N,T} Tuple{Vararg{T,N}}
 (::Type{Array{T,2}}){T}() = Array{T,2}(0, 0)
 
 # TODO: possibly turn these into deprecations
-Array{T,N}(::Type{T}, d::NTuple{N,Int}) = Array{T}(d)
-Array{T}(::Type{T}, d::Int...) = Array{T}(d)
+Array{T,N}(::Type{T}, d::NTuple{N,Int})   = Array{T,N}(d)
+Array{T}(::Type{T}, d::Int...)            = Array(T, d)
 Array{T}(::Type{T}, m::Int)               = Array{T,1}(m)
 Array{T}(::Type{T}, m::Int,n::Int)        = Array{T,2}(m,n)
 Array{T}(::Type{T}, m::Int,n::Int,o::Int) = Array{T,3}(m,n,o)
@@ -346,8 +352,8 @@ type CoreSTDOUT <: IO end
 type CoreSTDERR <: IO end
 const STDOUT = CoreSTDOUT()
 const STDERR = CoreSTDERR()
-io_pointer(::CoreSTDOUT) = Intrinsics.pointerref(Intrinsics.cglobal(:jl_uv_stdout, Ptr{Void}), 1)
-io_pointer(::CoreSTDERR) = Intrinsics.pointerref(Intrinsics.cglobal(:jl_uv_stderr, Ptr{Void}), 1)
+io_pointer(::CoreSTDOUT) = Intrinsics.pointerref(Intrinsics.cglobal(:jl_uv_stdout, Ptr{Void}), 1, 1)
+io_pointer(::CoreSTDERR) = Intrinsics.pointerref(Intrinsics.cglobal(:jl_uv_stderr, Ptr{Void}), 1, 1)
 
 unsafe_write(io::IO, x::Ptr{UInt8}, nb::UInt) =
     (ccall(:jl_uv_puts, Void, (Ptr{Void}, Ptr{UInt8}, UInt), io_pointer(io), x, nb); nb)

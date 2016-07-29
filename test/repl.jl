@@ -67,30 +67,30 @@ if !is_windows() || Sys.windows_version() >= Sys.WINDOWS_VISTA_VER
     # calling readuntil() to suppress the warning it (currently) gives for
     # long strings.
     origpwd = pwd()
-    tmpdir = mktempdir()
-    write(stdin_write, ";")
-    readuntil(stdout_read, "shell> ")
-    write(stdin_write, "cd $(escape_string(tmpdir))\n")
-    readuntil(stdout_read, "cd $(escape_string(tmpdir))"[max(1,end-39):end])
-    readuntil(stdout_read, realpath(tmpdir)[max(1,end-39):end])
-    readuntil(stdout_read, "\n")
-    readuntil(stdout_read, "\n")
-    @test pwd() == realpath(tmpdir)
-    write(stdin_write, ";")
-    readuntil(stdout_read, "shell> ")
-    write(stdin_write, "cd -\n")
-    readuntil(stdout_read, origpwd[max(1,end-39):end])
-    readuntil(stdout_read, "\n")
-    readuntil(stdout_read, "\n")
-    @test pwd() == origpwd
-    write(stdin_write, ";")
-    readuntil(stdout_read, "shell> ")
-    write(stdin_write, "cd\n")
-    readuntil(stdout_read, homedir()[max(1,end-39):end])
-    readuntil(stdout_read, "\n")
-    readuntil(stdout_read, "\n")
-    @test pwd() == homedir()
-    rm(tmpdir)
+    mktempdir() do tmpdir
+        write(stdin_write, ";")
+        readuntil(stdout_read, "shell> ")
+        write(stdin_write, "cd $(escape_string(tmpdir))\n")
+        readuntil(stdout_read, "cd $(escape_string(tmpdir))"[max(1,end-39):end])
+        readuntil(stdout_read, realpath(tmpdir)[max(1,end-39):end])
+        readuntil(stdout_read, "\n")
+        readuntil(stdout_read, "\n")
+        @test pwd() == realpath(tmpdir)
+        write(stdin_write, ";")
+        readuntil(stdout_read, "shell> ")
+        write(stdin_write, "cd -\n")
+        readuntil(stdout_read, origpwd[max(1,end-39):end])
+        readuntil(stdout_read, "\n")
+        readuntil(stdout_read, "\n")
+        @test pwd() == origpwd
+        write(stdin_write, ";")
+        readuntil(stdout_read, "shell> ")
+        write(stdin_write, "cd\n")
+        readuntil(stdout_read, homedir()[max(1,end-39):end])
+        readuntil(stdout_read, "\n")
+        readuntil(stdout_read, "\n")
+        @test pwd() == homedir()
+    end
     cd(origpwd)
 
     # Test that accepting a REPL result immediately shows up, not
@@ -130,7 +130,7 @@ if !is_windows() || Sys.windows_version() >= Sys.WINDOWS_VISTA_VER
         isopen(t) || return
         error("Stuck waiting for history test")
     end
-    s1 = "12345678"; s2 = "23456789";
+    s1 = "12345678"; s2 = "23456789"
     write(stdin_write, s1, '\n')
     readuntil(stdout_read, s1)
     write(stdin_write, s2, '\n')
@@ -190,7 +190,7 @@ function AddCustomMode(repl)
     b = Dict{Any,Any}[skeymap, mk, LineEdit.history_keymap, LineEdit.default_keymap, LineEdit.escape_defaults]
     foobar_mode.keymap_dict = LineEdit.keymap(b)
 
-    main_mode.keymap_dict = LineEdit.keymap_merge(main_mode.keymap_dict, foobar_keymap);
+    main_mode.keymap_dict = LineEdit.keymap_merge(main_mode.keymap_dict, foobar_keymap)
     foobar_mode, search_prompt
 end
 

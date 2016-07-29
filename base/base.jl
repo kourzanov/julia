@@ -70,10 +70,20 @@ function finalizer(o::ANY, f::ANY)
     if isimmutable(o)
         error("objects of type ", typeof(o), " cannot be finalized")
     end
-    ccall(:jl_gc_add_finalizer, Void, (Any,Any), o, f)
+    ccall(:jl_gc_add_finalizer_th, Void, (Ptr{Void}, Any, Any),
+          Core.getptls(), o, f)
+end
+function finalizer{T}(o::T, f::Ptr{Void})
+    @_inline_meta
+    if isimmutable(T)
+        error("objects of type ", T, " cannot be finalized")
+    end
+    ccall(:jl_gc_add_ptr_finalizer, Void, (Ptr{Void}, Any, Ptr{Void}),
+          Core.getptls(), o, f)
 end
 
-finalize(o::ANY) = ccall(:jl_finalize, Void, (Any,), o)
+finalize(o::ANY) = ccall(:jl_finalize_th, Void, (Ptr{Void}, Any,),
+                         Core.getptls(), o)
 
 gc(full::Bool=true) = ccall(:jl_gc_collect, Void, (Cint,), full)
 gc_enable(on::Bool) = ccall(:jl_gc_enable, Cint, (Cint,), on)!=0

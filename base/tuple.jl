@@ -43,13 +43,17 @@ first(t::Tuple) = t[1]
 eltype(::Type{Tuple{}}) = Bottom
 eltype{T}(::Type{Tuple{Vararg{T}}}) = T
 
+# version of tail that doesn't throw on empty tuples (used in array indexing)
+safe_tail(t::Tuple) = tail(t)
+safe_tail(t::Tuple{}) = ()
+
 # front (the converse of tail: it skips the last entry)
 
 function front(t::Tuple)
     @_inline_meta
     _front((), t...)
 end
-front(::Tuple{}) = error("Cannot call front on an empty tuple")
+front(::Tuple{}) = throw(ArgumentError("Cannot call front on an empty tuple"))
 _front(out, v) = out
 function _front(out, v, t...)
     @_inline_meta

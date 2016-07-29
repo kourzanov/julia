@@ -34,23 +34,24 @@ jl_value_t *jl_interpret_toplevel_expr(jl_value_t *e)
 JL_DLLEXPORT jl_value_t *jl_interpret_toplevel_expr_in(jl_module_t *m, jl_value_t *e,
                                                        jl_lambda_info_t *lam)
 {
+    jl_ptls_t ptls = jl_get_ptls_states();
     jl_value_t *v=NULL;
-    jl_module_t *last_m = jl_current_module;
-    jl_module_t *task_last_m = jl_current_task->current_module;
+    jl_module_t *last_m = ptls->current_module;
+    jl_module_t *task_last_m = ptls->current_task->current_module;
     interpreter_state s;
     s.lam = lam; s.locals = NULL; s.sparam_vals = NULL;
 
     JL_TRY {
-        jl_current_task->current_module = jl_current_module = m;
+        ptls->current_task->current_module = ptls->current_module = m;
         v = eval(e, &s);
     }
     JL_CATCH {
-        jl_current_module = last_m;
-        jl_current_task->current_module = task_last_m;
+        ptls->current_module = last_m;
+        ptls->current_task->current_module = task_last_m;
         jl_rethrow();
     }
-    jl_current_module = last_m;
-    jl_current_task->current_module = task_last_m;
+    ptls->current_module = last_m;
+    ptls->current_task->current_module = task_last_m;
     assert(v);
     return v;
 }
@@ -146,6 +147,7 @@ static int jl_linfo_nssavalues(jl_lambda_info_t *li)
 
 static jl_value_t *eval(jl_value_t *e, interpreter_state *s)
 {
+    jl_ptls_t ptls = jl_get_ptls_states();
     jl_lambda_info_t *lam = s==NULL ? NULL : s->lam;
     if (jl_is_ssavalue(e)) {
         ssize_t id = ((jl_ssavalue_t*)e)->id;
@@ -172,7 +174,7 @@ static jl_value_t *eval(jl_value_t *e, interpreter_state *s)
     }
     if (jl_is_quotenode(e))
         return jl_fieldref(e,0);
-    jl_module_t *modu = (lam == NULL || lam->def == NULL) ? jl_current_module : lam->def->module;
+    jl_module_t *modu = (lam == NULL || lam->def == NULL) ? ptls->current_module : lam->def->module;
     if (jl_is_symbol(e)) {  // bare symbols appear in toplevel exprs not wrapped in `thunk`
         jl_value_t *v = jl_get_global(modu, (jl_sym_t*)e);
         if (v == NULL)
@@ -202,9 +204,6 @@ static jl_value_t *eval(jl_value_t *e, interpreter_state *s)
         JL_GC_POP();
         return v;
     }
-    else if (ex->head == null_sym) {
-        return (jl_value_t*)jl_nothing;
-    }
     else if (ex->head == static_parameter_sym) {
         ssize_t n = jl_unbox_long(args[0]);
         assert(n > 0);
@@ -224,11 +223,8 @@ static jl_value_t *eval(jl_value_t *e, interpreter_state *s)
     else if (ex->head == copyast_sym) {
         return jl_copy_ast(eval(args[0], s));
     }
-    else if (ex->head == static_typeof_sym) {
-        return (jl_value_t*)jl_any_type;
-    }
     else if (ex->head == exc_sym) {
-        return jl_exception_in_transit;
+        return ptls->exception_in_transit;
     }
     else if (ex->head == method_sym) {
         jl_sym_t *fname = (jl_sym_t*)args[0];
@@ -399,9 +395,12 @@ static jl_value_t *eval(jl_value_t *e, interpreter_state *s)
             b->value = temp;
             jl_rethrow();
         }
-        jl_compute_field_offsets(dt);
+        if (dt->name->names == jl_emptysvec)
+            dt->layout = jl_void_type->layout; // reuse the same layout for all singletons
+        else if (jl_is_leaf_type((jl_value_t*)dt))
+            jl_compute_field_offsets(dt);
         if (para == (jl_value_t*)jl_emptysvec && jl_is_datatype_make_singleton(dt)) {
-            dt->instance = newstruct(dt);
+            dt->instance = jl_gc_alloc(ptls, 0, dt);
             jl_gc_wb(dt, dt->instance);
         }
 
@@ -430,7 +429,7 @@ static jl_value_t *eval(jl_value_t *e, interpreter_state *s)
         jl_throw(args[0]);
     }
     else if (ex->head == boundscheck_sym || ex->head == inbounds_sym || ex->head == fastmath_sym ||
-             ex->head == simdloop_sym || ex->head == meta_sym || ex->head == type_goto_sym) {
+             ex->head == simdloop_sym || ex->head == meta_sym) {
         return jl_nothing;
     }
     jl_errorf("unsupported or misplaced expression %s", jl_symbol_name(ex->head));
@@ -444,6 +443,7 @@ jl_value_t *jl_toplevel_eval_body(jl_array_t *stmts)
 
 static jl_value_t *eval_body(jl_array_t *stmts, interpreter_state *s, int start, int toplevel)
 {
+    jl_ptls_t ptls = jl_get_ptls_states();
     jl_handler_t __eh;
     size_t i=start, ns = jl_array_len(stmts);
 
@@ -485,7 +485,7 @@ static jl_value_t *eval_body(jl_array_t *stmts, interpreter_state *s, int start,
                         sym = (jl_value_t*)jl_globalref_name(sym);
                     }
                     else {
-                        m = (s==NULL || s->lam==NULL || s->lam->def==NULL) ? jl_current_module : s->lam->def->module;
+                        m = (s==NULL || s->lam==NULL || s->lam->def==NULL) ? ptls->current_module : s->lam->def->module;
                     }
                     assert(jl_is_symbol(sym));
                     JL_GC_PUSH1(&rhs);
@@ -516,7 +516,7 @@ static jl_value_t *eval_body(jl_array_t *stmts, interpreter_state *s, int start,
                 }
                 else {
 #ifdef _OS_WINDOWS_
-                    if (jl_exception_in_transit == jl_stackovf_exception)
+                    if (ptls->exception_in_transit == jl_stackovf_exception)
                         _resetstkoflw();
 #endif
                     i = jl_unbox_long(jl_exprarg(stmt,0))-1;

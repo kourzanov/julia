@@ -258,17 +258,18 @@ $(LLVM_LLDB_TAR): | $(SRCDIR)/srccache
 endif
 ifeq ($(BUILD_LLDB),1)
 $(LLVM_SRC_DIR)/tools/lldb:
-$(LLVM_SRC_DIR)/configure: $(LLVM_SRC_DIR)/tools/lldb
+$(LLVM_SRC_DIR)/CMakeLists.txt: $(LLVM_SRC_DIR)/tools/lldb
 endif
 
 # LLDB still relies on plenty of python 2.x infrastructure, without checking
+llvm_python_location=$(shell /usr/bin/env python2 -c 'import sys; print(sys.executable)')
 llvm_python_workaround=$(SRCDIR)/srccache/python2_path
 $(llvm_python_workaround):
 	mkdir -p $@
 	-python -c 'import sys; sys.exit(not sys.version_info > (3, 0))' && \
-	/usr/bin/python2 -c 'import sys; sys.exit(not sys.version_info < (3, 0))' && \
-	ln -sf /usr/bin/python2 "$@/python" && \
-	ln -sf /usr/bin/python2-config "$@/python-config"
+	/usr/bin/env python2 -c 'import sys; sys.exit(not sys.version_info < (3, 0))' && \
+	ln -sf $(llvm_python_location) "$@/python" && \
+	ln -sf $(llvm_python_location)-config "$@/python-config"
 LLVM_FLAGS += --with-python="$(shell $(SRCDIR)/tools/find_python2)"
 
 ifeq ($(BUILD_CUSTOM_LIBCXX),1)
@@ -277,13 +278,13 @@ ifeq ($(USEICC),1)
 LIBCXX_EXTRA_FLAGS := -Bstatic -lirc -Bdynamic
 endif
 
-$(LLVM_SRC_DIR)/projects/libcxx: $(LLVM_LIBCXX_TAR) | $(LLVM_SRC_DIR)/configure
+$(LLVM_SRC_DIR)/projects/libcxx: $(LLVM_LIBCXX_TAR) | $(LLVM_SRC_DIR)/CMakeLists.txt
 	([ ! -d $@ ] && \
 	git clone $(LLVM_GIT_URL_LIBCXX) $@  ) || \
 	(cd $@  && \
 	git pull --ff-only)
 $(LLVM_SRC_DIR)/projects/libcxx/.git/HEAD: | $(LLVM_SRC_DIR)/projects/libcxx/.git/HEAD
-$(LLVM_SRC_DIR)/projects/libcxxabi: $(LLVM_LIBCXXABI_TAR) | $(LLVM_SRC_DIR)/configure
+$(LLVM_SRC_DIR)/projects/libcxxabi: $(LLVM_LIBCXXABI_TAR) | $(LLVM_SRC_DIR)/CMakeLists.txt
 	([ ! -d $@ ] && \
 	git clone $(LLVM_GIT_URL_LIBCXXABI) $@ ) || \
 	(cd $@ && \
@@ -319,7 +320,7 @@ LIBCXX_DEPENDENCY := $(build_libdir)/libc++abi.so.1.0 $(build_libdir)/libc++.so.
 get-llvm: get-libcxx get-libcxxabi
 endif
 
-$(LLVM_SRC_DIR)/configure: $(LLVM_TAR) $(LLVM_CLANG_TAR) $(LLVM_COMPILER_RT_TAR) $(LLVM_LIBCXX_TAR) $(LLVM_LLDB_TAR)
+$(LLVM_SRC_DIR)/CMakeLists.txt: $(LLVM_TAR) $(LLVM_CLANG_TAR) $(LLVM_COMPILER_RT_TAR) $(LLVM_LIBCXX_TAR) $(LLVM_LLDB_TAR)
 ifneq ($(LLVM_CLANG_TAR),)
 	$(JLCHECKSUM) $(LLVM_CLANG_TAR)
 endif
@@ -406,11 +407,11 @@ endif # LLVM_VER
 LLVM_PATCH_PREV:=
 LLVM_PATCH_LIST:=
 define LLVM_PATCH
-$$(LLVM_SRC_DIR)/$1.patch-applied: $(LLVM_SRC_DIR)/configure | $$(SRCDIR)/patches/$1.patch $(LLVM_PATCH_PREV)
+$$(LLVM_SRC_DIR)/$1.patch-applied: | $$(LLVM_SRC_DIR)/CMakeLists.txt $$(SRCDIR)/patches/$1.patch $$(LLVM_PATCH_PREV)
 	cd $$(LLVM_SRC_DIR) && patch -p1 < $$(SRCDIR)/patches/$1.patch
 	echo 1 > $$@
 LLVM_PATCH_PREV := $$(LLVM_SRC_DIR)/$1.patch-applied
-LLVM_PATCH_LIST += $(LLVM_PATCH_PREV)
+LLVM_PATCH_LIST += $$(LLVM_PATCH_PREV)
 endef
 ifeq ($(LLVM_VER),3.3)
 $(eval $(call LLVM_PATCH,llvm-3.3))
@@ -430,23 +431,30 @@ $(eval $(call LLVM_PATCH,llvm-3.8.0_bindir))
 $(eval $(call LLVM_PATCH,llvm-D14260))
 $(eval $(call LLVM_PATCH,llvm-nodllalias))
 $(eval $(call LLVM_PATCH,llvm-D21271-instcombine-tbaa-3.7))
-else ifeq ($(LLVM_VER),3.8.0)
-$(eval $(call LLVM_PATCH,llvm-3.7.1_3))
+$(eval $(call LLVM_PATCH,llvm-win64-reloc-dwarf))
+else ifeq ($(LLVM_VER_SHORT),3.8)
+ifeq ($(LLVM_VER),3.8.0)
+$(eval $(call LLVM_PATCH,llvm-D17326_unpack_load))
+endif
+ifeq ($(LLVM_VER),3.8.1)
+$(eval $(call LLVM_PATCH,llvm-3.8.1-version))
+endif
+$(eval $(call LLVM_PATCH,llvm-3.7.1_3)) # Remove for 3.9
 $(eval $(call LLVM_PATCH,llvm-D14260))
-$(eval $(call LLVM_PATCH,llvm-3.8.0_bindir))
-$(eval $(call LLVM_PATCH,llvm-3.8.0_winshlib))
-$(eval $(call LLVM_PATCH,llvm-nodllalias))
+$(eval $(call LLVM_PATCH,llvm-3.8.0_bindir)) # Remove for 3.9
+$(eval $(call LLVM_PATCH,llvm-3.8.0_winshlib)) # Remove for 3.9
+$(eval $(call LLVM_PATCH,llvm-nodllalias)) # Remove for 3.9
 # Cygwin and openSUSE still use win32-threads mingw, https://llvm.org/bugs/show_bug.cgi?id=26365
 $(eval $(call LLVM_PATCH,llvm-3.8.0_threads))
 # fix replutil test on unix
-$(eval $(call LLVM_PATCH,llvm-D17165-D18583))
+$(eval $(call LLVM_PATCH,llvm-D17165-D18583)) # Remove for 3.9
 # Segfault for aggregate load
-$(eval $(call LLVM_PATCH,llvm-D17326_unpack_load))
-$(eval $(call LLVM_PATCH,llvm-D17712))
-$(eval $(call LLVM_PATCH,llvm-PR26180))
-$(eval $(call LLVM_PATCH,llvm-PR27046))
-$(eval $(call LLVM_PATCH,llvm-3.8.0_ppc64_SUBFC8))
-$(eval $(call LLVM_PATCH,llvm-D21271-instcombine-tbaa-3.8))
+$(eval $(call LLVM_PATCH,llvm-D17712)) # Remove for 3.9
+$(eval $(call LLVM_PATCH,llvm-PR26180)) # Remove for 3.9
+$(eval $(call LLVM_PATCH,llvm-PR27046)) # Remove for 3.9
+$(eval $(call LLVM_PATCH,llvm-3.8.0_ppc64_SUBFC8)) # Remove for 3.9
+$(eval $(call LLVM_PATCH,llvm-D21271-instcombine-tbaa-3.8)) # Remove for 3.9
+$(eval $(call LLVM_PATCH,llvm-win64-reloc-dwarf))
 endif # LLVM_VER
 
 ifeq ($(LLVM_VER),3.7.1)
@@ -460,7 +468,7 @@ endif
 
 ifeq ($(LLVM_USE_CMAKE),1)
 
-$(LLVM_BUILDDIR_withtype)/CMakeCache.txt: $(LLVM_SRC_DIR)/configure $(LLVM_PATCH_LIST) | $(llvm_python_workaround) $(LIBCXX_DEPENDENCY)
+$(LLVM_BUILDDIR_withtype)/CMakeCache.txt: $(LLVM_SRC_DIR)/CMakeLists.txt $(LLVM_PATCH_LIST) | $(llvm_python_workaround) $(LIBCXX_DEPENDENCY)
 	mkdir -p $(dir $@)
 	cd $(dir $@) && \
 		export PATH=$(llvm_python_workaround):$$PATH && \
@@ -477,11 +485,11 @@ $(LLVM_OBJ_SOURCE): $(LLVM_BUILDDIR_withtype)/CMakeCache.txt | $(llvm_python_wor
 
 else
 
-$(LLVM_BUILDDIR_withtype)/config.status: $(LLVM_SRC_DIR)/configure $(LLVM_PATCH_LIST) | $(llvm_python_workaround) $(LIBCXX_DEPENDENCY)
+$(LLVM_BUILDDIR_withtype)/config.status: $(LLVM_SRC_DIR)/CMakeLists.txt $(LLVM_PATCH_LIST) | $(llvm_python_workaround) $(LIBCXX_DEPENDENCY)
 	mkdir -p $(dir $@)
 	cd $(dir $@) && \
 		export PATH=$(llvm_python_workaround):$$PATH && \
-		$< $(CONFIGURE_COMMON) $(LLVM_CC) $(LLVM_FLAGS)
+		$(LLVM_SRC_DIR)/configure $(CONFIGURE_COMMON) $(LLVM_CC) $(LLVM_FLAGS)
 	touch -c $@
 
 $(LLVM_OBJ_SOURCE): $(LLVM_BUILDDIR_withtype)/config.status | $(llvm_python_workaround)
@@ -527,7 +535,7 @@ distclean-llvm:
 ifneq ($(LLVM_VER),svn)
 get-llvm: $(LLVM_TAR) $(LLVM_CLANG_TAR) $(LLVM_COMPILER_RT_TAR) $(LLVM_LIBCXX_TAR) $(LLVM_LLDB_TAR)
 else
-get-llvm: $(LLVM_SRC_DIR)/configure
+get-llvm: $(LLVM_SRC_DIR)/CMakeLists.txt
 endif
 ifeq ($(LLVM_USE_CMAKE),1)
 configure-llvm: $(LLVM_BUILDDIR_withtype)/CMakeCache.txt

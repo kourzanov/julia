@@ -19,7 +19,7 @@ for m in mt
     ln = getline(m)
     atarget = ambigs[ln]
     if isempty(atarget)
-        @test m.ambig == nothing
+        @test m.ambig === nothing
     else
         aln = Int[getline(a) for a in m.ambig]
         @test sort(aln) == atarget
@@ -42,6 +42,21 @@ end
 # Ensure it still works with potential inlining
 callambig(x, y) = ambig(x, y)
 @test_throws MethodError callambig(0x03, 4)
+
+# Printing ambiguity errors
+let err = try
+              ambig(0x03, 4)
+          catch _e_
+              _e_
+          end
+    io = IOBuffer()
+    Base.showerror(io, err)
+    lines = split(takebuf_string(io), '\n')
+    ambig_checkline(str) = startswith(str, "  ambig(x, y::Integer) at") ||
+                           startswith(str, "  ambig(x::Integer, y) at")
+    @test ambig_checkline(lines[2])
+    @test ambig_checkline(lines[3])
+end
 
 ## Other ways of accessing functions
 # Test that non-ambiguous cases work
@@ -153,5 +168,21 @@ let ms = methods(g16493, (Complex, Any))
     @test length(ms) == 1
     @test first(ms).sig == Tuple{typeof(g16493), Complex{TypeVar(:T, Any, true)}, Any}
 end
+
+# issue #17350
+module Ambig6
+immutable ScaleMinMax{To,From} end
+map1{To<:Union{Float32,Float64},From<:Real}(mapi::ScaleMinMax{To,From}, val::From) = 1
+map1{To<:Union{Float32,Float64},From<:Real}(mapi::ScaleMinMax{To,From}, val::Union{Real,Complex}) = 2
+end
+
+@test isempty(detect_ambiguities(Ambig6))
+
+module Ambig7
+immutable T end
+(::T)(x::Int8, y) = 1
+(::T)(x, y::Int8) = 2
+end
+@test length(detect_ambiguities(Ambig7)) == 1
 
 nothing

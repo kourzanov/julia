@@ -292,36 +292,7 @@ export call
 
 #15409
 # Deprecated definition of pmap with keyword arguments.
-# When this is removed the following definition needs to be uncommented
-# and added to pmap.jl
-# pmap(f, c...) = pmap(default_worker_pool(), f, c...)
-
-function pmap(f, c...; err_retry=nothing, err_stop=nothing, pids=nothing, kwargs...)
-    kwargs = Dict{Symbol, Any}(kwargs)
-
-    if err_retry != nothing
-        depwarn("err_retry is deprecated, use pmap(retry(f), c...).", :pmap)
-        if err_retry == true
-            f = retry(f)
-        end
-    end
-
-    if pids == nothing
-        p = default_worker_pool()
-    else
-        depwarn("pids is deprecated, use pmap(::WorkerPool, f, c...).", :pmap)
-        p = WorkerPool(pids)
-    end
-
-    if err_stop != nothing
-        depwarn("err_stop is deprecated, use pmap(f, c...; on_error = error_handling_func).", :pmap)
-        if err_stop == false
-            kwargs[:on_error] = e->e
-        end
-    end
-
-    pmap(p, f, c...; kwargs...)
-end
+# deprecation warnings are in pmap.jl
 
 # 15692
 typealias Func{N} Function
@@ -487,16 +458,6 @@ end
         String(a)
     end
 )
-
-if sizeof(Cwchar_t) == 2
-    @deprecate_binding WString UTF16String
-    @deprecate_binding wstring utf16
-    utf16(s::Cwstring) = utf16(convert(Ptr{Cwchar_t}, s))
-elseif sizeof(Cwchar_t) == 4
-    @deprecate_binding WString UTF32String
-    @deprecate_binding wstring utf32
-    utf32(s::Cwstring) = utf32(convert(Ptr{Cwchar_t}, s))
-end
 
 @deprecate ==(x::Char, y::Integer) UInt32(x) == y
 @deprecate ==(x::Integer, y::Char) x == UInt32(y)
@@ -681,7 +642,7 @@ function hist!{HT}(h::AbstractArray{HT}, v::AbstractVector, edg::AbstractVector;
     edg, h
 end
 
-hist(v::AbstractVector, edg::AbstractVector) = hist!(Array(Int, length(edg)-1), v, edg)
+hist(v::AbstractVector, edg::AbstractVector) = hist!(Array{Int,1}(length(edg)-1), v, edg)
 hist(v::AbstractVector, n::Integer) = hist(v,histrange(v,n))
 hist(v::AbstractVector) = hist(v,sturges(length(v)))
 
@@ -701,7 +662,7 @@ function hist!{HT}(H::AbstractArray{HT,2}, A::AbstractMatrix, edg::AbstractVecto
     edg, H
 end
 
-hist(A::AbstractMatrix, edg::AbstractVector) = hist!(Array(Int, length(edg)-1, size(A,2)), A, edg)
+hist(A::AbstractMatrix, edg::AbstractVector) = hist!(Array{Int,2}(length(edg)-1, size(A,2)), A, edg)
 hist(A::AbstractMatrix, n::Integer) = hist(A,histrange(A,n))
 hist(A::AbstractMatrix) = hist(A,sturges(size(A,1)))
 
@@ -729,7 +690,7 @@ function hist2d!{HT}(H::AbstractArray{HT,2}, v::AbstractMatrix,
 end
 
 hist2d(v::AbstractMatrix, edg1::AbstractVector, edg2::AbstractVector) =
-    hist2d!(Array(Int, length(edg1)-1, length(edg2)-1), v, edg1, edg2)
+    hist2d!(Array{Int,2}(length(edg1)-1, length(edg2)-1), v, edg1, edg2)
 
 hist2d(v::AbstractMatrix, edg::AbstractVector) = hist2d(v, edg, edg)
 
@@ -762,9 +723,25 @@ function checkbounds{N,T}(::Type{Bool}, sz::NTuple{N,Integer}, I1::T, I...)
 end
 
 function first(::Colon)
-    depwarn("first(:) is no longer unambiguous, call Base._first(:, A, dim)", :first)
+    depwarn("first(:) is deprecated, see http://docs.julialang.org/en/latest/devdocs/offset-arrays/", :first)
     1
 end
+function _first(i, A, d)
+    depwarn("_first is deprecated, see http://docs.julialang.org/en/latest/devdocs/offset-arrays/", :_first)
+    __first(i, A, d)
+end
+__first(::Colon, P, ::Colon) = first(linearindices(P))
+__first(i, P, ::Colon) = first(i)
+__first(::Colon, P, d) = first(indices(P, d))
+__first(i, P, d) = first(i)
+
+# Not exported, but deprecation may be useful just in case
+function Broadcast.check_broadcast_shape(sz::Dims, As::Union{AbstractArray,Number}...)
+    depwarn("check_broadcast_shape(size(A), B...) should be replaced with check_broadcast_shape(indices(A), B...)", :check_broadcast_shape)
+    Broadcast.check_broadcast_shape(map(OneTo, sz), As...)
+end
+
+@deprecate trailingsize{n}(A::AbstractArray, ::Type{Val{n}}) trailingsize(A, n)
 
 @deprecate slice view
 @deprecate sub view
@@ -774,6 +751,7 @@ function ereach{Tv,Ti}(A::SparseMatrixCSC{Tv,Ti}, k::Integer, parent::Vector{Ti}
     error(string("ereach(A, k, parent) now lives in package SuiteSparse.jl. Run",
         "Pkg.add(\"SuiteSparse\") to install SuiteSparse on Julia v0.5."))
 end
+export etree
 function etree{Tv,Ti}(A::SparseMatrixCSC{Tv,Ti}, postorder::Bool)
     error(string("etree(A[, post]) now lives in package SuiteSparse.jl. Run",
         "Pkg.add(\"SuiteSparse\") to install SuiteSparse on Julia v0.5."))
@@ -786,6 +764,15 @@ end
 function symperm{Tv,Ti}(A::SparseMatrixCSC{Tv,Ti}, pinv::Vector{Ti})
     error(string("symperm(A, pinv) now lives in package SuiteSparse.jl. Run,",
         "Pkg.add(\"SuiteSparse\") to install SuiteSparse on Julia v0.5."))
+end
+
+# Deprecate no-op transpose fallback. Please see #13171 and #17075.
+function transpose(x)
+    depwarn(string("the no-op `transpose` fallback is deprecated, and no more specific ",
+        "`transpose` method for $(typeof(x)) exists. Consider `permutedims(x, [2, 1])` ",
+        "or writing a specific `transpose(x::$(typeof(x)))` method if appropriate."),
+        :transpose)
+    return x
 end
 
 # During the 0.5 development cycle, do not add any deprecations below this line

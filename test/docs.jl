@@ -181,6 +181,10 @@ let f = @var(DocsTest.f)
     md = meta(DocsTest)[f]
     @test docstrings_equal(md.docs[Tuple{Any}], doc"f-1")
     @test docstrings_equal(md.docs[Tuple{Any,Any}], doc"f-2")
+    @test md.docs[Tuple{Any}].data[:binding] === f
+    @test md.docs[Tuple{Any}].data[:typesig] === Tuple{Any}
+    @test md.docs[Tuple{Any,Any}].data[:binding] === f
+    @test md.docs[Tuple{Any,Any}].data[:typesig] === Tuple{Any,Any}
 end
 
 let s = @var(DocsTest.s)
@@ -861,6 +865,18 @@ end
 let x = Binding(Main, :bindingdoesnotexist)
     @test defined(x) == false
     @test @var(bindingdoesnotexist) == x
+end
+
+let x = Binding(Main, :+)
+    @test parse(string(x)) == :(Base.:+)
+end
+
+let x = Binding(Base, :parse)
+    @test parse(string(x)) == :(Base.parse)
+end
+
+let x = Binding(Main, :⊕)
+    @test parse(string(x)) == :(⊕)
 end
 
 # Docs.helpmode tests: we test whether the correct expressions are being generated here,

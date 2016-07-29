@@ -843,6 +843,12 @@ let
     n3a = mapslices(x-> ones(1,6), c, [2,3])
     @test size(n1a) == (1,6,4) && size(n2a) == (1,3,6)  && size(n3a) == (2,1,6)
     @test size(n1) == (6,1,4) && size(n2) == (6,3,1)  && size(n3) == (2,6,1)
+
+    # mutating functions
+    o = ones(3, 4)
+    m = mapslices(x->fill!(x, 0), o, 2)
+    @test m == zeros(3, 4)
+    @test o == ones(3, 4)
 end
 
 
@@ -977,7 +983,7 @@ X = [ i+2j for i=1:5, j=1:5 ]
 @test X[2,3] == 8
 @test X[4,5] == 14
 @test isequal(ones(2,3) * ones(2,3)', [3. 3.; 3. 3.])
-@test isequal([ [1,2] for i=1:2, : ], [1 2; 1 2])
+# @test isequal([ [1,2] for i=1:2, : ], [1 2; 1 2])
 # where element type is a Union. try to confuse type inference.
 foo32_64(x) = (x<2) ? Int32(x) : Int64(x)
 boo32_64() = [ foo32_64(i) for i=1:2 ]
@@ -1042,6 +1048,10 @@ A = [[i i; i i] for i=1:2]
 A = [1,2]
 @test append!(A, A) == [1,2,1,2]
 @test prepend!(A, A) == [1,2,1,2,1,2,1,2]
+
+A = [1,2]
+s = Set([1,2,3])
+@test sort(append!(A, s)) == [1,1,2,2,3]
 
 # cases where shared arrays can/can't be grown
 A = [1 3;2 4]
@@ -1208,24 +1218,37 @@ a = ones(5,0)
 b = view(a, :, :)
 @test mdsum(b) == 0
 
-a = copy(reshape(1:60, 3, 4, 5))
-@test a[CartesianIndex{3}(2,3,4)] == 44
-a[CartesianIndex{3}(2,3,3)] = -1
-@test a[CartesianIndex{3}(2,3,3)] == -1
-@test a[2,CartesianIndex{2}(3,4)] == 44
-a[1,CartesianIndex{2}(3,4)] = -2
-@test a[1,CartesianIndex{2}(3,4)] == -2
-@test a[CartesianIndex{1}(2),3,CartesianIndex{1}(4)] == 44
-a[CartesianIndex{1}(2),3,CartesianIndex{1}(3)] = -3
-@test a[CartesianIndex{1}(2),3,CartesianIndex{1}(3)] == -3
+for a in (copy(reshape(1:60, 3, 4, 5)),
+          view(copy(reshape(1:60, 3, 4, 5)), 1:3, :, :))
+    @test a[CartesianIndex{3}(2,3,4)] == 44
+    a[CartesianIndex{3}(2,3,3)] = -1
+    @test a[CartesianIndex{3}(2,3,3)] == -1
+    @test a[2,CartesianIndex{2}(3,4)] == 44
+    a[1,CartesianIndex{2}(3,4)] = -2
+    @test a[1,CartesianIndex{2}(3,4)] == -2
+    @test a[CartesianIndex{1}(2),3,CartesianIndex{1}(4)] == 44
+    a[CartesianIndex{1}(2),3,CartesianIndex{1}(3)] = -3
+    @test a[CartesianIndex{1}(2),3,CartesianIndex{1}(3)] == -3
+    @test a[:, :, CartesianIndex((1,))] == a[:,:,1]
+    @test a[CartesianIndex((1,)), [1,2], :] == a[1,[1,2],:]
+    @test a[CartesianIndex((2,)), 3:4, :] == a[2,3:4,:]
+    @test a[[CartesianIndex(1,3),CartesianIndex(2,4)],3:3] == reshape([a[1,3,3]; a[2,4,3]], 2, 1)
+    @test_throws BoundsError a[[CartesianIndex(1,5),CartesianIndex(2,4)],3:3]
+    @test_throws BoundsError a[1:4, [CartesianIndex(1,3),CartesianIndex(2,4)]]
+end
 
-a = view(zeros(3, 4, 5), :, :, :)
-a[CartesianIndex{3}(2,3,3)] = -1
-@test a[CartesianIndex{3}(2,3,3)] == -1
-a[1,CartesianIndex{2}(3,4)] = -2
-@test a[1,CartesianIndex{2}(3,4)] == -2
-a[CartesianIndex{1}(2),3,CartesianIndex{1}(3)] = -3
-@test a[CartesianIndex{1}(2),3,CartesianIndex{1}(3)] == -3
+for a in (view(zeros(3, 4, 5), :, :, :),
+          view(zeros(3, 4, 5), 1:3, :, :))
+    a[CartesianIndex{3}(2,3,3)] = -1
+    @test a[CartesianIndex{3}(2,3,3)] == -1
+    a[1,CartesianIndex{2}(3,4)] = -2
+    @test a[1,CartesianIndex{2}(3,4)] == -2
+    a[CartesianIndex{1}(2),3,CartesianIndex{1}(3)] = -3
+    @test a[CartesianIndex{1}(2),3,CartesianIndex{1}(3)] == -3
+    a[[CartesianIndex(1,3),CartesianIndex(2,4)],3:3] = -4
+    @test a[1,3,3] == -4
+    @test a[2,4,3] == -4
+end
 
 I1 = CartesianIndex((2,3,0))
 I2 = CartesianIndex((-1,5,2))
@@ -1342,7 +1365,7 @@ end
 
 # PR #11080
 let x = fill(0.9, 1000)
-    @test_approx_eq prod(x) cumprod(x)[end]
+    @test prod(x) ≈ cumprod(x)[end]
 end
 
 #binary ops on bool arrays
@@ -1404,7 +1427,7 @@ b = rand(6,7)
 # return type declarations (promote_op)
 module RetTypeDecl
     using Base.Test
-    import Base: +, *, .*, zero
+    import Base: +, *, .*, convert
 
     immutable MeterUnits{T,P} <: Number
         val::T
@@ -1418,11 +1441,8 @@ module RetTypeDecl
     (*){T,pow}(x::Int, y::MeterUnits{T,pow}) = MeterUnits{typeof(x*one(T)),pow}(x*y.val)
     (*){T}(x::MeterUnits{T,1}, y::MeterUnits{T,1}) = MeterUnits{T,2}(x.val*y.val)
     (.*){T}(x::MeterUnits{T,1}, y::MeterUnits{T,1}) = MeterUnits{T,2}(x.val*y.val)
-    zero{T,pow}(x::MeterUnits{T,pow}) = MeterUnits{T,pow}(zero(T))
-
-    Base.promote_op{R,S}(::typeof(+), ::Type{MeterUnits{R,1}}, ::Type{MeterUnits{S,1}}) = MeterUnits{promote_type(R,S),1}
+    convert{T,pow}(::Type{MeterUnits{T,pow}}, y::Real) = MeterUnits{T,pow}(convert(T,y))
     Base.promote_op{R,S}(::typeof(*), ::Type{MeterUnits{R,1}}, ::Type{MeterUnits{S,1}}) = MeterUnits{promote_type(R,S),2}
-    Base.promote_op{R,S}(::typeof(.*), ::Type{MeterUnits{R,1}}, ::Type{MeterUnits{S,1}}) = MeterUnits{promote_type(R,S),2}
 
     @test @inferred(m+[m,m]) == [m+m,m+m]
     @test @inferred([m,m]+m) == [m+m,m+m]
@@ -1437,9 +1457,15 @@ A = 1:5
 B = 1.5:5.5
 @test A + B == 2.5:2.0:10.5
 
-#slice dim error
-A = zeros(5,5)
-@test_throws ArgumentError slicedim(A,0,1)
+# slicedim
+for A in (reshape(collect(1:20), 4, 5),
+          reshape(1:20, 4, 5))
+    @test slicedim(A, 1, 2) == collect(2:4:20)
+    @test slicedim(A, 2, 2) == collect(5:8)
+    @test_throws ArgumentError slicedim(A,0,1)
+    @test slicedim(A, 3, 1) == A
+    @test_throws BoundsError slicedim(A, 3, 2)
+end
 
 ###
 ### LinearSlow workout
@@ -1657,4 +1683,23 @@ let A = zeros(3,3)
     @test size(A[:,0x1:0x2]) == (3, 2)
     @test size(A[:,UInt(1):UInt(2)]) == (3,2)
     @test size(similar(A, UInt(3), 0x3)) == size(similar(A, (UInt(3), 0x3))) == (3,3)
+end
+
+# issue 17254
+module AutoRetType
+
+using Base.Test
+
+immutable Foo end
+for op in (:+, :*, :÷, :%, :<<, :>>, :-, :/, :\, ://, :^)
+    @eval import Base.$(op)
+    @eval $(op)(::Foo, ::Foo) = Foo()
+end
+A = fill(Foo(), 10, 10)
+@test typeof(A+A) == Matrix{Foo}
+@test typeof(A-A) == Matrix{Foo}
+for op in (:.+, :.*, :.÷, :.%, :.<<, :.>>, :.-, :./, :.\, :.//, :.^)
+    @eval @test typeof($(op)(A,A)) == Matrix{Foo}
+end
+
 end

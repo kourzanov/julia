@@ -35,6 +35,7 @@ cache:
   - x86_64-4.9.2-release-win32-seh-rt_v4-rev3.7z
   - llvm-3.7.1-i686-w64-mingw32-juliadeps-r09.7z
   - llvm-3.7.1-x86_64-w64-mingw32-juliadeps-r09.7z
+  - usr/bin/busybox.exe
 
 build_script:
 # If there's a newer build queued for the same PR, cancel this one
@@ -53,6 +54,6 @@ build_script:
 
 test_script:
   - usr\bin\julia -e "versioninfo()"
-  - copy usr\lib\julia\sys.ji local.ji && usr\bin\julia -J local.ji -e "true" && del local.ji
+  - usr\bin\julia --precompiled=no -e "true"
   - cd test && ..\usr\bin\julia --check-bounds=yes runtests.jl all &&
       ..\usr\bin\julia --check-bounds=yes runtests.jl libgit2-online pkg

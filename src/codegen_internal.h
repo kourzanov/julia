@@ -12,6 +12,7 @@ void jl_dump_asm_internal(uintptr_t Fptr, size_t Fsize, int64_t slide,
 #ifndef USE_MCJIT
                           std::vector<JITEvent_EmittedFunctionDetails::LineStart> lineinfo,
 #endif
+                          const object::ObjectFile *object,
                           llvm::DIContext *context,
 #ifdef LLVM37
                           raw_ostream &rstream
@@ -34,11 +35,6 @@ extern bool jl_dylib_DI_for_fptr(size_t pointer, const object::ObjectFile **obje
         bool onlySysImg, bool *isSysImg, void **saddr, char **name, char **filename);
 
 #ifdef USE_ORCJIT
-JL_DLLEXPORT void ORCNotifyObjectEmitted(JITEventListener *Listener,
-                                         const object::ObjectFile &obj,
-                                         const object::ObjectFile &debugObj,
-                                         const RuntimeDyld::LoadedObjectInfo &L,
-                                         RTDyldMemoryManager *memmgr);
 #ifdef _OS_WINDOWS_
 void *lookupWriteAddressFor(RTDyldMemoryManager *memmgr, void *rt_addr);
 #endif

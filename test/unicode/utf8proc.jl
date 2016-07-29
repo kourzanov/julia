@@ -75,7 +75,7 @@ end
 @test normalize_string("\U1e9b\U0323", :NFKD) == "s\U0323\U0307"
 @test normalize_string("\U1e9b\U0323", :NFKC) == "\U1e69"
 
-#issue #5939  uft8proc/libmojibake character predicates
+#issue #5939  uft8proc character predicates
 let
     alower=['a', 'd', 'j', 'y', 'z']
     ulower=['α', 'β', 'γ', 'δ', 'ф', 'я']
@@ -234,7 +234,7 @@ let grphtest = (("b\u0300lahβlahb\u0302láh", ["b\u0300","l","a","h",
                                                 "\U1d4c1\u0300"]),
                 ("x",["x"]),
                 ("abc",["a","b","c"]))
-    for T in (String,utf16,utf32)
+    for T in (String,GenericString)
         for nf in (:NFC, :NFD)
             for (s, g) in grphtest
                 s_ = T(normalize_string(s, nf))

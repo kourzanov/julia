@@ -87,7 +87,7 @@ do this:
 2. To provide extra type information to the compiler, which can then
    improve performance in some cases
 
-When appended to an expression computing a *value*, the ``::``
+When appended to an expression computing a value, the ``::``
 operator is read as "is an instance of". It can be used
 anywhere to assert that the value of the expression on the left is an
 instance of the type on the right. When the type on the right is
@@ -102,19 +102,17 @@ exception is thrown, otherwise, the left-hand value is returned:
 
     julia> (1+2)::AbstractFloat
     ERROR: TypeError: typeassert: expected AbstractFloat, got Int64
+     ...
 
     julia> (1+2)::Int
     3
 
 This allows a type assertion to be attached to any expression
-in-place. The most common usage of ``::`` as an assertion is in
-function/methods signatures, such as ``f(x::Int8) = ...`` (see
-:ref:`man-methods`).
+in-place.
 
-
-When appended to a *variable* in a statement context, the ``::``
-operator means something a bit
-different: it declares the variable to always have the specified type,
+When appended to a variable on the left-hand side of an assignment,
+or as part of a ``local`` declaration, the ``::`` operator means something
+a bit different: it declares the variable to always have the specified type,
 like a type declaration in a statically-typed language such as C. Every
 value assigned to the variable will be converted to the declared type
 using :func:`convert`:
@@ -122,8 +120,8 @@ using :func:`convert`:
 .. doctest:: foo-func
 
     julia> function foo()
-             x::Int8 = 100
-             x
+               x::Int8 = 100
+               x
            end
     foo (generic function with 1 method)
 
@@ -137,9 +135,8 @@ This feature is useful for avoiding performance "gotchas" that could
 occur if one of the assignments to a variable changed its type
 unexpectedly.
 
-The "declaration" behavior only occurs in specific contexts::
+This "declaration" behavior only occurs in specific contexts::
 
-    x::Int8        # a variable by itself
     local x::Int8  # in a local declaration
     x::Int8 = 10   # as the left-hand side of an assignment
 
@@ -250,7 +247,7 @@ An important use of abstract types is to provide default implementations for
 concrete types. To give a simple example, consider::
 
     function myplus(x,y)
-     x+y
+        x+y
     end
 
 The first thing to note is that the above argument declarations are equivalent
@@ -265,7 +262,7 @@ arguments based on the generic function given above, i.e., it implicitly
 defines and compiles::
 
     function myplus(x::Int,y::Int)
-     x+y
+        x+y
     end
 
 and finally, it invokes this specific method.
@@ -377,9 +374,9 @@ operator:
 .. doctest::
 
     julia> type Foo
-             bar
-             baz::Int
-             qux::Float64
+               bar
+               baz::Int
+               qux::Float64
            end
 
 Fields with no type annotation default to :obj:`Any`, and can accordingly
@@ -411,7 +408,8 @@ However, the value for ``baz`` must be convertible to :class:`Int`:
 
     julia> Foo((), 23.5, 1)
     ERROR: InexactError()
-     in call at none:2
+     in Foo(::Tuple{}, ::Float64, ::Int64) at ./none:2
+     ...
 
 You may find a list of field names using the ``fieldnames`` function.
 
@@ -442,7 +440,7 @@ You can also change the values as one would expect:
 .. doctest::
 
     julia> foo.qux = 2
-    2.0
+    2
 
     julia> foo.bar = 1//2
     1//2
@@ -475,8 +473,8 @@ It is also possible to define *immutable* composite types by using
 the keyword ``immutable`` instead of ``type``::
 
     immutable Complex
-      real::Float64
-      imag::Float64
+        real::Float64
+        imag::Float64
     end
 
 Such types behave much like other composite types, except that instances
@@ -618,16 +616,16 @@ Parametric Composite Types
 
     abstract Pointy{T}
     type Point{T} <: Pointy{T}
-      x::T
-      y::T
+        x::T
+        y::T
     end
 
 Type parameters are introduced immediately after the type name,
 surrounded by curly braces::
 
     type Point{T}
-      x::T
-      y::T
+        x::T
+        y::T
     end
 
 This declaration defines a new parametric type, ``Point{T}``, holding
@@ -659,7 +657,7 @@ However, ``Point`` itself is also a valid type object:
     Point{T}
 
 Here the ``T`` is the dummy type symbol used in the original declaration
-of ``Point``. What does ``Point`` by itself mean? It is an abstract type
+of ``Point``. What does ``Point`` by itself mean? It is a type
 that contains all the specific instances ``Point{Float64}``,
 ``Point{AbstractString}``, etc.:
 
@@ -765,9 +763,15 @@ each field:
     ERROR: MethodError: Cannot `convert` an object of type Float64 to an object of type Point{Float64}
     This may have arisen from a call to the constructor Point{Float64}(...),
     since type constructors fall back to convert methods.
+     in Point{Float64}(::Float64) at ./sysimg.jl:53
+     ...
 
     julia> Point{Float64}(1.0,2.0,3.0)
     ERROR: MethodError: no method matching Point{Float64}(::Float64, ::Float64, ::Float64)
+    Closest candidates are:
+      Point{Float64}{T}(::Any, ::Any)
+      Point{Float64}{T}(::Any)
+     ...
 
 Only one default constructor is generated for parametric types, since
 overriding it is not possible. This constructor accepts any arguments
@@ -801,6 +805,7 @@ isn't the case, the constructor will fail with a :exc:`MethodError`:
 
     julia> Point(1,2.5)
     ERROR: MethodError: no method matching Point{T}(::Int64, ::Float64)
+    ...
 
 Constructor methods to appropriately handle such mixed cases can be
 defined, but that will not be discussed until later on in
@@ -844,8 +849,8 @@ example, have declared ``Point{T}`` to be a subtype of ``Pointy{T}`` as
 follows::
 
     type Point{T} <: Pointy{T}
-      x::T
-      y::T
+        x::T
+        y::T
     end
 
 Given such a declaration, for each choice of ``T``, we have ``Point{T}``
@@ -874,7 +879,7 @@ Consider if we create a point-like implementation that only requires a
 single coordinate because the point is on the diagonal line *x = y*::
 
     type DiagPoint{T} <: Pointy{T}
-      x::T
+        x::T
     end
 
 Now both ``Point{Float64}`` and ``DiagPoint{Float64}`` are
@@ -909,16 +914,18 @@ subtypes of :obj:`Real`:
 
     julia> Pointy{AbstractString}
     ERROR: TypeError: Pointy: in T, expected T<:Real, got Type{AbstractString}
+     ...
 
     julia> Pointy{1}
     ERROR: TypeError: Pointy: in T, expected T<:Real, got Int64
+     ...
 
 Type parameters for parametric composite types can be restricted in the
 same manner::
 
     type Point{T<:Real} <: Pointy{T}
-      x::T
-      y::T
+        x::T
+        y::T
     end
 
 To give a real-world example of how all this parametric type
@@ -927,8 +934,8 @@ machinery can be useful, here is the actual definition of Julia's
 for simplicity), representing an exact ratio of integers::
 
     immutable Rational{T<:Integer} <: Real
-      num::T
-      den::T
+        num::T
+        den::T
     end
 
 It only makes sense to take ratios of integer values, so the parameter
@@ -947,8 +954,8 @@ of one field. For example, a 2-element tuple type resembles the following
 immutable type::
 
     immutable Tuple2{A,B}
-      a::A
-      b::B
+        a::A
+        b::B
     end
 
 However, there are three key differences:
@@ -1277,16 +1284,21 @@ functions in Julia's standard library accept ``Val`` types as
 arguments, and you can also use it to write your own functions.  For
 example:
 
-.. doctest::
+.. testsetup:: value-types
+
+    firstlast(::Type{Val{true}}) = "First";
+    firstlast(::Type{Val{false}}) = "Last";
+
+.. doctest:: value-types
 
     firstlast(::Type{Val{true}}) = "First"
     firstlast(::Type{Val{false}}) = "Last"
 
-    julia> println(firstlast(Val{true}))
-    First
+    julia> firstlast(Val{true})
+    "First"
 
-    julia> println(firstlast(Val{false}))
-    Last
+    julia> firstlast(Val{false})
+    "Last"
 
 For consistency across Julia, the call site should always pass a
 ``Val`` *type* rather than creating an *instance*, i.e., use
@@ -1342,13 +1354,13 @@ To construct an object representing a non-missing value of type ``T``, use the
 .. doctest::
 
     julia> x1 = Nullable(1)
-    Nullable(1)
+    Nullable{Int64}(1)
 
     julia> x2 = Nullable(1.0)
-    Nullable(1.0)
+    Nullable{Float64}(1.0)
 
     julia> x3 = Nullable([1, 2, 3])
-    Nullable([1,2,3])
+    Nullable{Array{Int64,1}}([1,2,3])
 
 Note the core distinction between these two ways of constructing a :obj:`Nullable`
 object: in one style, you provide a type, ``T``, as a function parameter; in
@@ -1376,7 +1388,8 @@ You can safely access the value of a :obj:`Nullable` object using :func:`get`:
 
     julia> get(Nullable{Float64}())
     ERROR: NullException()
-     in get(::Nullable{Float64}) at ./nullable.jl:45
+     in get(::Nullable{Float64}) at ./nullable.jl:62
+     ...
 
     julia> get(Nullable(1.0))
     1.0
@@ -1392,10 +1405,10 @@ default value as a second argument to :func:`get`:
 
 .. doctest::
 
-    julia> get(Nullable{Float64}(), 0)
+    julia> get(Nullable{Float64}(), 0.0)
     0.0
 
-    julia> get(Nullable(1.0), 0)
+    julia> get(Nullable(1.0), 0.0)
     1.0
 
 Note that this default value will automatically be converted to the type of

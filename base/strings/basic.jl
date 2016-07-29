@@ -69,6 +69,7 @@ start(s::AbstractString) = 1
 done(s::AbstractString,i) = (i > endof(s))
 getindex(s::AbstractString, i::Int) = next(s,i)[1]
 getindex(s::AbstractString, i::Integer) = s[Int(i)]
+getindex(s::AbstractString, i::Colon) = s
 getindex{T<:Integer}(s::AbstractString, r::UnitRange{T}) = s[Int(first(r)):Int(last(r))]
 # TODO: handle other ranges with stride ±1 specially?
 getindex(s::AbstractString, v::AbstractVector) =
@@ -128,9 +129,11 @@ isless(a::AbstractString, b::AbstractString) = cmp(a,b) < 0
 cmp(a::String, b::String) = lexcmp(a.data, b.data)
 cmp(a::Symbol, b::Symbol) = Int(sign(ccall(:strcmp, Int32, (Cstring, Cstring), a, b)))
 
-==(a::String, b::String) =
-    (len = length(a.data)) == length(b.data) &&
-    ccall(:memcmp, Int32, (Ptr{UInt8}, Ptr{UInt8}, UInt), a.data, b.data, len) == 0
+function ==(a::String, b::String)
+    len = length(a.data)
+    return len == length(b.data) &&
+        0 == ccall(:memcmp, Int32, (Ptr{UInt8}, Ptr{UInt8}, UInt), a.data, b.data, len)
+end
 isless(a::Symbol, b::Symbol) = cmp(a,b) < 0
 
 ## Generic validation functions ##
@@ -287,6 +290,7 @@ byte_string_classify(s::String) = byte_string_classify(s.data)
     # 2: valid UTF-8
 
 isvalid(::Type{String}, s::Union{Vector{UInt8},String}) = byte_string_classify(s) != 0
+isvalid(s::String) = isvalid(String, s)
 
 ## uppercase and lowercase transformations ##
 uppercase(s::AbstractString) = map(uppercase, s)

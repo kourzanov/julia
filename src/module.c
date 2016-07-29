@@ -18,14 +18,15 @@ jl_module_t *jl_top_module=NULL;
 
 JL_DLLEXPORT jl_module_t *jl_new_module(jl_sym_t *name)
 {
-    jl_module_t *m = (jl_module_t*)jl_gc_allocobj(sizeof(jl_module_t));
-    jl_set_typeof(m, jl_module_type);
+    jl_ptls_t ptls = jl_get_ptls_states();
+    jl_module_t *m = (jl_module_t*)jl_gc_alloc(ptls, sizeof(jl_module_t),
+                                               jl_module_type);
     JL_GC_PUSH1(&m);
     assert(jl_is_symbol(name));
     m->name = name;
     m->parent = NULL;
     m->istopmod = 0;
-    m->uuid = uv_now(uv_default_loop());
+    m->uuid = jl_hrtime();
     m->counter = 0;
     htable_new(&m->bindings, 0);
     arraylist_new(&m->usings, 0);
@@ -57,9 +58,10 @@ JL_DLLEXPORT jl_value_t *jl_f_new_module(jl_sym_t *name, uint8_t std_imports)
 
 JL_DLLEXPORT void jl_set_istopmod(uint8_t isprimary)
 {
-    jl_current_module->istopmod = 1;
+    jl_ptls_t ptls = jl_get_ptls_states();
+    ptls->current_module->istopmod = 1;
     if (isprimary)
-        jl_top_module = jl_current_module;
+        jl_top_module = ptls->current_module;
 }
 
 JL_DLLEXPORT uint8_t jl_istopmod(jl_module_t *mod)
@@ -69,8 +71,9 @@ JL_DLLEXPORT uint8_t jl_istopmod(jl_module_t *mod)
 
 static jl_binding_t *new_binding(jl_sym_t *name)
 {
+    jl_ptls_t ptls = jl_get_ptls_states();
     assert(jl_is_symbol(name));
-    jl_binding_t *b = (jl_binding_t*)allocb(sizeof(jl_binding_t));
+    jl_binding_t *b = (jl_binding_t*)jl_gc_alloc_buf(ptls, sizeof(jl_binding_t));
     b->name = name;
     b->value = NULL;
     b->owner = NULL;
@@ -449,7 +452,8 @@ JL_DLLEXPORT void jl_set_const(jl_module_t *m, jl_sym_t *var, jl_value_t *val)
 
 JL_DLLEXPORT int jl_is_const(jl_module_t *m, jl_sym_t *var)
 {
-    if (m == NULL) m = jl_current_module;
+    jl_ptls_t ptls = jl_get_ptls_states();
+    if (m == NULL) m = ptls->current_module;
     jl_binding_t *b = jl_get_binding(m, var);
     return b && b->constp;
 }
@@ -529,13 +533,15 @@ JL_DLLEXPORT void jl_declare_constant(jl_binding_t *b)
 
 JL_DLLEXPORT jl_value_t *jl_get_current_module(void)
 {
-    return (jl_value_t*)jl_current_module;
+    jl_ptls_t ptls = jl_get_ptls_states();
+    return (jl_value_t*)ptls->current_module;
 }
 
 JL_DLLEXPORT void jl_set_current_module(jl_value_t *m)
 {
+    jl_ptls_t ptls = jl_get_ptls_states();
     assert(jl_typeis(m, jl_module_type));
-    jl_current_module = (jl_module_t*)m;
+    ptls->current_module = (jl_module_t*)m;
 }
 
 JL_DLLEXPORT jl_value_t *jl_module_usings(jl_module_t *m)
@@ -557,12 +563,12 @@ JL_DLLEXPORT jl_value_t *jl_module_names(jl_module_t *m, int all, int imported)
     JL_GC_PUSH1(&a);
     size_t i;
     void **table = m->bindings.table;
-    for(i=1; i < m->bindings.size; i+=2) {
+    for (i = 1; i < m->bindings.size; i+=2) {
         if (table[i] != HT_NOTFOUND) {
             jl_binding_t *b = (jl_binding_t*)table[i];
             int hidden = jl_symbol_name(b->name)[0]=='#';
             if ((b->exportp || ((imported || b->owner == m) && (all || m == jl_main_module))) &&
-                !b->deprecated && !hidden) {
+                (all || (!b->deprecated && !hidden))) {
                 jl_array_grow_end(a, 1);
                 //XXX: change to jl_arrayset if array storage allocation for Array{Symbols,1} changes:
                 jl_array_ptr_set(a, jl_array_dim0(a)-1, (jl_value_t*)b->name);
@@ -576,33 +582,6 @@ JL_DLLEXPORT jl_value_t *jl_module_names(jl_module_t *m, int all, int imported)
 JL_DLLEXPORT jl_sym_t *jl_module_name(jl_module_t *m) { return m->name; }
 JL_DLLEXPORT jl_module_t *jl_module_parent(jl_module_t *m) { return m->parent; }
 JL_DLLEXPORT uint64_t jl_module_uuid(jl_module_t *m) { return m->uuid; }
-
-jl_function_t *jl_module_get_initializer(jl_module_t *m)
-{
-    jl_value_t *f = jl_get_global(m, jl_symbol("__init__"));
-    if (f == NULL /*|| !jl_is_function(f)*/)
-        return NULL;
-    return (jl_function_t*)f;
-}
-
-JL_DLLEXPORT void jl_module_run_initializer(jl_module_t *m)
-{
-    jl_function_t *f = jl_module_get_initializer(m);
-    if (f == NULL)
-        return;
-    JL_TRY {
-        jl_apply(&f, 1);
-    }
-    JL_CATCH {
-        if (jl_initerror_type == NULL) {
-            jl_rethrow();
-        }
-        else {
-            jl_rethrow_other(jl_new_struct(jl_initerror_type, m->name,
-                                           jl_exception_in_transit));
-        }
-    }
-}
 
 int jl_is_submodule(jl_module_t *child, jl_module_t *parent)
 {

@@ -148,7 +148,7 @@ function fetch{T<:AbstractString, P<:AbstractPayload}(repo::GitRepo;
                                   remote::AbstractString="origin",
                                   remoteurl::AbstractString="",
                                   refspecs::Vector{T}=AbstractString[],
-                                  payload::Nullable{P}=Nullable{AbstractPayload}())
+                                  payload::Nullable{P}=Nullable{AbstractPayload}(SSHCredentials()))
     rmt = if isempty(remoteurl)
         get(GitRemote, repo, remote)
     else
@@ -168,7 +168,7 @@ function push{T<:AbstractString, P<:AbstractPayload}(repo::GitRepo;
               remoteurl::AbstractString="",
               refspecs::Vector{T}=AbstractString[],
               force::Bool=false,
-              payload::Nullable{P}=Nullable{AbstractPayload}())
+              payload::Nullable{P}=Nullable{AbstractPayload}(SSHCredentials()))
     rmt = if isempty(remoteurl)
         get(GitRemote, repo, remote)
     else
@@ -295,9 +295,9 @@ function clone{P<:AbstractPayload}(repo_url::AbstractString, repo_path::Abstract
                branch::AbstractString="",
                isbare::Bool = false,
                remote_cb::Ptr{Void} = C_NULL,
-               payload::Nullable{P}=Nullable{AbstractPayload}())
+               payload::Nullable{P}=Nullable{AbstractPayload}(SSHCredentials()))
     # setup clone options
-    lbranch = Base.cconvert(Cstring, String(branch))
+    lbranch = Base.cconvert(Cstring, branch)
     fetch_opts=FetchOptions(callbacks = RemoteCallbacks(credentials_cb(), payload))
     clone_opts = CloneOptions(
                 bare = Cint(isbare),
@@ -310,19 +310,21 @@ end
 
 """ git reset [<committish>] [--] <pathspecs>... """
 function reset!(repo::GitRepo, committish::AbstractString, pathspecs::AbstractString...)
-    target_obj = isempty(committish) ? Nullable{GitAnyObject}() :
-                                       Nullable(revparse(repo, committish))
+    obj = revparse(repo, !isempty(committish) ? committish : Consts.HEAD_FILE)
+    # do not remove entries in the index matching the provided pathspecs with empty target commit tree
+    obj === nothing && throw(GitError(Error.Object, Error.ERROR, "`$committish` not found"))
     try
-        reset!(repo, target_obj, pathspecs...)
+        reset!(repo, Nullable(obj), pathspecs...)
     finally
-        !isnull(target_obj) && finalize(Base.get(target_obj))
+        finalize(obj)
     end
 end
 
 """ git reset [--soft | --mixed | --hard] <commit> """
 function reset!(repo::GitRepo, commit::Oid, mode::Cint = Consts.RESET_MIXED)
     obj = get(GitAnyObject, repo, commit)
-    obj === nothing && return
+    # object must exist for reset
+    obj === nothing && throw(GitError(Error.Object, Error.ERROR, "Commit `$(string(commit))` object not found"))
     try
         reset!(repo, obj, mode)
     finally
@@ -520,16 +522,19 @@ function __init__()
         ccall((:git_libgit2_shutdown, :libgit2), Cint, ())
     end
 
-    # Look for OpenSSL env variable for CA bundle
-    cert_loc = if "SSL_CERT_DIR" in keys(ENV)
-        ENV["SSL_CERT_DIR"]
-    elseif "SSL_CERT_FILE" in keys(ENV)
-        ENV["SSL_CERT_FILE"]
-    else
-        # If we have a bundled ca cert file, point libgit2 at that so SSL connections work.
-        abspath(ccall(:jl_get_julia_home, Any, ()),Base.DATAROOTDIR,"julia","cert.pem")
+    # Look for OpenSSL env variable for CA bundle (linux only)
+    # windows and macOS use the OS native security backends
+    @static if is_linux()
+        cert_loc = if "SSL_CERT_DIR" in keys(ENV)
+            ENV["SSL_CERT_DIR"]
+        elseif "SSL_CERT_FILE" in keys(ENV)
+            ENV["SSL_CERT_FILE"]
+        else
+            # If we have a bundled ca cert file, point libgit2 at that so SSL connections work.
+            abspath(ccall(:jl_get_julia_home, Any, ()),Base.DATAROOTDIR,"julia","cert.pem")
+        end
+        set_ssl_cert_locations(cert_loc)
     end
-    set_ssl_cert_locations(cert_loc)
 end
 
 

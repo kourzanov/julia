@@ -1,4 +1,5 @@
 # This file is a part of Julia. License is MIT: http://julialang.org/license
+
 import .Serializer: serialize_cycle, serialize_type, writetag, UNDEFREF_TAG
 
 type SharedArray{T,N} <: DenseArray{T,N}
@@ -22,7 +23,9 @@ type SharedArray{T,N} <: DenseArray{T,N}
     # a subset of workers.
     loc_subarr_1d::SubArray{T,1,Array{T,1},Tuple{UnitRange{Int}},true}
 
-    SharedArray(d,p,r,sn) = new(d,p,r,sn)
+    function SharedArray(d,p,r,sn,s)
+        new(d,p,r,sn,s,0,view(Array{T}(ntuple(d->0,N)), 1:0))
+    end
 end
 
 (::Type{SharedArray{T}}){T,N}(d::NTuple{N,Int}; kwargs...) =
@@ -50,16 +53,14 @@ computation with the master process acting as a driver.
 If an `init` function of the type `initfn(S::SharedArray)` is specified, it is called on all
 the participating workers.
 """
-function SharedArray(T::Type, dims::NTuple; init=false, pids=Int[])
-    N = length(dims)
-
+function SharedArray{T,N}(::Type{T}, dims::Dims{N}; init=false, pids=Int[])
     isbits(T) || throw(ArgumentError("type of SharedArray elements must be bits types, got $(T)"))
 
     pids, onlocalhost = shared_pids(pids)
 
     local shm_seg_name = ""
-    local s
-    local S = nothing
+    local s = Array{T}(ntuple(d->0,N))
+    local S
     local shmmem_create_pid
     try
         # On OSX, the shm_seg_name length must be <= 31 characters (including the terminating NULL character)
@@ -89,7 +90,7 @@ function SharedArray(T::Type, dims::NTuple; init=false, pids=Int[])
         end
 
         # All good, immediately unlink the segment.
-        if prod(dims) > 0
+        if (prod(dims) > 0) && (sizeof(T) > 0)
             if onlocalhost
                 rc = shm_unlink(shm_seg_name)
             else
@@ -97,8 +98,8 @@ function SharedArray(T::Type, dims::NTuple; init=false, pids=Int[])
             end
             systemerror("Error unlinking shmem segment " * shm_seg_name, rc != 0)
         end
-        S = SharedArray{T,N}(dims, pids, refs, shm_seg_name)
-        initialize_shared_array(S, s, onlocalhost, init, pids)
+        S = SharedArray{T,N}(dims, pids, refs, shm_seg_name, s)
+        initialize_shared_array(S, onlocalhost, init, pids)
         shm_seg_name = ""
 
     finally
@@ -167,7 +168,7 @@ function SharedArray{T,N}(filename::AbstractString, ::Type{T}, dims::NTuple{N,In
     func_mmap = mode -> open(filename, mode) do io
         Mmap.mmap(io, Array{T,N}, dims, offset; shared=true)
     end
-    local s
+    s = Array{T}(ntuple(d->0,N))
     if onlocalhost
         s = func_mmap(mode)
         refs[1] = remotecall(pids[1]) do
@@ -191,17 +192,14 @@ function SharedArray{T,N}(filename::AbstractString, ::Type{T}, dims::NTuple{N,In
         wait(ref)
     end
 
-    S = SharedArray{T,N}(dims, pids, refs, filename)
-    initialize_shared_array(S, s, onlocalhost, init, pids)
+    S = SharedArray{T,N}(dims, pids, refs, filename, s)
+    initialize_shared_array(S, onlocalhost, init, pids)
     S
 end
 
-function initialize_shared_array(S, s, onlocalhost, init, pids)
+function initialize_shared_array(S, onlocalhost, init, pids)
     if onlocalhost
         init_loc_flds(S)
-        # In the event that myid() is not part of pids, s will not be set
-        # in the init function above, hence setting it here if available.
-        S.s = s
     else
         S.pidx = 0
     end
@@ -248,9 +246,8 @@ function reshape{T,N}(a::SharedArray{T}, dims::NTuple{N,Int})
         end
     end
 
-    A = SharedArray{T,N}(dims, a.pids, refs, a.segname)
+    A = SharedArray{T,N}(dims, a.pids, refs, a.segname, reshape(a.s, dims))
     init_loc_flds(A)
-    (a.pidx == 0) && isdefined(a, :s) && (A.s = reshape(a.s, dims))
     A
 end
 
@@ -508,7 +505,7 @@ function shm_mmap_array(T, dims, shm_seg_name, mode)
     local s = nothing
     local A = nothing
 
-    if prod(dims) == 0
+    if (prod(dims) == 0) || (sizeof(T) == 0)
         return Array{T}(dims)
     end
 

@@ -96,10 +96,9 @@ function centralize_sumabs2!{S,T,N}(R::AbstractArray{S}, A::AbstractArray{T,N}, 
     lsiz = check_reducedims(R,A)
     isempty(R) || fill!(R, zero(S))
     isempty(A) && return R
-    sizA1 = size(A, 1)
 
     if has_fast_linear_indexing(A) && lsiz > 16
-        nslices = div(length(A), lsiz)
+        nslices = div(_length(A), lsiz)
         ibase = first(linearindices(A))-1
         for i = 1:nslices
             @inbounds R[i] = centralize_sumabs2(A, means[i], ibase+1, ibase+lsiz)
@@ -107,11 +106,12 @@ function centralize_sumabs2!{S,T,N}(R::AbstractArray{S}, A::AbstractArray{T,N}, 
         end
         return R
     end
-    IRmax = dims_tail(map(last, indices(R)), A)
-    if size(R, 1) == 1 && sizA1 > 1
-        i1 = first(indices(A, 1))
-        @inbounds for IA in CartesianRange(tail(indices(A)))
-            IR = min(IA, IRmax)
+    indsAt, indsRt = safe_tail(indices(A)), safe_tail(indices(R)) # handle d=1 manually
+    keep, Idefault = Broadcast.newindexer(indsAt, indsRt)
+    if reducedim1(R, A)
+        i1 = first(indices1(R))
+        @inbounds for IA in CartesianRange(indsAt)
+            IR = Broadcast.newindex(IA, keep, Idefault)
             r = R[i1,IR]
             m = means[i1,IR]
             @simd for i in indices(A, 1)
@@ -120,8 +120,8 @@ function centralize_sumabs2!{S,T,N}(R::AbstractArray{S}, A::AbstractArray{T,N}, 
             R[i1,IR] = r
         end
     else
-        @inbounds for IA in CartesianRange(tail(indices(A)))
-            IR = min(IA, IRmax)
+        @inbounds for IA in CartesianRange(indsAt)
+            IR = Broadcast.newindex(IA, keep, Idefault)
             @simd for i in indices(A, 1)
                 R[i,IR] += abs2(A[i,IA] - means[i,IR])
             end
@@ -324,7 +324,7 @@ function cov2cor!{T}(C::AbstractMatrix{T}, xsd::AbstractArray)
         end
         C[j,j] = one(T)
         for i = j+1:nx
-            C[i,j] /= (xsd[i] * xsd[j])
+            C[i,j] = clamp(C[i,j] / (xsd[i] * xsd[j]), -1, 1)
         end
     end
     return C
@@ -334,7 +334,7 @@ function cov2cor!(C::AbstractMatrix, xsd::Number, ysd::AbstractArray)
     length(ysd) == ny || throw(DimensionMismatch("inconsistent dimensions"))
     for (j, y) in enumerate(ysd)   # fixme (iter): here and in all `cov2cor!` we assume that `C` is efficiently indexed by integers
         for i in 1:nx
-            C[i,j] /= (xsd * y)
+            C[i,j] = clamp(C[i, j] / (xsd * y), -1, 1)
         end
     end
     return C
@@ -344,7 +344,7 @@ function cov2cor!(C::AbstractMatrix, xsd::AbstractArray, ysd::Number)
     length(xsd) == nx || throw(DimensionMismatch("inconsistent dimensions"))
     for j in 1:ny
         for (i, x) in enumerate(xsd)
-            C[i,j] /= (x * ysd)
+            C[i,j] = clamp(C[i,j] / (x * ysd), -1, 1)
         end
     end
     return C
@@ -355,7 +355,7 @@ function cov2cor!(C::AbstractMatrix, xsd::AbstractArray, ysd::AbstractArray)
         throw(DimensionMismatch("inconsistent dimensions"))
     for (i, x) in enumerate(xsd)
         for (j, y) in enumerate(ysd)
-            C[i,j] /= x*y
+            C[i,j] = clamp(C[i,j] / (x * y), -1, 1)
         end
     end
     return C
@@ -368,25 +368,6 @@ function corzm(x::AbstractMatrix, vardim::Int=1)
     c = unscaled_covzm(x, vardim)
     return cov2cor!(c, sqrt!(diag(c)))
 end
-function corzm(x::AbstractVector, y::AbstractVector)
-    n = length(x)
-    length(y) == n || throw(DimensionMismatch("inconsistent lengths"))
-    x1 = x[1]
-    y1 = y[1]
-    xx = abs2(x1)
-    yy = abs2(y1)
-    xy = x1 * conj(y1)
-    i = 1
-    while i < n
-        i += 1
-        @inbounds xi = x[i]
-        @inbounds yi = y[i]
-        xx += abs2(xi)
-        yy += abs2(yi)
-        xy += xi * conj(yi)
-    end
-    return xy / (sqrt(xx) * sqrt(yy))
-end
 corzm(x::AbstractVector, y::AbstractMatrix, vardim::Int=1) =
     cov2cor!(unscaled_covzm(x, y, vardim), sqrt(sumabs2(x)), sqrt!(sumabs2(y, vardim)))
 corzm(x::AbstractMatrix, y::AbstractVector, vardim::Int=1) =
@@ -398,7 +379,27 @@ corzm(x::AbstractMatrix, y::AbstractMatrix, vardim::Int=1) =
 
 corm{T}(x::AbstractVector{T}, xmean) = one(real(T))
 corm(x::AbstractMatrix, xmean, vardim::Int=1) = corzm(x .- xmean, vardim)
-corm(x::AbstractVector, xmean, y::AbstractVector, ymean) = corzm(x .- xmean, y .- ymean)
+function corm(x::AbstractVector, mx::Number, y::AbstractVector, my::Number)
+    n = length(x)
+    length(y) == n || throw(DimensionMismatch("inconsistent lengths"))
+    n > 0 || throw(ArgumentError("correlation only defined for non-empty vectors"))
+
+    @inbounds begin
+        # Initialize the accumulators
+        xx = zero(sqrt(x[1] * x[1]))
+        yy = zero(sqrt(y[1] * y[1]))
+        xy = zero(xx * yy)
+
+        @simd for i = 1:n
+            xi = x[i] - mx
+            yi = y[i] - my
+            xx += abs2(xi)
+            yy += abs2(yi)
+            xy += xi * yi'
+        end
+    end
+    return clamp(xy / max(xx, yy) / sqrt(min(xx, yy) / max(xx, yy)), -1, 1)
+end
 corm(x::AbstractVecOrMat, xmean, y::AbstractVecOrMat, ymean, vardim::Int=1) =
     corzm(x .- xmean, y .- ymean, vardim)
 
@@ -490,8 +491,8 @@ function median!{T}(v::AbstractVector{T})
     end
 end
 median!{T}(v::AbstractArray{T}) = median!(vec(v))
+median{T}(v::AbstractArray{T}) = median!(copy!(Array{T,1}(length(v)), v))
 
-median{T}(v::AbstractArray{T}) = median!(copy!(Array(T, length(v)), v))
 median{T}(v::AbstractArray{T}, region) = mapslices(median!, v, region)
 
 # for now, use the R/S definition of quantile; may want variants later

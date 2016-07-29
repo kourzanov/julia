@@ -116,6 +116,9 @@ end
 @test intersect(UnitRange(1,2),3) == UnitRange(3,2)
 @test intersect(UnitRange(1,2), UnitRange(1,5), UnitRange(3,7), UnitRange(4,6)) == UnitRange(4,3)
 
+@test intersect(1:3, 2) === intersect(2, 1:3) === 2:2
+@test intersect(1.0:3.0, 2) == intersect(2, 1.0:3.0) == [2.0]
+
 @test sort(UnitRange(1,2)) == UnitRange(1,2)
 @test sort!(UnitRange(1,2)) == UnitRange(1,2)
 @test sort(1:10, rev=true) == collect(10:-1:1)
@@ -451,8 +454,8 @@ end
 r = -0.004532318104333742:1.2597349521122731e-5:0.008065031416788989
 @test length(r[1:end-1]) == length(r) - 1
 @test isa(r[1:2:end],Range) && length(r[1:2:end]) == div(length(r)+1, 2)
-@test_approx_eq r[3:5][2] r[4]
-@test_approx_eq r[5:-2:1][2] r[3]
+@test r[3:5][2] ≈ r[4]
+@test r[5:-2:1][2] ≈ r[3]
 @test_throws BoundsError r[0:10]
 @test_throws BoundsError r[1:10000]
 
@@ -489,7 +492,7 @@ end
 for f in (mean, median)
     for n = 2:5
         @test f(2:n) == f([2:n;])
-        @test_approx_eq f(2:0.1:n) f([2:0.1:n;])
+        @test f(2:0.1:n) ≈ f([2:0.1:n;])
     end
 end
 
@@ -569,7 +572,7 @@ end
 
 # stringmime/show should display the range or linspace nicely
 # to test print_range in range.jl
-replstrmime(x) = sprint((io,x) -> show(IOContext(io, multiline=true, limit=true), MIME("text/plain"), x), x)
+replstrmime(x) = sprint((io,x) -> show(IOContext(io, limit=true), MIME("text/plain"), x), x)
 @test replstrmime(1:4) == "1:4"
 @test stringmime("text/plain", 1:4) == "1:4"
 @test stringmime("text/plain", linspace(1,5,7)) == "7-element LinSpace{Float64}:\n 1.0,1.66667,2.33333,3.0,3.66667,4.33333,5.0"
@@ -736,3 +739,39 @@ let r = 1:3, a = [1,2,3]
     @test convert(Array{Int,1}, r) == a
     @test convert(Array{Float64,1}, r) == a
 end
+
+# OneTo
+r = Base.OneTo(-5)
+@test isempty(r)
+@test length(r) == 0
+@test size(r) == (0,)
+r = Base.OneTo(3)
+@test !isempty(r)
+@test length(r) == 3
+@test size(r) == (3,)
+@test step(r) == 1
+@test first(r) == 1
+@test last(r) == 3
+@test minimum(r) == 1
+@test maximum(r) == 3
+@test r[2] == 2
+@test_throws BoundsError r[4]
+@test_throws BoundsError r[0]
+@test r+1 === 2:4
+@test 2*r === 2:2:6
+@test r+r === 2:2:6
+k = 0
+for i in r
+    @test i == (k+=1)
+end
+@test intersect(r, Base.OneTo(2)) == Base.OneTo(2)
+@test intersect(r, 0:5) == 1:3
+@test intersect(r, 2) === intersect(2, r) === 2:2
+@test findin(r, r) === findin(r, 1:length(r)) === findin(1:length(r), r) === 1:length(r)
+r2 = Base.OneTo(7)
+@test findin(r2, 2:length(r2)-1) === 2:length(r2)-1
+@test findin(2:length(r2)-1, r2) === 1:length(r2)-2
+io = IOBuffer()
+show(io, r)
+str = takebuf_string(io)
+@test str == "Base.OneTo(3)"

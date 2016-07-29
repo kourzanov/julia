@@ -5,50 +5,55 @@
 typealias AbstractVector{T} AbstractArray{T,1}
 typealias AbstractMatrix{T} AbstractArray{T,2}
 typealias AbstractVecOrMat{T} Union{AbstractVector{T}, AbstractMatrix{T}}
-typealias RangeIndex Union{Int, Range{Int}, UnitRange{Int}, Colon}
-typealias UnitRangeInteger{T<:Integer} UnitRange{T}
-typealias Indices{N} NTuple{N,UnitRangeInteger}
+typealias RangeIndex Union{Int, Range{Int}, AbstractUnitRange{Int}, Colon}
+typealias DimOrInd Union{Integer, AbstractUnitRange}
+typealias IntOrInd Union{Int, AbstractUnitRange}
+typealias DimsOrInds{N} NTuple{N,DimOrInd}
+
+macro _inline_pure_meta()
+    Expr(:meta, :inline, :pure)
+end
 
 ## Basic functions ##
 
-vect() = Array{Any}(0)
+vect() = Array{Any,1}(0)
 vect{T}(X::T...) = T[ X[i] for i=1:length(X) ]
 
 function vect(X...)
     T = promote_typeof(X...)
     #T[ X[i] for i=1:length(X) ]
     # TODO: this is currently much faster. should figure out why. not clear.
-    copy!(Array{T}(length(X)), X)
+    copy!(Array{T,1}(length(X)), X)
 end
 
 size{T,N}(t::AbstractArray{T,N}, d) = d <= N ? size(t)[d] : 1
 size{N}(x, d1::Integer, d2::Integer, dx::Vararg{Integer, N}) = (size(x, d1), size(x, d2), ntuple(k->size(x, dx[k]), Val{N})...)
+
 """
     indices(A, d)
 
 Returns the valid range of indices for array `A` along dimension `d`.
 """
-function indices(A::AbstractArray, d)
-    @_inline_meta
-    1:size(A,d)
-end
+indices{T,N}(A::AbstractArray{T,N}, d) = d <= N ? indices(A)[d] : OneTo(1)
 """
     indices(A)
 
 Returns the tuple of valid indices for array `A`.
 """
-indices{T,N}(A::AbstractArray{T,N}) = _indices((), A)
-_indices{T,N}(out::NTuple{N}, A::AbstractArray{T,N}) = out
-function _indices(out, A::AbstractArray)
-    @_inline_meta
-    _indices((out..., indices(A, length(out)+1)), A)
+function indices{T,N}(A::AbstractArray{T,N})
+    @_inline_pure_meta
+    map(s->OneTo(s), size(A))
 end
-# This simpler implementation suffers from #16327
-# function indices{T,N}(A::AbstractArray{T,N})
-#     @_inline_meta
-#     ntuple(d->indices(A, d), Val{N})
-# end
-indices1(A) = (@_inline_meta; indices(A, 1))
+
+# Performance optimization: get rid of a branch on `d` in `indices(A,
+# d)` for d=1. 1d arrays are heavily used, and the first dimension
+# comes up in other applications.
+indices1{T}(A::AbstractArray{T,0}) = OneTo(1)
+indices1{T}(A::AbstractArray{T})   = (@_inline_meta; indices(A)[1])
+
+unsafe_indices(A) = indices(A)
+unsafe_indices(r::Range) = (OneTo(unsafe_length(r)),) # Ranges use checked_sub for size
+
 """
     linearindices(A)
 
@@ -61,15 +66,16 @@ is `indices(A, 1)`.
 Calling this function is the "safe" way to write algorithms that
 exploit linear indexing.
 """
-linearindices(A) = 1:length(A)
-linearindices(A::AbstractVector) = indices1(A)
+linearindices(A)                 = (@_inline_meta; OneTo(_length(A)))
+linearindices(A::AbstractVector) = (@_inline_meta; indices1(A))
 eltype{T}(::Type{AbstractArray{T}}) = T
 eltype{T,N}(::Type{AbstractArray{T,N}}) = T
 elsize{T}(::AbstractArray{T}) = sizeof(T)
 ndims{T,N}(::AbstractArray{T,N}) = N
 ndims{T,N}(::Type{AbstractArray{T,N}}) = N
 ndims{T<:AbstractArray}(::Type{T}) = ndims(supertype(T))
-length(t::AbstractArray) = prod(size(t))::Int
+length(t::AbstractArray) = prod(size(t))
+_length(A::AbstractArray) = prod(map(unsafe_length, indices(A))) # circumvent missing size
 endof(a::AbstractArray) = length(a)
 first(a::AbstractArray) = a[first(eachindex(a))]
 
@@ -127,6 +133,10 @@ function trailingsize(A, n)
     end
     return s
 end
+function trailingsize(inds::Indices)
+    @_inline_meta
+    prod(map(unsafe_length, inds))
+end
 
 ## Traits for array types ##
 
@@ -144,74 +154,139 @@ linearindexing(A::AbstractArray, B::AbstractArray...) = linearindexing(linearind
 linearindexing(::LinearFast, ::LinearFast) = LinearFast()
 linearindexing(::LinearIndexing, ::LinearIndexing) = LinearSlow()
 
-abstract IndicesBehavior
-immutable IndicesStartAt1  <: IndicesBehavior end   # indices 1:size(A,d)
-immutable IndicesUnitRange <: IndicesBehavior end   # arb UnitRange indices
-immutable IndicesList      <: IndicesBehavior end   # indices like (:cat, :dog, :mouse)
-
-indicesbehavior(A::AbstractArray) = indicesbehavior(typeof(A))
-indicesbehavior{T<:AbstractArray}(::Type{T}) = IndicesStartAt1()
-indicesbehavior(::Number) = IndicesStartAt1()
-
-abstract IndicesPerformance
-immutable IndicesFast1D <: IndicesPerformance end  # indices(A, d) is fast
-immutable IndicesSlow1D <: IndicesPerformance end  # indices(A) is better than indices(A,d)
-
-indicesperformance(A::AbstractArray) = indicesperformance(typeof(A))
-indicesperformance{T<:AbstractArray}(::Type{T}) = IndicesFast1D()
-
-"""
-    shape(A)
-
-Returns a tuple specifying the "shape" of array `A`. For arrays with
-conventional indexing (indices start at 1), this is equivalent to
-`size(A)`; otherwise it is equivalent to `indices(A)`.
-"""
-shape(a) = shape(indicesbehavior(a), a)
-"""
-    shape(A, d)
-
-Specifies the "shape" of the array `A` along dimension `d`. For arrays
-with conventional indexing (starting at 1), this is equivalent to
-`size(A, d)`; for arrays with unconventional indexing (indexing may
-start at something different from 1), it is equivalent to `indices(A,
-d)`.
-"""
-shape(a, d) = shape(indicesbehavior(a), a, d)
-shape(::IndicesStartAt1, a) = size(a)
-shape(::IndicesStartAt1, a, d) = size(a, d)
-shape(::IndicesBehavior, a) = indices(a)
-shape(::IndicesBehavior, a, d) = indices(a, d)
-
 ## Bounds checking ##
-@generated function trailingsize{T,N,n}(A::AbstractArray{T,N}, ::Type{Val{n}})
-    (isa(n, Int) && isa(N, Int)) || error("Must have concrete type")
-    n > N && return 1
-    ex = :(size(A, $n))
-    for m = n+1:N
-        ex = :($ex * size(A, $m))
-    end
-    Expr(:block, Expr(:meta, :inline), ex)
+
+# The overall hierarchy is
+#     `checkbounds(A, I...)` ->
+#         `checkbounds(Bool, A, I...)` -> either of:
+#             - `checkbounds_logical(Bool, A, I)` when `I` is a single logical array
+#             - `checkbounds_indices(Bool, IA, I)` otherwise (uses `checkindex`)
+#
+# See the "boundscheck" devdocs for more information.
+#
+# Note this hierarchy has been designed to reduce the likelihood of
+# method ambiguities.  We try to make `checkbounds` the place to
+# specialize on array type, and try to avoid specializations on index
+# types; conversely, `checkindex` is intended to be specialized only
+# on index type (especially, its last argument).
+
+"""
+    checkbounds(Bool, A, I...)
+
+Return `true` if the specified indices `I` are in bounds for the given
+array `A`. Subtypes of `AbstractArray` should specialize this method
+if they need to provide custom bounds checking behaviors; however, in
+many cases one can rely on `A`'s indices and `checkindex`.
+
+See also `checkindex`.
+"""
+function checkbounds(::Type{Bool}, A::AbstractArray, I...)
+    @_inline_meta
+    checkbounds_indices(Bool, indices(A), I)
 end
+function checkbounds(::Type{Bool}, A::AbstractArray, I::AbstractArray{Bool})
+    @_inline_meta
+    checkbounds_logical(Bool, A, I)
+end
+
+"""
+    checkbounds(A, I...)
+
+Throw an error if the specified indices `I` are not in bounds for the given array `A`.
+"""
+function checkbounds(A::AbstractArray, I...)
+    @_inline_meta
+    checkbounds(Bool, A, I...) || throw_boundserror(A, I)
+    nothing
+end
+checkbounds(A::AbstractArray) = checkbounds(A, 1) # 0-d case
+
+"""
+    checkbounds_indices(Bool, IA, I)
+
+Return `true` if the "requested" indices in the tuple `I` fall within
+the bounds of the "permitted" indices specified by the tuple
+`IA`. This function recursively consumes elements of these tuples,
+usually in a 1-for-1 fashion,
+
+    checkbounds_indices(Bool, (IA1, IA...), (I1, I...)) = checkindex(Bool, IA1, I1) &
+                                                          checkbounds_indices(Bool, IA, I)
+
+Note that `checkindex` is being used to perform the actual
+bounds-check for a single dimension of the array.
+
+There are two important exceptions to the 1-1 rule: linear indexing and
+CartesianIndex{N}, both of which may "consume" more than one element
+of `IA`.
+"""
+function checkbounds_indices(::Type{Bool}, IA::Tuple, I::Tuple)
+    @_inline_meta
+    checkindex(Bool, IA[1], I[1]) & checkbounds_indices(Bool, tail(IA), tail(I))
+end
+checkbounds_indices(::Type{Bool}, ::Tuple{},  ::Tuple{})    = true
+checkbounds_indices(::Type{Bool}, ::Tuple{}, I::Tuple{Any}) = (@_inline_meta; checkindex(Bool, 1:1, I[1]))
+function checkbounds_indices(::Type{Bool}, ::Tuple{}, I::Tuple)
+    @_inline_meta
+    checkindex(Bool, 1:1, I[1]) & checkbounds_indices(Bool, (), tail(I))
+end
+function checkbounds_indices(::Type{Bool}, IA::Tuple{Any}, I::Tuple{Any})
+    @_inline_meta
+    checkindex(Bool, IA[1], I[1])
+end
+function checkbounds_indices(::Type{Bool}, IA::Tuple, I::Tuple{Any})
+    @_inline_meta
+    checkindex(Bool, OneTo(trailingsize(IA)), I[1])  # linear indexing
+end
+
+"""
+    checkbounds_logical(Bool, A, I::AbstractArray{Bool})
+
+Return `true` if the logical array `I` is consistent with the indices
+of `A`. `I` and `A` should have the same size and compatible indices.
+"""
+function checkbounds_logical(::Type{Bool}, A::AbstractArray, I::AbstractArray{Bool})
+    indices(A) == indices(I)
+end
+function checkbounds_logical(::Type{Bool}, A::AbstractArray, I::AbstractVector{Bool})
+    length(A) == length(I)
+end
+function checkbounds_logical(::Type{Bool}, A::AbstractVector, I::AbstractArray{Bool})
+    length(A) == length(I)
+end
+function checkbounds_logical(::Type{Bool}, A::AbstractVector, I::AbstractVector{Bool})
+    indices(A) == indices(I)
+end
+
+"""
+    checkbounds_logical(A, I::AbstractArray{Bool})
+
+Throw an error if the logical array `I` is inconsistent with the indices of `A`.
+"""
+function checkbounds_logical(A, I::AbstractVector{Bool})
+    checkbounds_logical(Bool, A, I) || throw_boundserror(A, I)
+    nothing
+end
+
+throw_boundserror(A, I) = (@_noinline_meta; throw(BoundsError(A, I)))
 
 # check along a single dimension
 """
-    checkindex(Bool, inds::UnitRange, index)
+    checkindex(Bool, inds::AbstractUnitRange, index)
 
 Return `true` if the given `index` is within the bounds of
 `inds`. Custom types that would like to behave as indices for all
 arrays can extend this method in order to provide a specialized bounds
 checking implementation.
 """
-checkindex(::Type{Bool}, inds::UnitRange, i) = throw(ArgumentError("unable to check bounds for indices of type $(typeof(i))"))
-checkindex(::Type{Bool}, inds::UnitRange, i::Real) = (first(inds) <= i) & (i <= last(inds))
-checkindex(::Type{Bool}, inds::UnitRange, ::Colon) = true
-function checkindex(::Type{Bool}, inds::UnitRange, r::Range)
+checkindex(::Type{Bool}, inds::AbstractUnitRange, i) = throw(ArgumentError("unable to check bounds for indices of type $(typeof(i))"))
+checkindex(::Type{Bool}, inds::AbstractUnitRange, i::Real) = (first(inds) <= i) & (i <= last(inds))
+checkindex(::Type{Bool}, inds::AbstractUnitRange, ::Colon) = true
+function checkindex(::Type{Bool}, inds::AbstractUnitRange, r::Range)
     @_propagate_inbounds_meta
     isempty(r) | (checkindex(Bool, inds, first(r)) & checkindex(Bool, inds, last(r)))
 end
-checkindex{N}(::Type{Bool}, indx::UnitRange, I::AbstractArray{Bool,N}) = N == 1 && indx == indices1(I)
-function checkindex(::Type{Bool}, inds::UnitRange, I::AbstractArray)
+checkindex{N}(::Type{Bool}, indx::AbstractUnitRange, I::AbstractArray{Bool,N}) = N == 1 && indx == indices1(I)
+function checkindex(::Type{Bool}, inds::AbstractUnitRange, I::AbstractArray)
     @_inline_meta
     b = true
     for i in I
@@ -220,99 +295,11 @@ function checkindex(::Type{Bool}, inds::UnitRange, I::AbstractArray)
     b
 end
 
-# check all indices/dimensions
-# To make extension easier, avoid specializing checkbounds on index types
-"""
-    checkbounds(Bool, array, indexes...)
-
-Return `true` if the specified `indexes` are in bounds for the given `array`. Subtypes of
-`AbstractArray` should specialize this method if they need to provide custom bounds checking
-behaviors.
-"""
-function checkbounds(::Type{Bool}, A::AbstractArray, I...)
-    @_inline_meta
-    _checkbounds(Bool, indicesperformance(A), A, I...)
-end
-function _checkbounds(::Type{Bool}, ::IndicesSlow1D, A::AbstractArray, I...)
-    @_inline_meta
-    checkbounds_indices(indices(A), I)
-end
-_checkbounds(::Type{Bool}, ::IndicesSlow1D, A::AbstractArray, I::AbstractArray{Bool}) = _chkbnds(A, (true,), I)
-
-# Bounds-checking for arrays for which indices(A) is faster than indices(A, d)
-checkbounds_indices(::Tuple{},  ::Tuple{})    = true
-checkbounds_indices(::Tuple{}, I::Tuple{Any}) = (@_inline_meta; checkindex(Bool, 1:1, I[1]))
-checkbounds_indices(::Tuple{}, I::Tuple)      = (@_inline_meta; checkindex(Bool, 1:1, I[1]) & checkbounds_indices((), tail(I)))
-checkbounds_indices(inds::Tuple{Any}, I::Tuple{Any}) = (@_inline_meta; checkindex(Bool, inds[1], I[1]))
-checkbounds_indices(inds::Tuple, I::Tuple{Any}) = (@_inline_meta; checkindex(Bool, 1:prod(map(dimlength, inds)), I[1]))
-checkbounds_indices(inds::Tuple, I::Tuple) = (@_inline_meta; checkindex(Bool, inds[1], I[1]) & checkbounds_indices(tail(inds), tail(I)))
-
-# Bounds-checking for arrays for which indices(A, d) is fast
-function _checkbounds(::Type{Bool}, ::IndicesFast1D, A::AbstractArray, I...)
-    @_inline_meta
-    # checked::NTuple{M} means we have checked dimensions 1:M-1, now
-    # need to check dimension M. checked[M] indicates whether all the
-    # previous ones are in-bounds.
-    # By growing checked, it allows us to test whether we've processed
-    # the same number of dimensions as the array, even while
-    # supporting CartesianIndex
-    _chkbnds(A, (true,), I...)
-end
-checkbounds(::Type{Bool}, A::AbstractArray) = checkbounds(Bool, A, 1) # 0-d case
-# Single logical array indexing:
-_chkbnds(A::AbstractArray, ::NTuple{1,Bool}, I::AbstractArray{Bool}) = indices(A) == indices(I)
-_chkbnds(A::AbstractArray, ::NTuple{1,Bool}, I::AbstractVector{Bool}) = length(A) == length(I)
-_chkbnds(A::AbstractVector, ::NTuple{1,Bool}, I::AbstractArray{Bool}) = length(A) == length(I)
-_chkbnds(A::AbstractVector, ::NTuple{1,Bool}, I::AbstractVector{Bool}) = indices(A) == indices(I)
-# Linear indexing:
-function _chkbnds(A::AbstractVector, ::NTuple{1,Bool}, I)
-    @_inline_meta
-    checkindex(Bool, indices1(A), I)
-end
-function _chkbnds(A::AbstractArray, ::NTuple{1,Bool}, I)
-    @_inline_meta
-    checkindex(Bool, 1:length(A), I)
-end
-# When all indices have been checked:
-_chkbnds{M}(A, checked::NTuple{M,Bool}) = checked[M]
-# When the number of indices matches the array dimensionality:
-function _chkbnds{T,N}(A::AbstractArray{T,N}, checked::NTuple{N,Bool}, I1)
-    @_inline_meta
-    checked[N] & checkindex(Bool, indices(A, N), I1)
-end
-# When the last checked dimension is not equal to the array dimensionality:
-# TODO: for #14770 (deprecating partial linear indexing), change to 1:trailingsize(...) to 1:1
-function _chkbnds{T,N,M}(A::AbstractArray{T,N}, checked::NTuple{M,Bool}, I1)
-    @_inline_meta
-    checked[M] & checkindex(Bool, 1:trailingsize(A, Val{M}), I1)
-end
-# Checking an interior dimension:
-function _chkbnds{T,N,M}(A::AbstractArray{T,N}, checked::NTuple{M,Bool}, I1, I...)
-    @_inline_meta
-    # grow checked by one
-    newchecked = (checked..., checked[M] & checkindex(Bool, indices(A, M), I1))
-    _chkbnds(A, newchecked, I...)
-end
-
-throw_boundserror(A, I) = (@_noinline_meta; throw(BoundsError(A, I)))
-
-"""
-    checkbounds(array, indexes...)
-
-Throw an error if the specified `indexes` are not in bounds for the given `array`.
-"""
-function checkbounds(A::AbstractArray, I...)
-    @_inline_meta
-    checkbounds(Bool, A, I...) || throw_boundserror(A, I)
-end
-checkbounds(A::AbstractArray) = checkbounds(A, 1) # 0-d case
-
 # See also specializations in multidimensional
 
 ## Constructors ##
 
 # default arguments to similar()
-typealias SimIdx Union{Integer,UnitRangeInteger}
 """
     similar(array, [element_type=eltype(array)], [dims=size(array)])
 
@@ -348,79 +335,54 @@ different element type it will create a regular `Array` instead:
      2.18425e-314  2.18425e-314  2.18425e-314  2.18425e-314
      2.18425e-314  2.18425e-314  2.18425e-314  2.18425e-314
 
-See also `allocate_for`.
 """
 similar{T}(a::AbstractArray{T})                          = similar(a, T)
-similar(   a::AbstractArray, T::Type)                    = _similar(indicesbehavior(a), a, T)
-similar{T}(a::AbstractArray{T}, dims::Tuple)             = similar(a, T, dims)
-similar{T}(a::AbstractArray{T}, dims::SimIdx...)         = similar(a, T, dims)
-similar(   a::AbstractArray, T::Type, dims::SimIdx...)   = similar(a, T, dims)
-similar(   a::AbstractArray, T::Type, dims::DimsInteger) = similar(a, T, convert(Dims, dims))
+similar(   a::AbstractArray, T::Type)                    = similar(a, T, to_shape(indices(a)))
+similar{T}(a::AbstractArray{T}, dims::Tuple)             = similar(a, T, to_shape(dims))
+similar{T}(a::AbstractArray{T}, dims::DimOrInd...)       = similar(a, T, to_shape(dims))
+similar(   a::AbstractArray, T::Type, dims::DimOrInd...) = similar(a, T, to_shape(dims))
+similar(   a::AbstractArray, T::Type, dims)              = similar(a, T, to_shape(dims))
 # similar creates an Array by default
-similar(   a::AbstractArray, T::Type, dims::Dims)        = Array(T, dims)
+similar{N}(a::AbstractArray, T::Type, dims::Dims{N})     = Array{T,N}(dims)
 
-_similar(::IndicesStartAt1, a::AbstractArray, T::Type)   = similar(a, T, size(a))
-_similar(::IndicesBehavior, a::AbstractArray, T::Type)   = similar(a, T, indices(a))
+to_shape(::Tuple{}) = ()
+to_shape(dims::Dims) = dims
+to_shape(dims::DimsOrInds) = map(to_shape, dims)
+# each dimension
+to_shape(i::Int) = i
+to_shape(i::Integer) = Int(i)
+to_shape(r::OneTo) = Int(last(r))
+to_shape(r::AbstractUnitRange) = r
 
 """
-    allocate_for(storagetype, referencearray, [shape])
+    similar(storagetype, indices)
 
 Create an uninitialized mutable array analogous to that specified by
-`storagetype`, but with type and shape specified by the final two
-arguments. The main purpose of this function is to support allocation
-of arrays that may have unconventional indexing (starting at other
-than 1), as determined by `referencearray` and the optional `shape`
-information.
+`storagetype`, but with `indices` specified by the last
+argument. `storagetype` might be a type or a function.
 
-    **Examples**:
+**Examples**:
 
-    allocate_for(Array{Int}, A)
+    similar(Array{Int}, indices(A))
 
 creates an array that "acts like" an `Array{Int}` (and might indeed be
 backed by one), but which is indexed identically to `A`. If `A` has
-conventional indexing, this will likely just call
+conventional indexing, this will be identical to
 `Array{Int}(size(A))`, but if `A` has unconventional indexing then the
 indices of the result will match `A`.
 
-    allocate_for(BitArray, A, (shape(A, 2),))
+    similar(BitArray, (indices(A, 2),))
 
 would create a 1-dimensional logical array whose indices match those
 of the columns of `A`.
 
-The main purpose of the `referencearray` argument is to select a
-particular array type supporting unconventional indexing (as it is
-possible that several different ones will be simultaneously in use).
+    similar(dims->zeros(Int, dims), indices(A))
 
-See also `similar`.
+would create an array of `Int`, initialized to zero, matching the
+indices of `A`.
 """
-allocate_for(f, a, shape::Union{SimIdx,Tuple{Vararg{SimIdx}}}) = f(shape)
-allocate_for(f, a) = allocate_for(f, a, shape(a))
-# allocate_for when passed multiple arrays. Necessary for broadcast, etc.
-function allocate_for(f, as::Tuple, shape::Union{SimIdx,Tuple{Vararg{SimIdx}}})
-    @_inline_meta
-    a = promote_indices(as...)
-    allocate_for(f, a, shape)
-end
-
-promote_indices(a) = a
-function promote_indices(a, b, c...)
-    @_inline_meta
-    promote_indices(promote_indices(a, b), c...)
-end
-# overload this to return true for your type, e.g.,
-#   promote_indices(a::OffsetArray, b::OffsetArray) = a
-promote_indices(a::AbstractArray, b::AbstractArray) = _promote_indices(indicesbehavior(a), indicesbehavior(b), a, b)
-_promote_indices(::IndicesStartAt1, ::IndicesStartAt1, a, b) = a
-_promote_indices(::IndicesBehavior, ::IndicesBehavior, a, b) = throw(ArgumentError("types $(typeof(a)) and $(typeof(b)) do not have promote_indices defined"))
-promote_indices(a::Number, b::AbstractArray) = b
-promote_indices(a::AbstractArray, b::Number) = a
-
-# Strip off the index-changing container---this assumes that `parent`
-# performs such an operation. TODO: since few things in Base need this, it
-# would be great to find a way to eliminate this function.
-normalize_indices(A) = normalize_indices(indicesbehavior(A), A)
-normalize_indices(::IndicesStartAt1, A) = A
-normalize_indices(::IndicesBehavior, A) = parent(A)
+similar(f, shape::Tuple) = f(to_shape(shape))
+similar(f, dims::DimOrInd...) = similar(f, dims)
 
 ## from general iterable to any array
 
@@ -525,7 +487,7 @@ function copy!(::LinearIndexing, dest::AbstractArray, ::LinearSlow, src::Abstrac
 end
 
 function copy!(dest::AbstractArray, dstart::Integer, src::AbstractArray)
-    copy!(dest, dstart, src, first(linearindices(src)), length(src))
+    copy!(dest, dstart, src, first(linearindices(src)), _length(src))
 end
 
 function copy!(dest::AbstractArray, dstart::Integer, src::AbstractArray, sstart::Integer)
@@ -629,6 +591,7 @@ next(A::AbstractArray,i) = (@_propagate_inbounds_meta; (idx, s) = next(i[1], i[2
 done(A::AbstractArray,i) = (@_propagate_inbounds_meta; done(i[1], i[2]))
 
 # eachindex iterates over all indices. LinearSlow definitions are later.
+eachindex(A::AbstractVector) = (@_inline_meta(); indices1(A))
 eachindex(A::AbstractArray) = (@_inline_meta(); eachindex(linearindexing(A), A))
 
 function eachindex(A::AbstractArray, B::AbstractArray)
@@ -650,7 +613,7 @@ function _maxlength(A, B, C...)
     max(length(A), _maxlength(B, C...))
 end
 
-isempty(a::AbstractArray) = (length(a) == 0)
+isempty(a::AbstractArray) = (_length(a) == 0)
 
 ## Conversions ##
 
@@ -789,6 +752,7 @@ end
 _setindex!(::LinearIndexing, A::AbstractArray, v, I...) = error("indexing $(typeof(A)) with types $(typeof(I)) is not supported")
 
 ## LinearFast Scalar indexing
+_setindex!(::LinearFast, A::AbstractVector, v, ::Int) = error("indexed assignment not defined for ", typeof(A))
 _setindex!(::LinearFast, A::AbstractArray, v, ::Int) = error("indexed assignment not defined for ", typeof(A))
 _setindex!{T}(::LinearFast, A::AbstractArray{T,0}, v) = (@_propagate_inbounds_meta; setindex!(A, v, 1))
 _setindex!(::LinearFast, A::AbstractArray, v, i::Real) = (@_propagate_inbounds_meta; setindex!(A, v, to_index(i)))
@@ -800,7 +764,7 @@ function _setindex!{T,N}(::LinearFast, A::AbstractArray{T,N}, v, I::Vararg{Real,
     @inbounds r = setindex!(A, v, sub2ind(A, J...))
     r
 end
-function _setindex!(::LinearFast, A::AbstractArray, v, I1::Real, I::Real...)
+function _setindex!(::LinearFast, A::AbstractVector, v, I1::Real, I::Real...)
     @_inline_meta
     J = to_indexes(I1, I...)
     @boundscheck checkbounds(A, J...)
@@ -901,23 +865,23 @@ promote_eltype() = Bottom
 promote_eltype(v1, vs...) = promote_type(eltype(v1), promote_eltype(vs...))
 
 #TODO: ERROR CHECK
-cat(catdim::Integer) = Array{Any}(0)
+cat(catdim::Integer) = Array{Any,1}(0)
 
-vcat() = Array{Any}(0)
-hcat() = Array{Any}(0)
-typed_vcat{T}(::Type{T}) = Array{T}(0)
-typed_hcat{T}(::Type{T}) = Array{T}(0)
+vcat() = Array{Any,1}(0)
+hcat() = Array{Any,1}(0)
+typed_vcat{T}(::Type{T}) = Array{T,1}(0)
+typed_hcat{T}(::Type{T}) = Array{T,1}(0)
 
 ## cat: special cases
 vcat{T}(X::T...)         = T[ X[i] for i=1:length(X) ]
 vcat{T<:Number}(X::T...) = T[ X[i] for i=1:length(X) ]
-hcat{T}(X::T...)         = T[ X[j] for i=1, j=1:length(X) ]
-hcat{T<:Number}(X::T...) = T[ X[j] for i=1, j=1:length(X) ]
+hcat{T}(X::T...)         = T[ X[j] for i=1:1, j=1:length(X) ]
+hcat{T<:Number}(X::T...) = T[ X[j] for i=1:1, j=1:length(X) ]
 
 vcat(X::Number...) = hvcat_fill(Array{promote_typeof(X...)}(length(X)), X)
 hcat(X::Number...) = hvcat_fill(Array{promote_typeof(X...)}(1,length(X)), X)
-typed_vcat{T}(::Type{T}, X::Number...) = hvcat_fill(Array{T}(length(X)), X)
-typed_hcat{T}(::Type{T}, X::Number...) = hvcat_fill(Array{T}(1,length(X)), X)
+typed_vcat{T}(::Type{T}, X::Number...) = hvcat_fill(Array{T,1}(length(X)), X)
+typed_hcat{T}(::Type{T}, X::Number...) = hvcat_fill(Array{T,2}(1,length(X)), X)
 
 vcat(V::AbstractVector...) = typed_vcat(promote_eltype(V...), V...)
 vcat{T}(V::AbstractVector{T}...) = typed_vcat(T, V...)
@@ -1135,13 +1099,13 @@ function typed_hvcat{T}(::Type{T}, rows::Tuple{Vararg{Int}}, as::AbstractMatrix.
 end
 
 hvcat(rows::Tuple{Vararg{Int}}) = []
-typed_hvcat{T}(::Type{T}, rows::Tuple{Vararg{Int}}) = Array{T}(0)
+typed_hvcat{T}(::Type{T}, rows::Tuple{Vararg{Int}}) = Array{T,1}(0)
 
 function hvcat{T<:Number}(rows::Tuple{Vararg{Int}}, xs::T...)
     nr = length(rows)
     nc = rows[1]
 
-    a = Array{T}(nr, nc)
+    a = Array{T,2}(nr, nc)
     if length(a) != length(xs)
         throw(ArgumentError("argument count does not match specified shape (expected $(length(a)), got $(length(xs)))"))
     end
@@ -1184,13 +1148,13 @@ function typed_hvcat{T}(::Type{T}, rows::Tuple{Vararg{Int}}, xs::Number...)
     if nr*nc != len
         throw(ArgumentError("argument count $(len) does not match specified shape $((nr,nc))"))
     end
-    hvcat_fill(Array{T}(nr, nc), xs)
+    hvcat_fill(Array{T,2}(nr, nc), xs)
 end
 
 # fallback definition of hvcat in terms of hcat and vcat
 function hvcat(rows::Tuple{Vararg{Int}}, as...)
     nbr = length(rows)  # number of block rows
-    rs = Array{Any}(nbr)
+    rs = Array{Any,1}(nbr)
     a = 1
     for i = 1:nbr
         rs[i] = hcat(as[a:a-1+rows[i]]...)
@@ -1201,7 +1165,7 @@ end
 
 function typed_hvcat{T}(::Type{T}, rows::Tuple{Vararg{Int}}, as...)
     nbr = length(rows)  # number of block rows
-    rs = Array{Any}(nbr)
+    rs = Array{Any,1}(nbr)
     a = 1
     for i = 1:nbr
         rs[i] = hcat(as[a:a-1+rows[i]]...)
@@ -1255,37 +1219,26 @@ end
 # fallbacks
 function sub2ind(A::AbstractArray, I...)
     @_inline_meta
-    sub2ind(indicesbehavior(A), A, I...)
-end
-function sub2ind(::IndicesStartAt1, A::AbstractArray, I...)
-    @_inline_meta
-    sub2ind(size(A), I...)
-end
-function sub2ind(::IndicesBehavior, A::AbstractArray, I...)
-    @_inline_meta
     sub2ind(indices(A), I...)
 end
 function ind2sub(A::AbstractArray, ind)
     @_inline_meta
-    ind2sub(indicesbehavior(A), A, ind)
-end
-function ind2sub(::IndicesStartAt1, A::AbstractArray, ind)
-    @_inline_meta
-    ind2sub(size(A), ind)
-end
-function ind2sub(::IndicesBehavior, A::AbstractArray, ind)
-    @_inline_meta
     ind2sub(indices(A), ind)
 end
 
+# 0-dimensional arrays and indexing with []
 sub2ind(::Tuple{}) = 1
 sub2ind(::DimsInteger) = 1
 sub2ind(::Indices) = 1
 sub2ind(::Tuple{}, I::Integer...) = (@_inline_meta; _sub2ind((), 1, 1, I...))
+# Generic cases
 sub2ind(dims::DimsInteger, I::Integer...) = (@_inline_meta; _sub2ind(dims, 1, 1, I...))
 sub2ind(inds::Indices, I::Integer...) = (@_inline_meta; _sub2ind(inds, 1, 1, I...))
-# In 1d, there's a question of whether we're doing cartesian indexing or linear indexing. Support only the former.
+# In 1d, there's a question of whether we're doing cartesian indexing
+# or linear indexing. Support only the former.
 sub2ind(inds::Indices{1}, I::Integer...) = throw(ArgumentError("Linear indexing is not defined for one-dimensional arrays"))
+sub2ind(inds::Tuple{OneTo}, I::Integer...) = (@_inline_meta; _sub2ind(inds, 1, 1, I...)) # only OneTo is safe
+sub2ind(inds::Tuple{OneTo}, i::Integer)    = i
 
 _sub2ind(::Any, L, ind) = ind
 function _sub2ind(::Tuple{}, L, ind, i::Integer, I::Integer...)
@@ -1299,37 +1252,32 @@ function _sub2ind(inds, L, ind, i::Integer, I::Integer...)
 end
 
 nextL(L, l::Integer) = L*l
-nextL(L, r::UnitRange) = L*unsafe_length(r)
+nextL(L, r::AbstractUnitRange) = L*unsafe_length(r)
 offsetin(i, l::Integer) = i-1
-offsetin(i, r::UnitRange) = i-first(r)
-unsafe_length(r::UnitRange) = r.stop-r.start+1
+offsetin(i, r::AbstractUnitRange) = i-first(r)
 
 ind2sub(::Tuple{}, ind::Integer) = (@_inline_meta; ind == 1 ? () : throw(BoundsError()))
-ind2sub(dims::DimsInteger, ind::Integer) = (@_inline_meta; _ind2sub((), dims, ind-1))
-ind2sub(inds::Indices, ind::Integer) = (@_inline_meta; _ind2sub((), inds, ind-1))
+ind2sub(dims::DimsInteger, ind::Integer) = (@_inline_meta; _ind2sub(dims, ind-1))
+ind2sub(inds::Indices, ind::Integer)     = (@_inline_meta; _ind2sub(inds, ind-1))
 ind2sub(inds::Indices{1}, ind::Integer) = throw(ArgumentError("Linear indexing is not defined for one-dimensional arrays"))
+ind2sub(inds::Tuple{OneTo}, ind::Integer) = (ind,)
 
-_ind2sub(::Tuple{}, ::Tuple{}, ind) = (ind+1,)
-function _ind2sub(out, indslast::NTuple{1}, ind)
+_ind2sub(::Tuple{}, ind) = (ind+1,)
+function _ind2sub(indslast::NTuple{1}, ind)
     @_inline_meta
-    (out..., _lookup(ind, indslast[1]))
+    (_lookup(ind, indslast[1]),)
 end
-function _ind2sub(out, inds, ind)
+function _ind2sub(inds, ind)
     @_inline_meta
     r1 = inds[1]
     indnext, f, l = _div(ind, r1)
-    _ind2sub((out..., ind-l*indnext+f), tail(inds), indnext)
+    (ind-l*indnext+f, _ind2sub(tail(inds), indnext)...)
 end
 
 _lookup(ind, d::Integer) = ind+1
-_lookup(ind, r::UnitRange) = ind+first(r)
+_lookup(ind, r::AbstractUnitRange) = ind+first(r)
 _div(ind, d::Integer) = div(ind, d), 1, d
-_div(ind, r::UnitRange) = (d = unsafe_length(r); (div(ind, d), first(r), d))
-
-smart_ind2sub(shape::NTuple{1}, ind) = (ind,)
-smart_ind2sub(shape, ind) = ind2sub(shape, ind)
-smart_sub2ind(shape::NTuple{1}, i) = (i,)
-smart_sub2ind(shape, I...) = (@_inline_meta; sub2ind(shape, I...))
+_div(ind, r::AbstractUnitRange) = (d = unsafe_length(r); (div(ind, d), first(r), d))
 
 # Vectorized forms
 function sub2ind{N,T<:Integer}(inds::Union{Dims{N},Indices{N}}, I::AbstractVector{T}...)
@@ -1404,7 +1352,7 @@ function mapslices(f, A::AbstractArray, dims::AbstractVector)
         return map(f,A)
     end
 
-    dimsA = [shape(A)...]
+    dimsA = [indices(A)...]
     ndimsA = ndims(A)
     alldims = [1:ndimsA;]
 
@@ -1416,7 +1364,8 @@ function mapslices(f, A::AbstractArray, dims::AbstractVector)
         idx[d] = Colon()
     end
 
-    r1 = f(view(A, idx...))
+    Aslice = A[idx...]
+    r1 = f(Aslice)
 
     # determine result size and allocate
     Rsize = copy(dimsA)
@@ -1428,7 +1377,7 @@ function mapslices(f, A::AbstractArray, dims::AbstractVector)
     if eltype(Rsize) == Int
         Rsize[dims] = [size(r1)..., ntuple(d->1, nextra)...]
     else
-        Rsize[dims] = [indices(r1)..., ntuple(d->1:1, nextra)...]
+        Rsize[dims] = [indices(r1)..., ntuple(d->OneTo(1), nextra)...]
     end
     R = similar(r1, tuple(Rsize...,))
 
@@ -1448,7 +1397,8 @@ function mapslices(f, A::AbstractArray, dims::AbstractVector)
             for i in 1:nidx
                 idx[otherdims[i]] = ridx[otherdims[i]] = I.I[i]
             end
-            R[ridx...] = f(view(A, idx...))
+            _unsafe_getindex!(Aslice, A, idx...)
+            R[ridx...] = f(Aslice)
         end
     end
 
@@ -1501,6 +1451,7 @@ end
 
 map!{F}(f::F, dest::AbstractArray, As::AbstractArray...) = map_n!(f, dest, As)
 
+map(f) = f()
 map(f, iters...) = collect(Generator(f, iters...))
 
 # multi-item push!, unshift! (built on top of type-specific 1-item version)

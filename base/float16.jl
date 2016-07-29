@@ -1,11 +1,11 @@
 # This file is a part of Julia. License is MIT: http://julialang.org/license
 
 function convert(::Type{Float32}, val::Float16)
-    ival::UInt32 = reinterpret(UInt16, val)
-    sign::UInt32 = (ival & 0x8000) >> 15
-    exp::UInt32  = (ival & 0x7c00) >> 10
-    sig::UInt32  = (ival & 0x3ff) >> 0
-    ret::UInt32
+    local ival::UInt32 = reinterpret(UInt16, val),
+          sign::UInt32 = (ival & 0x8000) >> 15,
+          exp::UInt32  = (ival & 0x7c00) >> 10,
+          sig::UInt32  = (ival & 0x3ff) >> 0,
+          ret::UInt32
 
     if exp == 0
         if sig == 0
@@ -144,21 +144,12 @@ end
 for op in (:<,:<=,:isless)
     @eval ($op)(a::Float16, b::Float16) = ($op)(Float32(a), Float32(b))
 end
-for func in (:sin,:cos,:tan,:asin,:acos,:atan,:sinh,:cosh,:tanh,:asinh,:acosh,
-             :atanh,:exp,:log,:log2,:log10,:sqrt,:lgamma,:log1p,:erf,:erfc)
+
+for func in (:div,:fld,:cld,:rem,:mod)
     @eval begin
-        $func(a::Float16) = Float16($func(Float32(a)))
-        $func(a::Complex32) = Complex32($func(Complex64(a)))
+        $func(a::Float16,b::Float16) = Float16($func(Float32(a),Float32(b)))
     end
 end
-
-for func in (:div,:fld,:cld,:rem,:mod,:atan2,:hypot)
-    @eval begin
-        $func(a::Float16,b::Float16) = Float16($func(Float32(a),Float32(a)))
-    end
-end
-
-ldexp(a::Float16, b::Integer) = Float16(ldexp(Float32(a), b))
 
 ^(x::Float16, y::Integer) = Float16(Float32(x)^y)
 

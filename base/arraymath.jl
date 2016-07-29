@@ -50,37 +50,21 @@ end
 @pure promote_array_type{S<:Integer, P}(F, ::Type{S}, ::Type{Bool}, ::Type{P}) = P
 
 for f in (:+, :-, :div, :mod, :&, :|, :$)
-    @eval begin
-        function ($f){S,T}(A::Range{S}, B::Range{T})
-            F = similar(A, promote_op($f,S,T), promote_shape(size(A),size(B)))
-            for (iF, iA, iB) in zip(eachindex(F), eachindex(A), eachindex(B))
-                @inbounds F[iF] = ($f)(A[iA], B[iB])
-            end
-            return F
-        end
-        function ($f){S,T}(A::AbstractArray{S}, B::Range{T})
-            F = similar(A, promote_op($f,S,T), promote_shape(A,B))
-            for (iF, iA, iB) in zip(eachindex(F), eachindex(A), eachindex(B))
-                @inbounds F[iF] = ($f)(A[iA], B[iB])
-            end
-            return F
-        end
-        function ($f){S,T}(A::Range{S}, B::AbstractArray{T})
-            F = similar(B, promote_op($f,S,T), promote_shape(A,B))
-            for (iF, iA, iB) in zip(eachindex(F), eachindex(A), eachindex(B))
-                @inbounds F[iF] = ($f)(A[iA], B[iB])
-            end
-            return F
-        end
-        function ($f){S,T}(A::AbstractArray{S}, B::AbstractArray{T})
-            F = similar(A, promote_op($f,S,T), promote_shape(A,B))
-            for (iF, iA, iB) in zip(eachindex(F), eachindex(A), eachindex(B))
-                @inbounds F[iF] = ($f)(A[iA], B[iB])
-            end
-            return F
-        end
-    end
+    @eval ($f){S,T}(A::AbstractArray{S}, B::AbstractArray{T}) =
+        _elementwise($f, A, B, promote_eltype_op($f, A, B))
 end
+function _elementwise{S,T}(op, A::AbstractArray{S}, B::AbstractArray{T}, ::Type{Any})
+    promote_shape(A,B) # check size compatibility
+    return broadcast(op, A, B)
+end
+function _elementwise{S,T,R}(op, A::AbstractArray{S}, B::AbstractArray{T}, ::Type{R})
+    F = similar(A, R, promote_shape(A,B))
+    for (iF, iA, iB) in zip(eachindex(F), eachindex(A), eachindex(B))
+        @inbounds F[iF] = op(A[iA], B[iB])
+    end
+    return F
+end
+
 for f in (:.+, :.-, :.*, :./, :.\, :.^, :.÷, :.%, :.<<, :.>>, :div, :mod, :rem, :&, :|, :$)
     @eval begin
         function ($f){T}(A::Number, B::AbstractArray{T})
@@ -111,41 +95,6 @@ end
 (-)(x::Number,A::AbstractArray) = x .- A
 
 ## data movement ##
-
-# TODO?: replace with slice?
-function slicedim(A::Array, d::Integer, i::Integer)
-    if d < 1
-        throw(ArgumentError("dimension must be ≥ 1"))
-    end
-    d_in = size(A)
-    leading = d_in[1:(d-1)]
-    d_out = tuple(leading..., 1, d_in[(d+1):end]...)
-
-    M = prod(leading)
-    N = length(A)
-    stride = M * d_in[d]
-
-    B = similar(A, d_out)
-    index_offset = 1 + (i-1)*M
-
-    l = 1
-
-    if M==1
-        for j=0:stride:(N-stride)
-            B[l] = A[j + index_offset]
-            l += 1
-        end
-    else
-        for j=0:stride:(N-stride)
-            offs = j + index_offset
-            for k=0:(M-1)
-                B[l] = A[offs + k]
-                l += 1
-            end
-        end
-    end
-    return B
-end
 
 function flipdim{T}(A::Array{T}, d::Integer)
     if d < 1
@@ -211,8 +160,8 @@ function flipdim{T}(A::Array{T}, d::Integer)
 end
 
 function rotl90(A::AbstractMatrix)
-    B = similar_transpose(A)
-    ind2 = indices(A,2)
+    ind1, ind2 = indices(A)
+    B = similar(A, (ind2,ind1))
     n = first(ind2)+last(ind2)
     for i=indices(A,1), j=ind2
         B[n-j,i] = A[i,j]
@@ -220,8 +169,8 @@ function rotl90(A::AbstractMatrix)
     return B
 end
 function rotr90(A::AbstractMatrix)
-    B = similar_transpose(A)
-    ind1 = indices(A,1)
+    ind1, ind2 = indices(A)
+    B = similar(A, (ind2,ind1))
     m = first(ind1)+last(ind1)
     for i=ind1, j=indices(A,2)
         B[j,m-i] = A[i,j]
@@ -246,10 +195,6 @@ end
 rotr90(A::AbstractMatrix, k::Integer) = rotl90(A,-k)
 rot180(A::AbstractMatrix, k::Integer) = mod(k, 2) == 1 ? rot180(A) : copy(A)
 
-similar_transpose(A::AbstractMatrix) = similar_transpose(indicesbehavior(A), A)
-similar_transpose(::IndicesStartAt1, A::AbstractMatrix) = similar(A, (size(A,2), size(A,1)))
-similar_transpose(::IndicesBehavior, A::AbstractMatrix) = similar(A, (indices(A,2), indices(A,1)))
-
 ## Transpose ##
 transpose!(B::AbstractMatrix, A::AbstractMatrix) = transpose_f!(transpose, B, A)
 ctranspose!(B::AbstractMatrix, A::AbstractMatrix) = transpose_f!(ctranspose, B, A)
@@ -272,19 +217,20 @@ end
 
 const transposebaselength=64
 function transpose_f!(f,B::AbstractMatrix,A::AbstractMatrix)
-    indices(B,1) == indices(A,2) && indices(B,2) == indices(A,1) || throw(DimensionMismatch(string(f)))
+    inds = indices(A)
+    indices(B,1) == inds[2] && indices(B,2) == inds[1] || throw(DimensionMismatch(string(f)))
 
-    m, n = size(A)
+    m, n = length(inds[1]), length(inds[2])
     if m*n<=4*transposebaselength
         @inbounds begin
-            for j = indices(A,2)
-                for i = indices(A,1)
+            for j = inds[2]
+                for i = inds[1]
                     B[j,i] = f(A[i,j])
                 end
             end
         end
     else
-        transposeblock!(f,B,A,m,n,first(indices(A,1))-1,first(indices(A,2))-1)
+        transposeblock!(f,B,A,m,n,first(inds[1])-1,first(inds[2])-1)
     end
     return B
 end
@@ -315,17 +261,19 @@ function ccopy!(B, A)
 end
 
 function transpose(A::AbstractMatrix)
-    B = similar_transpose(A)
+    ind1, ind2 = indices(A)
+    B = similar(A, (ind2, ind1))
     transpose!(B, A)
 end
 function ctranspose(A::AbstractMatrix)
-    B = similar_transpose(A)
+    ind1, ind2 = indices(A)
+    B = similar(A, (ind2, ind1))
     ctranspose!(B, A)
 end
 ctranspose{T<:Real}(A::AbstractVecOrMat{T}) = transpose(A)
 
-transpose(x::AbstractVector) = [ transpose(v) for i=1, v in x ]
-ctranspose{T}(x::AbstractVector{T}) = T[ ctranspose(v) for i=1, v in x ] #Fixme comprehension
+transpose(x::AbstractVector) = [ transpose(v) for i=1:1, v in x ]
+ctranspose{T}(x::AbstractVector{T}) = T[ ctranspose(v) for i=1:1, v in x ]
 
 _cumsum_type{T<:Number}(v::AbstractArray{T}) = typeof(+zero(T))
 _cumsum_type(v) = typeof(v[1]+v[1])

@@ -46,6 +46,11 @@ clamp{T}(x::AbstractArray{T,2}, lo, hi) =
 clamp{T}(x::AbstractArray{T}, lo, hi) =
     reshape([clamp(xx, lo, hi) for xx in x], size(x))
 
+"""
+    clamp!(array::AbstractArray, lo, hi)
+
+Restrict values in `array` to the specified range, in-place.
+"""
 function clamp!{T}(x::AbstractArray{T}, lo, hi)
     @inbounds for i in eachindex(x)
         x[i] = clamp(x[i], lo, hi)
@@ -278,16 +283,16 @@ end
 
 modf(x) = rem(x,one(x)), trunc(x)
 
-const _modff_temp = Float32[0]
+const _modff_temp = Ref{Float32}()
 function modf(x::Float32)
     f = ccall((:modff,libm), Float32, (Float32,Ptr{Float32}), x, _modff_temp)
-    f, _modff_temp[1]
+    f, _modff_temp[]
 end
 
-const _modf_temp = Float64[0]
+const _modf_temp = Ref{Float64}()
 function modf(x::Float64)
     f = ccall((:modf,libm), Float64, (Float64,Ptr{Float64}), x, _modf_temp)
-    f, _modf_temp[1]
+    f, _modf_temp[]
 end
 
 ^(x::Float64, y::Float64) = nan_dom_err(ccall((:pow,libm),  Float64, (Float64,Float64), x, y), x+y)
@@ -408,6 +413,24 @@ end
 
 # generic fallback; for number types, promotion.jl does promotion
 muladd(x,y,z) = x*y+z
+
+# Float16 definitions
+
+for func in (:sin,:cos,:tan,:asin,:acos,:atan,:sinh,:cosh,:tanh,:asinh,:acosh,
+             :atanh,:exp,:log,:log2,:log10,:sqrt,:lgamma,:log1p,:erf,:erfc)
+    @eval begin
+        $func(a::Float16) = Float16($func(Float32(a)))
+        $func(a::Complex32) = Complex32($func(Complex64(a)))
+    end
+end
+
+for func in (:atan2,:hypot)
+    @eval begin
+        $func(a::Float16,b::Float16) = Float16($func(Float32(a),Float32(b)))
+    end
+end
+
+ldexp(a::Float16, b::Integer) = Float16(ldexp(Float32(a), b))
 
 # More special functions
 include("special/trig.jl")

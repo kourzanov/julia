@@ -10,9 +10,6 @@ override CXXFLAGS += $(JCXXFLAGS)
 override CPPFLAGS += $(JCPPFLAGS)
 
 SRCS := repl
-ifeq ($(USEMSVC), 1)
-SRCS += getopt
-endif
 
 HEADERS := $(addprefix $(JULIAHOME)/src/,julia.h julia_threads.h julia_internal.h options.h) \
 	$(BUILDDIR)/../src/julia_version.h $(wildcard $(JULIAHOME)/src/support/*.h) $(LIBUV_INC)/uv.h
@@ -26,21 +23,7 @@ OBJS := $(SRCS:%=$(BUILDDIR)/%.o)
 DOBJS := $(SRCS:%=$(BUILDDIR)/%.dbg.obj)
 DEBUGFLAGS += $(FLAGS)
 SHIPFLAGS += $(FLAGS)
-
-ifeq ($(USE_LLVM_SHLIB),1)
-ifeq ($(LLVM_USE_CMAKE),1)
-LLVMLINK := $(shell $(LLVM_CONFIG_HOST) --ldflags) -lLLVM
-else
-ifeq ($(OS),WINNT)
-LLVMLINK := $(shell $(LLVM_CONFIG_HOST) --ldflags) -lLLVM-$(LLVM_VER_SHORT)
-else
-LLVMLINK := $(shell $(LLVM_CONFIG_HOST) --ldflags) -lLLVM-$(shell $(LLVM_CONFIG_HOST) --version)
-endif # OS == WINNT
-endif # LLVM_USE_CMAKE == 1
-else
-LLVMLINK :=
-endif # USE_LLVM_SHLIB == 1
-JLDFLAGS += $(LDFLAGS) $(NO_WHOLE_ARCHIVE) $(OSLIBS) $(LLVMLINK) $(RPATH)
+JLDFLAGS += $(LDFLAGS) $(NO_WHOLE_ARCHIVE) $(OSLIBS) $(RPATH)
 
 ifeq ($(USE_SYSTEM_LIBM),0)
 ifneq ($(UNTRUSTED_SYSTEM_LIBM),0)

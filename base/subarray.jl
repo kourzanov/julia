@@ -8,25 +8,24 @@ abstract AbstractCartesianIndex{N} # This is a hacky forward declaration for Car
 immutable SubArray{T,N,P,I,L} <: AbstractArray{T,N}
     parent::P
     indexes::I
-    dims::NTuple{N,Int}
     offset1::Int       # for linear indexing and pointer, only valid when L==true
     stride1::Int       # used only for linear indexing
-    function SubArray(parent, indexes, dims, offset1, stride1)
+    function SubArray(parent, indexes, offset1, stride1)
         check_parent_index_match(parent, indexes)
-        new(parent, indexes, dims, offset1, stride1)
+        new(parent, indexes, offset1, stride1)
     end
 end
 # Compute the linear indexability of the indices, and combine it with the linear indexing of the parent
 function SubArray(parent::AbstractArray, indexes::Tuple, dims::Tuple)
-    SubArray(linearindexing(viewindexing(indexes), linearindexing(parent)), parent, indexes, convert(Dims, dims))
+    SubArray(linearindexing(viewindexing(indexes), linearindexing(parent)), parent, indexes, dims)
 end
-function SubArray{P, I, N}(::LinearSlow, parent::P, indexes::I, dims::NTuple{N, Int})
-    SubArray{eltype(P), N, P, I, false}(parent, indexes, dims, 0, 0)
+function SubArray{P, I, N}(::LinearSlow, parent::P, indexes::I, dims::NTuple{N})
+    SubArray{eltype(P), N, P, I, false}(parent, indexes, 0, 0)
 end
-function SubArray{P, I, N}(::LinearFast, parent::P, indexes::I, dims::NTuple{N, Int})
+function SubArray{P, I, N}(::LinearFast, parent::P, indexes::I, dims::NTuple{N})
     # Compute the stride and offset
     stride1 = compute_stride1(parent, indexes)
-    SubArray{eltype(P), N, P, I, true}(parent, indexes, dims, compute_offset1(parent, stride1, indexes), stride1)
+    SubArray{eltype(P), N, P, I, true}(parent, indexes, compute_offset1(parent, stride1, indexes), stride1)
 end
 
 check_parent_index_match{T,N}(parent::AbstractArray{T,N}, indexes::NTuple{N}) = nothing
@@ -48,8 +47,7 @@ viewindexing(I::Tuple{Vararg{Any}}) = LinearSlow()
 viewindexing(I::Tuple{AbstractArray, Vararg{Any}}) = LinearSlow()
 
 # Simple utilities
-size(V::SubArray) = V.dims
-length(V::SubArray) = prod(V.dims)
+size(V::SubArray) = (@_inline_meta; map(n->Int(unsafe_length(n)), indices(V)))
 
 similar(V::SubArray, T::Type, dims::Dims) = similar(V.parent, T, dims)
 
@@ -57,7 +55,7 @@ parent(V::SubArray) = V.parent
 parentindexes(V::SubArray) = V.indexes
 
 parent(a::AbstractArray) = a
-parentindexes(a::AbstractArray) = ntuple(i->1:size(a,i), ndims(a))
+parentindexes(a::AbstractArray) = ntuple(i->OneTo(size(a,i)), ndims(a))
 
 ## SubArray creation
 # Drops singleton dimensions (those indexed with a scalar)
@@ -76,10 +74,16 @@ function view{N}(A::AbstractArray, I::Vararg{ViewIndex,N}) # TODO: DEPRECATE FOR
     @boundscheck checkbounds(A, I...)
     unsafe_view(reshape(A, Val{N}), I...)
 end
+
 function unsafe_view{T,N}(A::AbstractArray{T,N}, I::Vararg{ViewIndex,N})
     @_inline_meta
     J = to_indexes(I...)
-    SubArray(A, J, map(dimlength, index_shape(A, J...)))
+    SubArray(A, J, map(unsafe_length, index_shape(A, J...)))
+end
+function unsafe_view{T,N}(V::SubArray{T,N}, I::Vararg{ViewIndex,N})
+    @_inline_meta
+    idxs = reindex(V, V.indexes, to_indexes(I...))
+    SubArray(V.parent, idxs, map(unsafe_length, (index_shape(V.parent, idxs...))))
 end
 
 # Re-indexing is the heart of a view, transforming A[i, j][x, y] to A[i[x], j[y]]
@@ -166,12 +170,6 @@ function setindex!(V::FastContiguousSubArray, x, i::Real)
     V
 end
 
-function unsafe_view{T,N}(V::SubArray{T,N}, I::Vararg{ViewIndex,N})
-    @_inline_meta
-    idxs = reindex(V, V.indexes, to_indexes(I...))
-    SubArray(V.parent, idxs, index_shape(V.parent, idxs...))
-end
-
 linearindexing{T<:FastSubArray}(::Type{T}) = LinearFast()
 linearindexing{T<:SubArray}(::Type{T}) = LinearSlow()
 
@@ -196,34 +194,25 @@ substrides(s, parent, dim, I::Tuple{Any, Vararg{Any}}) = throw(ArgumentError("st
 
 stride(V::SubArray, d::Integer) = d <= ndims(V) ? strides(V)[d] : strides(V)[end] * size(V)[end]
 
-compute_stride1(parent, I::Tuple) = compute_stride1(1, parent, 1, I)
-compute_stride1(s, parent, dim, I::Tuple{}) = s
-compute_stride1(s, parent, dim, I::Tuple{DroppedScalar, Vararg{Any}}) =
-    (@_inline_meta; compute_stride1(s*size(parent, dim), parent, dim+1, tail(I)))
-compute_stride1(s, parent, dim, I::Tuple{Range, Vararg{Any}}) = s*step(I[1])
-compute_stride1(s, parent, dim, I::Tuple{Colon, Vararg{Any}}) = s
-compute_stride1(s, parent, dim, I::Tuple{Any, Vararg{Any}}) = throw(ArgumentError("invalid strided index type $(typeof(I[1]))"))
+compute_stride1{N}(parent::AbstractArray, I::NTuple{N}) =
+    compute_stride1(1, fill_to_length(indices(parent), OneTo(1), Val{N}), I)
+compute_stride1(s, inds, I::Tuple{}) = s
+compute_stride1(s, inds, I::Tuple{DroppedScalar, Vararg{Any}}) =
+    (@_inline_meta; compute_stride1(s*unsafe_length(inds[1]), tail(inds), tail(I)))
+compute_stride1(s, inds, I::Tuple{Range, Vararg{Any}}) = s*step(I[1])
+compute_stride1(s, inds, I::Tuple{Colon, Vararg{Any}}) = s
+compute_stride1(s, inds, I::Tuple{Any, Vararg{Any}}) = throw(ArgumentError("invalid strided index type $(typeof(I[1]))"))
 
 iscontiguous(A::SubArray) = iscontiguous(typeof(A))
 iscontiguous{S<:SubArray}(::Type{S}) = false
 iscontiguous{F<:FastContiguousSubArray}(::Type{F}) = true
 
-# Fast linear SubArrays have their first index cached
-first_index(V::FastSubArray) = V.offset1 + V.stride1
-first_index(V::SubArray) = first_index(V.parent, V.indexes)
-function first_index(P::AbstractArray, indexes::Tuple)
-    f = first(linearindices(P))
-    s = 1
-    for i = 1:length(indexes)
-        f += (_first(indexes[i], P, i)-first(indices(P, i)))*s
-        s *= size(P, i)
-    end
-    f
+first_index(V::FastSubArray) = V.offset1 + V.stride1 # cached for fast linear SubArrays
+function first_index(V::SubArray)
+    P, I = parent(V), V.indexes
+    s1 = compute_stride1(P, I)
+    s1 + compute_offset1(P, s1, I)
 end
-_first(::Colon, P, ::Colon) = first(linearindices(P))
-_first(i, P, ::Colon) = first(i)
-_first(::Colon, P, d) = first(indices(P, d))
-_first(i, P, d) = first(i)
 
 # Computing the first index simply steps through the indices, accumulating the
 # sum of index each multiplied by the parent's stride.
@@ -235,17 +224,26 @@ compute_offset1(parent, stride1::Integer, I::Tuple) = (@_inline_meta; compute_of
 compute_offset1(parent, stride1::Integer, dims::Tuple{Int}, inds::Tuple{Colon}, I::Tuple) = compute_linindex(parent, I) - stride1*first(indices(parent, dims[1]))  # index-preserving case
 compute_offset1(parent, stride1::Integer, dims, inds, I::Tuple) = compute_linindex(parent, I) - stride1  # linear indexing starts with 1
 
-compute_linindex(parent, I) = compute_linindex(1, 1, parent, 1, I)
-compute_linindex(f, s, parent, dim, I::Tuple{Real, Vararg{Any}}) =
-    (@_inline_meta; compute_linindex(f + (I[1]-first(indices(parent,dim)))*s, s*size(parent, dim), parent, dim+1, tail(I)))
+function compute_linindex{N}(parent, I::NTuple{N})
+    IP = fill_to_length(indices(parent), OneTo(1), Val{N})
+    compute_linindex(1, 1, IP, I)
+end
+function compute_linindex(f, s, IP::Tuple, I::Tuple{Real, Vararg{Any}})
+    @_inline_meta
+    Δi = I[1]-first(IP[1])
+    compute_linindex(f + Δi*s, s*unsafe_length(IP[1]), tail(IP), tail(I))
+end
 # Just splat out the cartesian indices and continue
-compute_linindex(f, s, parent, dim, I::Tuple{AbstractCartesianIndex, Vararg{Any}}) =
-    (@_inline_meta; compute_linindex(f, s, parent, dim, (I[1].I..., tail(I)...)))
-compute_linindex(f, s, parent, dim, I::Tuple{Colon, Vararg{Any}}) =
-    (@_inline_meta; compute_linindex(f, s*size(parent, dim), parent, dim+1, tail(I)))
-compute_linindex(f, s, parent, dim, I::Tuple{Any, Vararg{Any}}) =
-    (@_inline_meta; compute_linindex(f + (first(I[1])-first(indices(parent,dim)))*s, s*size(parent, dim), parent, dim+1, tail(I)))
-compute_linindex(f, s, parent, dim, I::Tuple{}) = f
+compute_linindex(f, s, IP::Tuple, I::Tuple{AbstractCartesianIndex, Vararg{Any}}) =
+    (@_inline_meta; compute_linindex(f, s, IP, (I[1].I..., tail(I)...)))
+compute_linindex(f, s, IP::Tuple, I::Tuple{Colon, Vararg{Any}}) =
+    (@_inline_meta; compute_linindex(f, s*unsafe_length(IP[1]), tail(IP), tail(I)))
+function compute_linindex(f, s, IP::Tuple, I::Tuple{Any, Vararg{Any}})
+    @_inline_meta
+    Δi = first(I[1])-first(IP[1])
+    compute_linindex(f + Δi*s, s*unsafe_length(IP[1]), tail(IP), tail(I))
+end
+compute_linindex(f, s, IP::Tuple, I::Tuple{}) = f
 
 find_extended_dims(I) = (@_inline_meta; _find_extended_dims((), (), 1, I...))
 _find_extended_dims(dims, inds, dim) = dims, inds
@@ -258,7 +256,9 @@ unsafe_convert{T,N,P,I<:Tuple{Vararg{RangeIndex}}}(::Type{Ptr{T}}, V::SubArray{T
 
 pointer(V::FastSubArray, i::Int) = pointer(V.parent, V.offset1 + V.stride1*i)
 pointer(V::FastContiguousSubArray, i::Int) = pointer(V.parent, V.offset1 + i)
-pointer(V::SubArray, i::Int) = pointer(V, smart_ind2sub(shape(V), i))
+pointer(V::SubArray, i::Int) = _pointer(V, i)
+_pointer{T}(V::SubArray{T,1}, i::Int) = pointer(V, (i,))
+_pointer(V::SubArray, i::Int) = pointer(V, ind2sub(indices(V), i))
 
 function pointer{T,N,P<:Array,I<:Tuple{Vararg{RangeIndex}}}(V::SubArray{T,N,P,I}, is::Tuple{Vararg{Int}})
     index = first_index(V)
@@ -273,33 +273,11 @@ end
 # they are taken from the range/vector
 # Since bounds-checking is performance-critical and uses
 # indices, it's worth optimizing these implementations thoroughly
-indices(S::SubArray, d::Integer) = 1 <= d <= ndims(S) ? indices(S)[d] : (d > ndims(S) ? (1:1) : error("dimension $d out of range"))
-indices(S::SubArray) = (@_inline_meta; _indices(indicesbehavior(parent(S)), S))
-_indices(::IndicesStartAt1, S::SubArray) = (@_inline_meta; map(s->1:s, size(S)))
-_indices(::IndicesBehavior, S::SubArray) = (@_inline_meta; _indices((), 1, S, S.indexes...))
-_indices(out::Tuple, dim, S::SubArray) = out
-_indices(out::Tuple, dim, S::SubArray, i1, I...) = (@_inline_meta; _indices((out..., 1:length(i1)), dim+1, S, I...))
-_indices(out::Tuple, dim, S::SubArray, ::Real, I...) = (@_inline_meta; _indices(out, dim+1, S, I...))
-_indices(out::Tuple, dim, S::SubArray, ::Colon, I...) = (@_inline_meta; _indices((out..., indices(parent(S), dim)), dim+1, S, I...))
-indices1{T}(S::SubArray{T,0}) = 1:1
-indices1(S::SubArray) = (@_inline_meta; _indices1(indicesbehavior(parent(S)), S))
-_indices1(::IndicesStartAt1, S::SubArray) = 1:S.dims[1]
-_indices1(::IndicesBehavior, S::SubArray) = (@_inline_meta; _indices1(S, 1, S.indexes...))
-_indices1(S::SubArray, dim, i1, I...) = (@_inline_meta; 1:length(i1))
-_indices1(S::SubArray, dim, i1::Real, I...) = (@_inline_meta; _indices1(S, dim+1, I...))
-_indices1(S::SubArray, dim, i1::Colon, I...) = (@_inline_meta; indices(parent(S), dim))
-
-# Moreover, incides(S) is fast but indices(S, d) is slower
-indicesperformance{T<:SubArray}(::Type{T}) = IndicesSlow1D()
-
-indicesbehavior(S::SubArray) = _indicesbehavior(indicesbehavior(parent(S)), S)
-_indicesbehavior(::IndicesStartAt1, S::SubArray) = IndicesStartAt1()
-_indicesbehavior(::IndicesBehavior, S::SubArray) = (@_inline_meta; _indicesbehavior(keepcolon((), S.indexes...), S))
-keepcolon(out) = out
-keepcolon(out, ::Colon, I...) = (@_inline_meta; (Colon(),))
-keepcolon(out, i1, I...) = (@_inline_meta; keepcolon(out, I...))
-_indicesbehavior(::Tuple{}, S::SubArray) = IndicesStartAt1()
-_indicesbehavior(::Tuple{Colon}, S::SubArray) = indicesbehavior(parent(S))
+indices(S::SubArray) = (@_inline_pure_meta; _indices_sub(S, indices(S.parent), S.indexes...))
+_indices_sub(S::SubArray, pinds) = ()
+_indices_sub(S::SubArray, pinds, ::Real, I...) = _indices_sub(S, tail(pinds), I...)
+_indices_sub(S::SubArray, pinds, ::Colon, I...) = (pinds[1], _indices_sub(S, tail(pinds), I...)...)
+_indices_sub(S::SubArray, pinds, i1::AbstractArray, I...) = (unsafe_indices(i1)..., _indices_sub(S, tail(pinds), I...)...)
 
 ## Compatability
 # deprecate?
@@ -317,4 +295,77 @@ function parentdims(s::SubArray)
         end
     end
     dimindex
+end
+
+"""
+    replace_ref_end!(ex)
+
+Recursively replace occurences of the symbol :end in a "ref" expression (i.e. A[...]) `ex`
+with the appropriate function calls (`endof`, `size` or `trailingsize`). Replacement uses
+the closest enclosing ref, so
+
+    A[B[end]]
+
+should transform to
+
+    A[B[endof(B)]]
+
+"""
+function replace_ref_end!(ex,withex=nothing)
+    if isa(ex,Symbol) && ex == :end
+        withex === nothing && error("Invalid use of end")
+        return withex
+    elseif isa(ex,Expr)
+        if ex.head == :ref
+            S = ex.args[1] = replace_ref_end!(ex.args[1],withex)
+            # new :ref, so redefine withex
+            nargs = length(ex.args)-1
+            if nargs == 0
+                return ex
+            elseif nargs == 1
+                # replace with endof(S)
+                ex.args[2] = replace_ref_end!(ex.args[2],:(Base.endof($S)))
+            else
+                n = 1
+                J = endof(ex.args)
+                for j = 2:J-1
+                    exj = ex.args[j] = replace_ref_end!(ex.args[j],:(Base.size($S,$n)))
+                    if isa(exj,Expr) && exj.head == :...
+                        # splatted object
+                        exjs = exj.args[1]
+                        n = :($n + length($exjs))
+                    elseif isa(n, Expr)
+                        # previous expression splatted
+                        n = :($n + 1)
+                    else
+                        # an integer
+                        n += 1
+                    end
+                end
+                ex.args[J] = replace_ref_end!(ex.args[J],:(Base.trailingsize($S,$n)))
+            end
+        else
+            # recursive search
+            for i = eachindex(ex.args)
+                ex.args[i] = replace_ref_end!(ex.args[i],withex)
+            end
+        end
+    end
+    ex
+end
+
+"""
+    @view A[inds...]
+
+Creates a `SubArray` from an indexing expression. This can only be applied directly to a
+reference expression (e.g. `@view A[1,2:end]`), and should *not* be used as the target of
+an assignment (e.g. `@view(A[1,2:end]) = ...`).
+"""
+macro view(ex)
+    if isa(ex, Expr) && ex.head == :ref
+        ex = replace_ref_end!(ex)
+        Expr(:&&, true, esc(Expr(:call,:(Base.view),ex.args...)))
+    else
+        throw(ArgumentError("Invalid use of @view macro: argument must be a reference expression A[...]."))
+    end
 end

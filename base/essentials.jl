@@ -171,8 +171,9 @@ start(v::SimpleVector) = 1
 next(v::SimpleVector,i) = (v[i],i+1)
 done(v::SimpleVector,i) = (i > v.length)
 isempty(v::SimpleVector) = (v.length == 0)
-indices(v::SimpleVector, d) = d == 1 ? (1:length(v)) : (1:1)
+indices(v::SimpleVector) = (OneTo(length(v)),)
 linearindices(v::SimpleVector) = indices(v, 1)
+indices(v::SimpleVector, d) = d <= 1 ? indices(v)[d] : OneTo(1)
 
 function ==(v1::SimpleVector, v2::SimpleVector)
     length(v1)==length(v2) || return false
@@ -185,6 +186,14 @@ end
 map(f, v::SimpleVector) = Any[ f(v[i]) for i = 1:length(v) ]
 
 getindex(v::SimpleVector, I::AbstractArray) = Core.svec(Any[ v[i] for i in I ]...)
+
+"""
+    isassigned(array, i) -> Bool
+
+Tests whether the given array has a value associated with index `i`. Returns `false`
+if the index is out of bounds, or has an undefined reference.
+"""
+function isassigned end
 
 function isassigned(v::SimpleVector, i::Int)
     1 <= i <= length(v) || return false

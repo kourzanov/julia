@@ -2,7 +2,7 @@
 
 module SparseArrays
 
-using Base: ReshapedArray, setindex_shape_check
+using Base: ReshapedArray, promote_op, setindex_shape_check, to_shape
 using Base.Sort: Forward
 using Base.LinAlg: AbstractTriangular, PosDefException
 
@@ -24,14 +24,14 @@ import Base: @get!, acos, acosd, acot, acotd, acsch, asech, asin, asind, asinh,
     hcat, hvcat, imag, indmax, ishermitian, kron, length, log, log1p, max, min,
     maximum, minimum, norm, one, promote_eltype, real, reinterpret, reshape, rot180,
     rotl90, rotr90, round, scale!, setindex!, similar, size, transpose, tril,
-    triu, vcat, vec
+    triu, vcat, vec, permute!
 
-import Base.Broadcast: eltype_plus, broadcast_shape
+import Base.Broadcast: broadcast_shape
 
 export AbstractSparseArray, AbstractSparseMatrix, AbstractSparseVector,
-    SparseMatrixCSC, SparseVector, blkdiag, dense, droptol!, dropzeros!, dropzeros, etree,
+    SparseMatrixCSC, SparseVector, blkdiag, dense, droptol!, dropzeros!, dropzeros,
     issparse, nonzeros, nzrange, rowvals, sparse, sparsevec, spdiagm, speye, spones,
-    sprand, sprandn, spzeros, symperm, nnz
+    sprand, sprandn, spzeros, symperm, nnz, permute
 
 include("abstractsparse.jl")
 include("sparsematrix.jl")

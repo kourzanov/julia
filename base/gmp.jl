@@ -76,13 +76,17 @@ signed(x::BigInt) = x
 
 convert(::Type{BigInt}, x::BigInt) = x
 
-function tryparse_internal(::Type{BigInt}, s::AbstractString, startpos::Int, endpos::Int, base::Int, raise::Bool)
+function tryparse_internal(::Type{BigInt}, s::AbstractString, startpos::Int, endpos::Int, base_::Integer, raise::Bool)
     _n = Nullable{BigInt}()
 
     # don't make a copy in the common case where we are parsing a whole String
     bstr = startpos == start(s) && endpos == endof(s) ? String(s) : String(SubString(s,startpos,endpos))
 
-    sgn, base, i = Base.parseint_preamble(true,base,bstr,start(bstr),endof(bstr))
+    sgn, base, i = Base.parseint_preamble(true,Int(base_),bstr,start(bstr),endof(bstr))
+    if !(2 <= base <= 62)
+        raise && throw(ArgumentError("invalid base: base must be 2 ≤ base ≤ 62, got $base"))
+        return _n
+    end
     if i == 0
         raise && throw(ArgumentError("premature end of integer: $(repr(bstr))"))
         return _n
@@ -424,6 +428,7 @@ end
 ^(x::BigInt , y::Bool   ) = y ? x : one(x)
 ^(x::BigInt , y::Integer) = bigint_pow(x, y)
 ^(x::Integer, y::BigInt ) = bigint_pow(BigInt(x), y)
+^(x::Bool   , y::BigInt ) = Base.power_by_squaring(x, y)
 
 function powermod(x::BigInt, p::BigInt, m::BigInt)
     r = BigInt()

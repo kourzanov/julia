@@ -457,6 +457,9 @@ function _generic_matmatmul!{T,S,R}(C::AbstractVecOrMat{R}, tA, tB, A::AbstractV
     if size(C,1) != mA || size(C,2) != nB
         throw(DimensionMismatch("result C has dimensions $(size(C)), needs ($mA,$nB)"))
     end
+    if isempty(A) || isempty(B)
+        return fill!(C, zero(R))
+    end
 
     tile_size = 0
     if isbits(R) && isbits(T) && isbits(S) && (tA == 'N' || tB != 'N')
@@ -468,7 +471,8 @@ function _generic_matmatmul!{T,S,R}(C::AbstractVecOrMat{R}, tA, tB, A::AbstractV
         Atile = unsafe_wrap(Array, convert(Ptr{T}, pointer(Abuf)), sz)
         Btile = unsafe_wrap(Array, convert(Ptr{S}, pointer(Bbuf)), sz)
 
-        z = zero(R)
+        z1 = zero(A[1, 1]*B[1, 1] + A[1, 1]*B[1, 1])
+        z = convert(promote_type(typeof(z1), R), z1)
 
         if mA < tile_size && nA < tile_size && nB < tile_size
             Base.copy_transpose!(Atile, 1:nA, 1:mA, tA, A, 1:mA, 1:nA)
@@ -520,11 +524,8 @@ function _generic_matmatmul!{T,S,R}(C::AbstractVecOrMat{R}, tA, tB, A::AbstractV
         if tA == 'N'
             if tB == 'N'
                 for i = 1:mA, j = 1:nB
-                    if isempty(A) || isempty(B)
-                        Ctmp = zero(R)
-                    else
-                        Ctmp = zero(A[i, 1]*B[1, j] + A[i, 1]*B[1, j])
-                    end
+                    z2 = zero(A[i, 1]*B[1, j] + A[i, 1]*B[1, j])
+                    Ctmp = convert(promote_type(R, typeof(z2)), z2)
                     for k = 1:nA
                         Ctmp += A[i, k]*B[k, j]
                     end
@@ -532,11 +533,8 @@ function _generic_matmatmul!{T,S,R}(C::AbstractVecOrMat{R}, tA, tB, A::AbstractV
                 end
             elseif tB == 'T'
                 for i = 1:mA, j = 1:nB
-                    if isempty(A) || isempty(B)
-                        Ctmp = zero(R)
-                    else
-                        Ctmp = zero(A[i, 1]*B[j, 1] + A[i, 1]*B[j, 1])
-                    end
+                    z2 = zero(A[i, 1]*B[j, 1] + A[i, 1]*B[j, 1])
+                    Ctmp = convert(promote_type(R, typeof(z2)), z2)
                     for k = 1:nA
                         Ctmp += A[i, k]*B[j, k].'
                     end
@@ -544,11 +542,8 @@ function _generic_matmatmul!{T,S,R}(C::AbstractVecOrMat{R}, tA, tB, A::AbstractV
                 end
             else
                 for i = 1:mA, j = 1:nB
-                    if isempty(A) || isempty(B)
-                        Ctmp = zero(R)
-                    else
-                        Ctmp = zero(A[i, 1]*B[j, 1] + A[i, 1]*B[j, 1])
-                    end
+                    z2 = zero(A[i, 1]*B[j, 1] + A[i, 1]*B[j, 1])
+                    Ctmp = convert(promote_type(R, typeof(z2)), z2)
                     for k = 1:nA
                         Ctmp += A[i, k]*B[j, k]'
                     end
@@ -558,11 +553,8 @@ function _generic_matmatmul!{T,S,R}(C::AbstractVecOrMat{R}, tA, tB, A::AbstractV
         elseif tA == 'T'
             if tB == 'N'
                 for i = 1:mA, j = 1:nB
-                    if isempty(A) || isempty(B)
-                        Ctmp = zero(R)
-                    else
-                        Ctmp = zero(A[1, i]*B[1, j] + A[1, i]*B[1, j])
-                    end
+                    z2 = zero(A[1, i]*B[1, j] + A[1, i]*B[1, j])
+                    Ctmp = convert(promote_type(R, typeof(z2)), z2)
                     for k = 1:nA
                         Ctmp += A[k, i].'B[k, j]
                     end
@@ -570,11 +562,8 @@ function _generic_matmatmul!{T,S,R}(C::AbstractVecOrMat{R}, tA, tB, A::AbstractV
                 end
             elseif tB == 'T'
                 for i = 1:mA, j = 1:nB
-                    if isempty(A) || isempty(B)
-                        Ctmp = zero(R)
-                    else
-                        Ctmp = zero(A[1, i]*B[j, 1] + A[1, i]*B[j, 1])
-                    end
+                    z2 = zero(A[1, i]*B[j, 1] + A[1, i]*B[j, 1])
+                    Ctmp = convert(promote_type(R, typeof(z2)), z2)
                     for k = 1:nA
                         Ctmp += A[k, i].'B[j, k].'
                     end
@@ -582,11 +571,8 @@ function _generic_matmatmul!{T,S,R}(C::AbstractVecOrMat{R}, tA, tB, A::AbstractV
                 end
             else
                 for i = 1:mA, j = 1:nB
-                    if isempty(A) || isempty(B)
-                        Ctmp = zero(R)
-                    else
-                        Ctmp = zero(A[1, i]*B[j, 1] + A[1, i]*B[j, 1])
-                    end
+                    z2 = zero(A[1, i]*B[j, 1] + A[1, i]*B[j, 1])
+                    Ctmp = convert(promote_type(R, typeof(z2)), z2)
                     for k = 1:nA
                         Ctmp += A[k, i].'B[j, k]'
                     end
@@ -596,11 +582,8 @@ function _generic_matmatmul!{T,S,R}(C::AbstractVecOrMat{R}, tA, tB, A::AbstractV
         else
             if tB == 'N'
                 for i = 1:mA, j = 1:nB
-                    if isempty(A) || isempty(B)
-                        Ctmp = zero(R)
-                    else
-                        Ctmp = zero(A[1, i]*B[1, j] + A[1, i]*B[1, j])
-                    end
+                    z2 = zero(A[1, i]*B[1, j] + A[1, i]*B[1, j])
+                    Ctmp = convert(promote_type(R, typeof(z2)), z2)
                     for k = 1:nA
                         Ctmp += A[k, i]'B[k, j]
                     end
@@ -608,11 +591,8 @@ function _generic_matmatmul!{T,S,R}(C::AbstractVecOrMat{R}, tA, tB, A::AbstractV
                 end
             elseif tB == 'T'
                 for i = 1:mA, j = 1:nB
-                    if isempty(A) || isempty(B)
-                        Ctmp = zero(R)
-                    else
-                        Ctmp = zero(A[1, i]*B[j, 1] + A[1, i]*B[j, 1])
-                    end
+                    z2 = zero(A[1, i]*B[j, 1] + A[1, i]*B[j, 1])
+                    Ctmp = convert(promote_type(R, typeof(z2)), z2)
                     for k = 1:nA
                         Ctmp += A[k, i]'B[j, k].'
                     end
@@ -620,11 +600,8 @@ function _generic_matmatmul!{T,S,R}(C::AbstractVecOrMat{R}, tA, tB, A::AbstractV
                 end
             else
                 for i = 1:mA, j = 1:nB
-                    if isempty(A) || isempty(B)
-                        Ctmp = zero(R)
-                    else
-                        Ctmp = zero(A[1, i]*B[j, 1] + A[1, i]*B[j, 1])
-                    end
+                    z2 = zero(A[1, i]*B[j, 1] + A[1, i]*B[j, 1])
+                    Ctmp = convert(promote_type(R, typeof(z2)), z2)
                     for k = 1:nA
                         Ctmp += A[k, i]'B[j, k]'
                     end
@@ -675,31 +652,31 @@ end
 function matmul3x3!{T,S,R}(C::AbstractMatrix{R}, tA, tB, A::AbstractMatrix{T}, B::AbstractMatrix{S})
     @inbounds begin
     if tA == 'T'
-        A11 = transpose(A[1,1]); A12 = transpose(A[2,1]); A13 = transpose(A[3,1]);
-        A21 = transpose(A[1,2]); A22 = transpose(A[2,2]); A23 = transpose(A[3,2]);
-        A31 = transpose(A[1,3]); A32 = transpose(A[2,3]); A33 = transpose(A[3,3]);
+        A11 = transpose(A[1,1]); A12 = transpose(A[2,1]); A13 = transpose(A[3,1])
+        A21 = transpose(A[1,2]); A22 = transpose(A[2,2]); A23 = transpose(A[3,2])
+        A31 = transpose(A[1,3]); A32 = transpose(A[2,3]); A33 = transpose(A[3,3])
     elseif tA == 'C'
-        A11 = ctranspose(A[1,1]); A12 = ctranspose(A[2,1]); A13 = ctranspose(A[3,1]);
-        A21 = ctranspose(A[1,2]); A22 = ctranspose(A[2,2]); A23 = ctranspose(A[3,2]);
-        A31 = ctranspose(A[1,3]); A32 = ctranspose(A[2,3]); A33 = ctranspose(A[3,3]);
+        A11 = ctranspose(A[1,1]); A12 = ctranspose(A[2,1]); A13 = ctranspose(A[3,1])
+        A21 = ctranspose(A[1,2]); A22 = ctranspose(A[2,2]); A23 = ctranspose(A[3,2])
+        A31 = ctranspose(A[1,3]); A32 = ctranspose(A[2,3]); A33 = ctranspose(A[3,3])
     else
-        A11 = A[1,1]; A12 = A[1,2]; A13 = A[1,3];
-        A21 = A[2,1]; A22 = A[2,2]; A23 = A[2,3];
-        A31 = A[3,1]; A32 = A[3,2]; A33 = A[3,3];
+        A11 = A[1,1]; A12 = A[1,2]; A13 = A[1,3]
+        A21 = A[2,1]; A22 = A[2,2]; A23 = A[2,3]
+        A31 = A[3,1]; A32 = A[3,2]; A33 = A[3,3]
     end
 
     if tB == 'T'
-        B11 = transpose(B[1,1]); B12 = transpose(B[2,1]); B13 = transpose(B[3,1]);
-        B21 = transpose(B[1,2]); B22 = transpose(B[2,2]); B23 = transpose(B[3,2]);
-        B31 = transpose(B[1,3]); B32 = transpose(B[2,3]); B33 = transpose(B[3,3]);
+        B11 = transpose(B[1,1]); B12 = transpose(B[2,1]); B13 = transpose(B[3,1])
+        B21 = transpose(B[1,2]); B22 = transpose(B[2,2]); B23 = transpose(B[3,2])
+        B31 = transpose(B[1,3]); B32 = transpose(B[2,3]); B33 = transpose(B[3,3])
     elseif tB == 'C'
-        B11 = ctranspose(B[1,1]); B12 = ctranspose(B[2,1]); B13 = ctranspose(B[3,1]);
-        B21 = ctranspose(B[1,2]); B22 = ctranspose(B[2,2]); B23 = ctranspose(B[3,2]);
-        B31 = ctranspose(B[1,3]); B32 = ctranspose(B[2,3]); B33 = ctranspose(B[3,3]);
+        B11 = ctranspose(B[1,1]); B12 = ctranspose(B[2,1]); B13 = ctranspose(B[3,1])
+        B21 = ctranspose(B[1,2]); B22 = ctranspose(B[2,2]); B23 = ctranspose(B[3,2])
+        B31 = ctranspose(B[1,3]); B32 = ctranspose(B[2,3]); B33 = ctranspose(B[3,3])
     else
-        B11 = B[1,1]; B12 = B[1,2]; B13 = B[1,3];
-        B21 = B[2,1]; B22 = B[2,2]; B23 = B[2,3];
-        B31 = B[3,1]; B32 = B[3,2]; B33 = B[3,3];
+        B11 = B[1,1]; B12 = B[1,2]; B13 = B[1,3]
+        B21 = B[2,1]; B22 = B[2,2]; B23 = B[2,3]
+        B31 = B[3,1]; B32 = B[3,2]; B33 = B[3,3]
     end
 
     C[1,1] = A11*B11 + A12*B21 + A13*B31

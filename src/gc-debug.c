@@ -14,9 +14,9 @@ jl_gc_pagemeta_t *jl_gc_page_metadata(void *data)
     return page_metadata(data);
 }
 
-region_t *jl_gc_find_region(void *ptr, int maybe)
+region_t *jl_gc_find_region(void *ptr)
 {
-    return find_region(ptr, maybe);
+    return find_region(ptr);
 }
 
 // Find the memory block in the pool that owns the byte pointed to by p.
@@ -26,7 +26,7 @@ region_t *jl_gc_find_region(void *ptr, int maybe)
 // the end of the page.
 JL_DLLEXPORT jl_taggedvalue_t *jl_gc_find_taggedvalue_pool(char *p, size_t *osize_p)
 {
-    region_t *r = find_region(p, 1);
+    region_t *r = find_region(p);
     // Not in the pool
     if (!r)
         return NULL;
@@ -139,8 +139,8 @@ static void clear_mark(int bits)
                 for (int j = 0; j < 32; j++) {
                     if ((line >> j) & 1) {
                         jl_gc_pagemeta_t *pg = page_metadata(region->pages[pg_i*32 + j].data + GC_PAGE_OFFSET);
-                        jl_tls_states_t *ptls = jl_all_tls_states[pg->thread_n];
-                        jl_gc_pool_t *pool = &ptls->heap.norm_pools[pg->pool_n];
+                        jl_ptls_t ptls2 = jl_all_tls_states[pg->thread_n];
+                        jl_gc_pool_t *pool = &ptls2->heap.norm_pools[pg->pool_n];
                         pv = (jl_taggedvalue_t*)(pg->data + GC_PAGE_OFFSET);
                         char *lim = (char*)pv + GC_PAGE_SZ - GC_PAGE_OFFSET - pool->osize;
                         while ((char*)pv <= lim) {
@@ -164,17 +164,20 @@ static void restore(void)
     }
 }
 
-static void gc_verify_track(void)
+static void gc_verify_track(jl_ptls_t ptls)
 {
     do {
         arraylist_push(&lostval_parents_done, lostval);
         jl_printf(JL_STDERR, "Now looking for %p =======\n", lostval);
         clear_mark(GC_CLEAN);
-        pre_mark();
-        gc_mark_object_list(&to_finalize, 0);
-        gc_mark_object_list(&finalizer_list, 0);
-        gc_mark_object_list(&finalizer_list_marked, 0);
-        visit_mark_stack();
+        pre_mark(ptls);
+        gc_mark_object_list(ptls, &to_finalize, 0);
+        for (int i = 0;i < jl_n_threads;i++) {
+            jl_ptls_t ptls2 = jl_all_tls_states[i];
+            gc_mark_object_list(ptls, &ptls2->finalizers, 0);
+        }
+        gc_mark_object_list(ptls, &finalizer_list_marked, 0);
+        visit_mark_stack(ptls);
         if (lostval_parents.len == 0) {
             jl_printf(JL_STDERR, "Could not find the missing link. We missed a toplevel root. This is odd.\n");
             break;
@@ -206,18 +209,21 @@ static void gc_verify_track(void)
     } while(lostval != NULL);
 }
 
-void gc_verify(void)
+void gc_verify(jl_ptls_t ptls)
 {
     lostval = NULL;
     lostval_parents.len = 0;
     lostval_parents_done.len = 0;
     clear_mark(GC_CLEAN);
     gc_verifying = 1;
-    pre_mark();
-    gc_mark_object_list(&to_finalize, 0);
-    gc_mark_object_list(&finalizer_list, 0);
-    gc_mark_object_list(&finalizer_list_marked, 0);
-    visit_mark_stack();
+    pre_mark(ptls);
+    gc_mark_object_list(ptls, &to_finalize, 0);
+    for (int i = 0;i < jl_n_threads;i++) {
+        jl_ptls_t ptls2 = jl_all_tls_states[i];
+        gc_mark_object_list(ptls, &ptls2->finalizers, 0);
+    }
+    gc_mark_object_list(ptls, &finalizer_list_marked, 0);
+    visit_mark_stack(ptls);
     int clean_len = bits_save[GC_CLEAN].len;
     for(int i = 0; i < clean_len + bits_save[GC_OLD].len; i++) {
         jl_taggedvalue_t *v = (jl_taggedvalue_t*)bits_save[i >= clean_len ? GC_OLD : GC_CLEAN].items[i >= clean_len ? i - clean_len : i];
@@ -237,7 +243,7 @@ void gc_verify(void)
         return;
     }
     restore();
-    gc_verify_track();
+    gc_verify_track(ptls);
     gc_debug_print_status();
     gc_debug_critical_error();
     abort();
@@ -654,9 +660,9 @@ void gc_time_mark_pause(int64_t t0, int64_t scanned_bytes,
     int64_t last_remset_len = 0;
     int64_t remset_nptr = 0;
     for (int t_i = 0;t_i < jl_n_threads;t_i++) {
-        jl_tls_states_t *ptls = jl_all_tls_states[t_i];
-        last_remset_len += ptls->heap.last_remset->len;
-        remset_nptr = ptls->heap.remset_nptr;
+        jl_ptls_t ptls2 = jl_all_tls_states[t_i];
+        last_remset_len += ptls2->heap.last_remset->len;
+        remset_nptr = ptls2->heap.remset_nptr;
     }
     jl_printf(JL_STDOUT, "GC mark pause %.2f ms | "
               "scanned %" PRId64 " kB = %" PRId64 " + %" PRId64 " | "
@@ -773,14 +779,14 @@ void gc_stats_all_pool(void)
     size_t nb=0, w, tw=0, no=0,tp=0, nold=0,noldbytes=0, np, nol;
     for (int i = 0; i < JL_GC_N_POOLS; i++) {
         for (int t_i = 0;t_i < jl_n_threads;t_i++) {
-            jl_tls_states_t *ptls = jl_all_tls_states[t_i];
-            size_t b = pool_stats(&ptls->heap.norm_pools[i], &w, &np, &nol);
+            jl_ptls_t ptls2 = jl_all_tls_states[t_i];
+            size_t b = pool_stats(&ptls2->heap.norm_pools[i], &w, &np, &nol);
             nb += b;
-            no += (b / ptls->heap.norm_pools[i].osize);
+            no += (b / ptls2->heap.norm_pools[i].osize);
             tw += w;
             tp += np;
             nold += nol;
-            noldbytes += nol * ptls->heap.norm_pools[i].osize;
+            noldbytes += nol * ptls2->heap.norm_pools[i].osize;
         }
     }
     jl_printf(JL_STDOUT,

@@ -1,5 +1,13 @@
 # This file is a part of Julia. License is MIT: http://julialang.org/license
 
+catcmd = `cat`
+if is_windows()
+    try # use busybox-w32 on windows
+        success(`busybox`)
+        catcmd = `busybox cat`
+    end
+end
+
 let exename = `$(Base.julia_cmd()) --precompiled=yes`
     # --version
     let v = split(readstring(`$exename -v`), "julia version ")[end]
@@ -183,7 +191,7 @@ let exename = `$(Base.julia_cmd()) --precompiled=yes`
     @test readchomp(`$exename -E "Bool(Base.JLOptions().can_inline)"`) == "true"
     @test readchomp(`$exename --inline=yes -E "Bool(Base.JLOptions().can_inline)"`) == "true"
     @test readchomp(`$exename --inline=no -E "Bool(Base.JLOptions().can_inline)"`) == "false"
-    # --inline takes yes/no as arugment
+    # --inline takes yes/no as argument
     @test !success(`$exename --inline=false`)
 
     # --fast-math
@@ -196,7 +204,7 @@ let exename = `$(Base.julia_cmd()) --precompiled=yes`
         @test parse(Int,readchomp(`$exename --math-mode=fast -E "Int(Base.JLOptions().fast_math)"`)) == JL_OPTIONS_FAST_MATH_ON
     end
 
-    # --worker takes default / custom as arugment (default/custom arguments tested in test/parallel.jl, test/examples.jl)
+    # --worker takes default / custom as argument (default/custom arguments tested in test/parallel.jl, test/examples.jl)
     @test !success(`$exename --worker=true`)
 
     escape(str) = replace(str, "\\", "\\\\")
@@ -213,7 +221,7 @@ let exename = `$(Base.julia_cmd()) --precompiled=yes`
             @test readchomp(`$exename -L $testfile -e 'exit(0)' -- foo -bar --baz`) == "String[\"foo\",\"-bar\",\"--baz\"]"
             @test split(readchomp(`$exename -L $testfile $testfile`), '\n') == ["String[\"$(escape(testfile))\"]", "String[]"]
             @test !success(`$exename --foo $testfile`)
-            @test !success(`$exename -L $testfile -e 'exit(0)' -- foo -bar -- baz`)
+            @test readchomp(`$exename -L $testfile -e 'exit(0)' -- foo -bar -- baz`) == "String[\"foo\",\"-bar\",\"--\",\"baz\"]"
         finally
             rm(testfile)
         end
@@ -246,13 +254,10 @@ let exename = `$(Base.julia_cmd()) --precompiled=yes`
     @test readchomp(`$exename -e 'println(ARGS);' ''`) == "String[\"\"]"
 
     # issue #12679
-    extrapath = is_windows() ? joinpath(JULIA_HOME, "..", "Git", "usr", "bin") * ";" : ""
-    withenv("PATH" => extrapath * ENV["PATH"]) do
-        @test readchomp(pipeline(ignorestatus(`$exename --startup-file=no --compile=yes -ioo`),stderr=`cat`)) == "ERROR: unknown option `-o`"
-        @test readchomp(pipeline(ignorestatus(`$exename --startup-file=no -p`),stderr=`cat`)) == "ERROR: option `-p/--procs` is missing an argument"
-        @test readchomp(pipeline(ignorestatus(`$exename --startup-file=no --inline`),stderr=`cat`)) == "ERROR: option `--inline` is missing an argument"
-        @test readchomp(pipeline(ignorestatus(`$exename --startup-file=no -e "@show ARGS" -now -- julia RUN.jl`),stderr=`cat`)) == "ERROR: unknown option `-n`"
-    end
+    @test readchomp(pipeline(ignorestatus(`$exename --startup-file=no --compile=yes -ioo`),stderr=catcmd)) == "ERROR: unknown option `-o`"
+    @test readchomp(pipeline(ignorestatus(`$exename --startup-file=no -p`),stderr=catcmd)) == "ERROR: option `-p/--procs` is missing an argument"
+    @test readchomp(pipeline(ignorestatus(`$exename --startup-file=no --inline`),stderr=catcmd)) == "ERROR: option `--inline` is missing an argument"
+    @test readchomp(pipeline(ignorestatus(`$exename --startup-file=no -e "@show ARGS" -now -- julia RUN.jl`),stderr=catcmd)) == "ERROR: unknown option `-n`"
 
     # --compilecache={yes|no}
     @test readchomp(`$exename -E "Bool(Base.JLOptions().use_compilecache)"`) == "true"
@@ -273,10 +278,29 @@ let exename = `$(Base.julia_cmd()) --precompiled=yes`
 end
 
 # Make sure `julia --lisp` doesn't break
-run(pipeline(DevNull, `$(Base.julia_cmd()) --lisp`, DevNull))
+run(pipeline(DevNull, `$(joinpath(JULIA_HOME, Base.julia_exename())) --lisp`, DevNull))
+
+# Test that `julia [some other option] --lisp` is disallowed
+@test_throws ErrorException run(pipeline(DevNull, pipeline(`$(joinpath(JULIA_HOME, Base.julia_exename())) -Cnative --lisp`, stderr=DevNull), DevNull))
 
 # --precompiled={yes|no}
 let exename = `$(Base.julia_cmd())`
     @test readchomp(`$exename --precompiled=yes -E "Bool(Base.JLOptions().use_precompiled)"`) == "true"
     @test readchomp(`$exename --precompiled=no -E "Bool(Base.JLOptions().use_precompiled)"`) == "false"
+end
+
+# backtrace contains type and line number info (esp. on windows #17179)
+for precomp in ("yes", "no")
+    bt = readstring(pipeline(ignorestatus(`$(Base.julia_cmd()) --precompiled=$precomp
+        -E 'include("____nonexistent_file")'`), stderr=catcmd))
+    @test contains(bt, "in include_from_node1")
+    if is_windows() && Sys.WORD_SIZE == 32 && precomp == "yes"
+        # fixme, issue #17251
+        @test_broken contains(bt, "in include_from_node1(::String) at $(joinpath(".","loading.jl"))")
+    else
+        @test contains(bt, "in include_from_node1(::String) at $(joinpath(".","loading.jl"))")
+    end
+    lno = match(r"at \.[\/\\]loading\.jl:(\d+)", bt)
+    @test length(lno.captures) == 1
+    @test parse(Int, lno.captures[1]) > 0
 end

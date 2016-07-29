@@ -3,22 +3,62 @@
 import Base.Pkg.PkgError
 
 function temp_pkg_dir(fn::Function, remove_tmp_dir::Bool=true)
-    # Used in tests below to setup and teardown a sandboxed package directory
-    const tmpdir = ENV["JULIA_PKGDIR"] = joinpath(tempdir(),randstring())
-    @test !isdir(Pkg.dir())
-    try
-        Pkg.init()
-        @test isdir(Pkg.dir())
-        Pkg.resolve()
-        fn()
-    finally
-        remove_tmp_dir && rm(tmpdir, recursive=true)
+    # Used in tests below to set up and tear down a sandboxed package directory
+    const tmpdir = joinpath(tempdir(),randstring())
+    withenv("JULIA_PKGDIR" => tmpdir) do
+        @test !isdir(Pkg.dir())
+        try
+            Pkg.init()
+            @test isdir(Pkg.dir())
+            Pkg.resolve()
+            fn()
+        finally
+            remove_tmp_dir && rm(tmpdir, recursive=true)
+        end
     end
 end
 
+macro grab_outputs(ex)
+    quote
+        local err::String, out::String
+        local ferrname = ""
+        local foutname = ""
+        local ret
+        try
+            OLD_STDERR = STDERR
+            ferrname = tempname()
+            ferr = open(ferrname, "w")
+            try
+                OLD_STDOUT = STDOUT
+                foutname = tempname()
+                fout = open(foutname, "w")
+                try
+                    redirect_stderr(ferr)
+                    try
+                        redirect_stdout(fout)
+                        ret = $(esc(ex))
+                    finally
+                        redirect_stdout(OLD_STDOUT)
+                        close(fout)
+                    end
+                finally
+                    redirect_stderr(OLD_STDERR)
+                    close(ferr)
+                end
+                out = readstring(foutname)
+                err = readstring(ferrname)
+            finally
+                isfile(foutname) && rm(foutname)
+            end
+        finally
+            isfile(ferrname) && rm(ferrname)
+        end
+        ret, out, err
+    end
+end
 
 # Test basic operations: adding or removing a package, status, free
-#Also test for the existence of REQUIRE and META_Branch
+# Also test for the existence of REQUIRE and META_BRANCH
 temp_pkg_dir() do
     @test isfile(joinpath(Pkg.dir(),"REQUIRE"))
     @test isfile(joinpath(Pkg.dir(),"META_BRANCH"))
@@ -27,7 +67,7 @@ temp_pkg_dir() do
     @test !isempty(Pkg.available())
 
     @test_throws PkgError Pkg.installed("MyFakePackage")
-    @test Pkg.installed("Example") == nothing
+    @test Pkg.installed("Example") === nothing
 
     # check that versioninfo(io, true) doesn't error and produces some output
     # (done here since it calls Pkg.status which might error or clone metadata)
@@ -57,7 +97,7 @@ temp_pkg_dir() do
     end
 
     Pkg.setprotocol!("")
-    @test Pkg.Cache.rewrite_url_to == nothing
+    @test Pkg.Cache.rewrite_url_to === nothing
     Pkg.setprotocol!("https")
     Pkg.add("Example")
     @test [keys(Pkg.installed())...] == ["Example"]
@@ -178,14 +218,77 @@ temp_pkg_dir() do
         end
     end
 
+    # Various pin/free/re-pin/change-pin patterns (issue #17176)
     begin
-        Pkg.pin("Example")
-        Pkg.free("Example")
+        ret, out, err = @grab_outputs Pkg.free("Example")
+        @test ret === nothing && out == ""
+        @test contains(err, "INFO: Freeing Example")
 
-        Pkg.pin("Example", v"0.4.0")
-        @test Pkg.update() == nothing
-        Pkg.installed()["Example"] == v"0.4.0"
+        ret, out, err = @grab_outputs Pkg.pin("Example")
+        @test ret === nothing && out == ""
+        @test ismatch(r"INFO: Creating Example branch pinned\.[0-9a-f]{8}\.tmp", err)
+        @test !contains(err, "INFO: No packages to install, update or remove")
+        branchid = replace(err, r".*pinned\.([0-9a-f]{8})\.tmp.*"s, s"\1")
+        vers = Pkg.installed("Example")
 
+        ret, out, err = @grab_outputs Pkg.free("Example")
+        @test ret === nothing && out == ""
+        @test contains(err, "INFO: Freeing Example")
+
+        ret, out, err = @grab_outputs Pkg.pin("Example", v"0.4.0")
+        @test ret === nothing && out == ""
+        @test contains(err, "INFO: Creating Example branch pinned.b1990792.tmp")
+        @test contains(err, "INFO: No packages to install, update or remove")
+        @test Pkg.installed("Example") == v"0.4.0"
+
+        ret, out, err = @grab_outputs Pkg.pin("Example", v"0.4.0")
+        @test ret === nothing && out == ""
+        @test contains(err, "INFO: Package Example is already pinned to the selected commit")
+        @test !contains(err, "INFO: No packages to install, update or remove")
+        @test Pkg.installed("Example") == v"0.4.0"
+
+        ret, out, err = @grab_outputs Pkg.pin("Example")
+        @test ret === nothing && out == ""
+        @test contains(err, "INFO: Package Example is already pinned")
+        @test !contains(err, "INFO: No packages to install, update or remove")
+        @test Pkg.installed("Example") == v"0.4.0"
+
+        ret, out, err = @grab_outputs Pkg.update()
+        @test ret === nothing && out == ""
+        @test contains(err, "INFO: Package Example: skipping update (pinned)...")
+        @test Pkg.installed("Example") == v"0.4.0"
+
+        ret, out, err = @grab_outputs Pkg.pin("Example", v"0.3.1")
+        @test ret === nothing && out == ""
+        @test contains(err, "INFO: Creating Example branch pinned.d1ef7b00.tmp")
+        @test contains(err, "INFO: No packages to install, update or remove")
+        @test Pkg.installed("Example") == v"0.3.1"
+
+        ret, out, err = @grab_outputs Pkg.pin("Example", v"0.4.0")
+        @test ret === nothing && out == ""
+        @test contains(err, "INFO: Package Example: checking out existing branch pinned.b1990792.tmp")
+        @test contains(err, "INFO: No packages to install, update or remove")
+        @test Pkg.installed("Example") == v"0.4.0"
+
+        ret, out, err = @grab_outputs Pkg.free("Example")
+        @test ret === nothing && out == ""
+        @test contains(err, "INFO: Freeing Example")
+        @test contains(err, "INFO: No packages to install, update or remove")
+        @test Pkg.installed("Example") == vers
+
+        ret, out, err = @grab_outputs Pkg.pin("Example")
+        @test ret === nothing && out == ""
+        @test contains(err, "INFO: Package Example: checking out existing branch pinned.$branchid.tmp")
+        @test !contains(err, "INFO: No packages to install, update or remove")
+        @test Pkg.installed("Example") == vers
+
+        ret, out, err = @grab_outputs Pkg.free("Example")
+        @test ret === nothing && out == ""
+        @test contains(err, "INFO: Freeing Example")
+        @test Pkg.installed("Example") == vers
+    end
+
+    begin
         # bug identified in #16850, Base.url \ vs / for non-Base methods
         include(Pkg.dir("Example","src","Example.jl"))
         meth = first(methods(Example.domath))
@@ -292,9 +395,82 @@ temp_pkg_dir() do
     # issue #15948
     let package = "Example"
         Pkg.rm(package)  # Remove package if installed
-        @test Pkg.installed(package) == nothing  # Registered with METADATA but not installed
+        @test Pkg.installed(package) === nothing  # Registered with METADATA but not installed
         msg = readstring(ignorestatus(`$(Base.julia_cmd()) -f -e "redirect_stderr(STDOUT); Pkg.build(\"$package\")"`))
         @test contains(msg, "$package is not an installed package")
         @test !contains(msg, "signal (15)")
+    end
+
+    # partial Pkg.update
+    begin
+        nothingtodomsg = "INFO: No packages to install, update or remove\n"
+
+        ret, out, err = @grab_outputs begin
+            Pkg.rm("Example")
+            Pkg.add("Example")
+        end
+        @test ret === nothing && out == ""
+        @test contains(err, "INFO: Installing Example v")
+
+        ret, out, err = @grab_outputs Pkg.update("Example")
+        @test ret === nothing && out == ""
+        @test contains(err, nothingtodomsg)
+
+        ret, out, err = @grab_outputs begin
+            Pkg.rm("Example")
+            Pkg.add("Example", v"0", v"0.4.1-") # force version to be < 0.4.1
+        end
+        @test ret === nothing && out == ""
+        @test contains(err, "INFO: Installing Example v0.4.0")
+
+        ret, out, err = @grab_outputs Pkg.update("Example")
+        @test ret === nothing && out == ""
+        @test ismatch(r"INFO: Package Example was set to version 0\.4\.0, but a higher version \d+\.\d+\.\d+\S* exists.\n", err)
+        @test contains(err, "The update is prevented by explicit requirements constraints. Edit your REQUIRE file to change this.\n")
+        @test contains(err, nothingtodomsg)
+
+        ret, out, err = @grab_outputs begin
+            Pkg.rm("Example")
+            Pkg.add("Example")
+            Pkg.pin("Example", v"0.4.0")
+        end
+        @test ret === nothing && out == ""
+        @test contains(err, "INFO: Installing Example")
+
+        ret, out, err = @grab_outputs Pkg.update("Example")
+        @test ret === nothing && out == ""
+        @test contains(err, "INFO: Package Example: skipping update (pinned)...\n")
+        @test ismatch(r"INFO: Package Example was set to version 0\.4\.0, but a higher version \d+\.\d+\.\d+\S* exists.\n", err)
+        @test contains(err, "The package is fixed. You can try using `Pkg.free(\"Example\")` to update it.")
+        @test contains(err, nothingtodomsg)
+
+        metadata_dir = Pkg.dir("METADATA")
+        const old_commit = "313bfaafa301e82d40574a778720e893c559a7e2"
+
+        # Force a METADATA rollback to an old version, so that we will install some
+        # outdated versions of some packages and then update some of those
+        # (note that the following Pkg.update calls will update METADATA to the
+        # latest version even though they don't update all packages)
+        LibGit2.with(LibGit2.GitRepo, metadata_dir) do repo
+            LibGit2.reset!(repo, LibGit2.Oid(old_commit), LibGit2.Consts.RESET_HARD)
+        end
+
+        ret, out, err = @grab_outputs Pkg.add("Colors")
+        @test ret === nothing && out == ""
+        @test contains(err, "INFO: Installing Colors v0.6.4")
+        @test contains(err, "INFO: Installing ColorTypes v0.2.2")
+        @test contains(err, "INFO: Installing FixedPointNumbers v0.1.3")
+        @test contains(err, "INFO: Installing Compat v0.7.18")
+        @test contains(err, "INFO: Installing Reexport v0.0.3")
+
+        ret, out, err = @grab_outputs Pkg.update("ColorTypes")
+        @test ismatch(r"INFO: Upgrading ColorTypes: v0\.2\.2 => v\d+\.\d+\.\d+", err)
+        @test ismatch(r"INFO: Upgrading Compat: v0\.7\.18 => v\d+\.\d+\.\d+", err)
+        @test !contains(err, "INFO: Upgrading Colors: ")
+        @test Pkg.installed("Colors") == v"0.6.4"
+
+        ret, out, err = @grab_outputs Pkg.update("FixedPointNumbers")
+        @test ret === nothing && out == ""
+        @test contains(err, nothingtodomsg)
     end
 end

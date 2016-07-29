@@ -2,7 +2,7 @@
 
 module Serializer
 
-import Base: GMP, Bottom, unsafe_convert, uncompressed_ast
+import Base: GMP, Bottom, unsafe_convert, uncompressed_ast, datatype_pointerfree
 import Core: svec
 using Base: ViewIndex, index_lengths
 
@@ -21,8 +21,7 @@ const TAGS = Any[
     Symbol, Tuple, Expr,  # dummy entries, intentionally shadowed by earlier ones
     LineNumberNode, Slot, LabelNode, GotoNode,
     QuoteNode, :reserved23 #=was TopNode=#, TypeVar, Core.Box, LambdaInfo,
-    Module, #=UndefRefTag=#Symbol, Task, String,
-    UTF16String, UTF32String, Float16,
+    Module, #=UndefRefTag=#Symbol, Task, String, Float16,
     SimpleVector, #=BackrefTag=#Symbol, Method, GlobalRef,
 
     (), Bool, Any, :Any, Bottom, :reserved21, :reserved22, Type,
@@ -42,7 +41,7 @@ const TAGS = Any[
     28, 29, 30, 31, 32
 ]
 
-const ser_version = 3 # do not make changes without bumping the version #!
+const ser_version = 4 # do not make changes without bumping the version #!
 
 const NTAGS = length(TAGS)
 
@@ -90,7 +89,7 @@ end
 
 # cycle handling
 function serialize_cycle(s::AbstractSerializer, x)
-    if !isimmutable(x) && !typeof(x).pointerfree
+    if !isimmutable(x) && !datatype_pointerfree(typeof(x))
         offs = get(s.table, x, -1)
         if offs != -1
             writetag(s.io, BACKREF_TAG)
@@ -228,14 +227,14 @@ end
 trimmedsize(V) = index_lengths(V.parent, V.indexes...)
 
 function _trimmedsubarray{T,N,P,I,LD}(A, V::SubArray{T,N,P,I,LD}, newindexes)
-    LD && return SubArray{T,N,P,I,LD}(A, newindexes, size(V), Base.compute_offset1(A, 1, newindexes), 1)
-    SubArray{T,N,P,I,LD}(A, newindexes, size(V), 0, 0)
+    LD && return SubArray{T,N,P,I,LD}(A, newindexes, Base.compute_offset1(A, 1, newindexes), 1)
+    SubArray{T,N,P,I,LD}(A, newindexes, 0, 0)
 end
 _trimmedsubarray(A, V, newindexes, index::ViewIndex, indexes...) = _trimmedsubarray(A, V, (newindexes..., trimmedindex(V.parent, length(newindexes)+1, index)), indexes...)
 
 trimmedindex(P, d, i::Real) = oftype(i, 1)
 trimmedindex(P, d, i::Colon) = i
-trimmedindex(P, d, i::AbstractVector) = oftype(i, 1:length(i))
+trimmedindex(P, d, i::AbstractArray) = oftype(i, reshape(linearindices(i), indices(i)))
 
 function serialize{T<:AbstractString}(s::AbstractSerializer, ss::SubString{T})
     # avoid saving a copy of the parent string, keeping the type of ss
@@ -530,7 +529,7 @@ function deserialize(s::AbstractSerializer)
 end
 
 function deserialize_cycle(s::AbstractSerializer, x::ANY)
-    if !isimmutable(x) && !typeof(x).pointerfree
+    if !isimmutable(x) && !datatype_pointerfree(typeof(x))
         s.table[s.counter] = x
         s.counter += 1
     end
@@ -582,17 +581,11 @@ function deserialize(s::AbstractSerializer, ::Type{Module})
     if isa(path,Tuple) && path !== ()
         # old version
         for mname in path
-            if !isdefined(m,mname)
-                warn("Module $mname not defined on process $(myid())")  # an error seemingly fails
-            end
             m = getfield(m,mname)::Module
         end
     else
         mname = path
         while mname !== ()
-            if !isdefined(m,mname)
-                warn("Module $mname not defined on process $(myid())")  # an error seemingly fails
-            end
             m = getfield(m,mname)::Module
             mname = deserialize(s)
         end
@@ -893,7 +886,7 @@ end
 
 deserialize(s::AbstractSerializer, ::Type{BigFloat}) = parse(BigFloat, deserialize(s))
 
-deserialize(s::AbstractSerializer, ::Type{BigInt}) = get(GMP.tryparse_internal(BigInt, deserialize(s), 62, true))
+deserialize(s::AbstractSerializer, ::Type{BigInt}) = parse(BigInt, deserialize(s), 62)
 
 function deserialize(s::AbstractSerializer, t::Type{Regex})
     pattern = deserialize(s)

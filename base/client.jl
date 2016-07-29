@@ -114,8 +114,8 @@ function eval_user_input(ast::ANY, show_value)
                 errcount, lasterr = 0, ()
             else
                 ast = expand(ast)
-                value = eval(Main,ast)
-                eval(Main, :(ans = $(Expr(:quote, value))))
+                value = eval(Main, ast)
+                eval(Main, Expr(:(=), :ans, Expr(:call, ()->value)))
                 if !is(value,nothing) && show_value
                     if have_color
                         print(answer_color())
@@ -202,11 +202,7 @@ try_include(path::AbstractString) = isfile(path) && include(path)
 function process_options(opts::JLOptions)
     if !isempty(ARGS)
         idxs = find(x -> x == "--", ARGS)
-        if length(idxs) > 1
-            println(STDERR, "julia: redundant option terminator `--`")
-            exit(1)
-        end
-        deleteat!(ARGS, idxs)
+        length(idxs) > 0 && deleteat!(ARGS, idxs[1])
     end
     repl                  = true
     startup               = (opts.startupfile != 2)

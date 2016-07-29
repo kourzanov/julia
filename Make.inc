@@ -36,6 +36,8 @@ USE_SYSTEM_ARPACK:=0
 USE_SYSTEM_SUITESPARSE:=0
 USE_SYSTEM_LIBUV:=0
 USE_SYSTEM_UTF8PROC:=0
+USE_SYSTEM_MBEDTLS:=0
+USE_SYSTEM_LIBSSH2:=0
 USE_SYSTEM_LIBGIT2:=0
 USE_SYSTEM_PATCHELF:=0
 
@@ -481,6 +483,10 @@ ifeq (exists, $(shell [ -e $(BUILDROOT)/Make.user ] && echo exists ))
 include $(BUILDROOT)/Make.user
 endif
 
+ifneq ($(CC_BASE)$(CXX_BASE),$(shell echo $(CC) | cut -d' ' -f1)$(shell echo $(CXX) | cut -d' ' -f1))
+    $(error Forgot override directive on CC or CXX in Make.user? Cowardly refusing to build)
+endif
+
 ifeq ($(SANITIZE),1)
 ifeq ($(SANITIZE_MEMORY),1)
 SANITIZE_OPTS := -fsanitize=memory -fsanitize-memory-track-origins -fno-omit-frame-pointer
@@ -636,11 +642,10 @@ else
 ISX86:=0
 endif
 
-# If we are running on powerpc64, set certain options automatically
-ifneq (,$(findstring powerpc64,$(ARCH)))
+# If we are running on powerpc64 or ppc64, set certain options automatically
+ifneq (,$(filter $(ARCH), powerpc64 ppc64le))
 JCFLAGS += -fsigned-char
-
-override LLVM_VER:=3.8.0
+override LLVM_VER:=3.8.1
 override OPENBLAS_DYNAMIC_ARCH:=0
 override OPENBLAS_TARGET_ARCH:=POWER8
 
@@ -650,9 +655,7 @@ endif
 ifneq (,$(findstring arm,$(ARCH)))
 JCFLAGS += -fsigned-char
 
-LLVM_ASSERTIONS=1
-#LLVM_FLAGS+="--with-float=hard --with-abi=aapcs-vfp"
-
+override LLVM_VER:=3.8.1
 override USE_BLAS64:=0
 override OPENBLAS_DYNAMIC_ARCH:=0
 override OPENBLAS_TARGET_ARCH:=ARMV7
@@ -839,12 +842,18 @@ endif
 ifeq ($(OS), WINNT)
   RPATH :=
   RPATH_ORIGIN :=
+  RPATH_ESCAPED_ORIGIN :=
+  RPATH_LIB :=
 else ifeq ($(OS), Darwin)
-  RPATH := -Wl,-rpath,'@executable_path/$(build_private_libdir_rel)' -Wl,-rpath,'@executable_path/$(build_libdir_rel)'
+  RPATH := -Wl,-rpath,'@executable_path/$(build_libdir_rel)'
   RPATH_ORIGIN := -Wl,-rpath,'@loader_path/'
+  RPATH_ESCAPED_ORIGIN := $(RPATH_ORIGIN)
+  RPATH_LIB := -Wl,-rpath,'@loader_path/' -Wl,-rpath,'@loader_path/julia/'
 else
-  RPATH := -Wl,-rpath,'$$ORIGIN/$(build_private_libdir_rel)' -Wl,-rpath,'$$ORIGIN/$(build_libdir_rel)' -Wl,-z,origin
+  RPATH := -Wl,-rpath,'$$ORIGIN/$(build_libdir_rel)' -Wl,-rpath-link,$(build_shlibdir) -Wl,-z,origin
   RPATH_ORIGIN := -Wl,-rpath,'$$ORIGIN' -Wl,-z,origin
+  RPATH_ESCAPED_ORIGIN := -Wl,-rpath,'\$$\$$ORIGIN' -Wl,-z,origin
+  RPATH_LIB := -Wl,-rpath,'$$ORIGIN' -Wl,-rpath,'$$ORIGIN/julia' -Wl,-z,origin
 endif
 
 # --whole-archive

@@ -2,6 +2,10 @@
 
 ## types ##
 
+typealias Dims{N} NTuple{N,Int}
+typealias DimsInteger{N} NTuple{N,Integer}
+typealias Indices{N} NTuple{N,AbstractUnitRange}
+
 const (<:) = issubtype
 
 supertype(T::DataType) = T.super
@@ -293,7 +297,6 @@ fldmod1{T<:Real}(x::T, y::T) = (fld1(x,y), mod1(x,y))
 fldmod1{T<:Integer}(x::T, y::T) = (fld1(x,y), mod1(x,y))
 
 # transpose
-transpose(x) = x
 ctranspose(x) = conj(transpose(x))
 conj(x) = x
 
@@ -332,6 +335,8 @@ eltype(x) = eltype(typeof(x))
 |>(x, f) = f(x)
 
 # array shape rules
+
+promote_shape(::Tuple{}, ::Tuple{}) = ()
 
 function promote_shape(a::Tuple{Int,}, b::Tuple{Int,})
     if a[1] != b[1]
@@ -374,20 +379,24 @@ function promote_shape(a::Dims, b::Dims)
 end
 
 function promote_shape(a::AbstractArray, b::AbstractArray)
-    if ndims(a) < ndims(b)
+    promote_shape(indices(a), indices(b))
+end
+
+function promote_shape(a::Indices, b::Indices)
+    if length(a) < length(b)
         return promote_shape(b, a)
     end
-    for i=1:ndims(b)
-        if indices(a, i) != indices(b, i)
+    for i=1:length(b)
+        if a[i] != b[i]
             throw(DimensionMismatch("dimensions must match"))
         end
     end
-    for i=ndims(b)+1:ndims(a)
-        if indices(a, i) != 1:1
+    for i=length(b)+1:length(a)
+        if a[i] != 1:1
             throw(DimensionMismatch("dimensions must match"))
         end
     end
-    return shape(a)
+    return a
 end
 
 function throw_setindex_mismatch(X, I)
@@ -403,17 +412,17 @@ end
 # for permutations that leave array elements in the same linear order.
 # those are the permutations that preserve the order of the non-singleton
 # dimensions.
-function setindex_shape_check(X::AbstractArray, I...)
+function setindex_shape_check(X::AbstractArray, I::Integer...)
     li = ndims(X)
     lj = length(I)
     i = j = 1
     while true
-        ii = size(X,i)
+        ii = length(indices(X,i))
         jj = I[j]
         if i == li || j == lj
             while i < li
                 i += 1
-                ii *= size(X,i)
+                ii *= length(indices(X,i))
             end
             while j < lj
                 j += 1
@@ -438,22 +447,22 @@ function setindex_shape_check(X::AbstractArray, I...)
 end
 
 setindex_shape_check(X::AbstractArray) =
-    (length(X)==1 || throw_setindex_mismatch(X,()))
+    (_length(X)==1 || throw_setindex_mismatch(X,()))
 
-setindex_shape_check(X::AbstractArray, i) =
-    (length(X)==i || throw_setindex_mismatch(X, (i,)))
+setindex_shape_check(X::AbstractArray, i::Integer) =
+    (_length(X)==i || throw_setindex_mismatch(X, (i,)))
 
-setindex_shape_check{T}(X::AbstractArray{T,1}, i) =
-    (length(X)==i || throw_setindex_mismatch(X, (i,)))
+setindex_shape_check{T}(X::AbstractArray{T,1}, i::Integer) =
+    (_length(X)==i || throw_setindex_mismatch(X, (i,)))
 
-setindex_shape_check{T}(X::AbstractArray{T,1}, i, j) =
-    (length(X)==i*j || throw_setindex_mismatch(X, (i,j)))
+setindex_shape_check{T}(X::AbstractArray{T,1}, i::Integer, j::Integer) =
+    (_length(X)==i*j || throw_setindex_mismatch(X, (i,j)))
 
-function setindex_shape_check{T}(X::AbstractArray{T,2}, i, j)
+function setindex_shape_check{T}(X::AbstractArray{T,2}, i::Integer, j::Integer)
     if length(X) != i*j
         throw_setindex_mismatch(X, (i,j))
     end
-    sx1 = size(X,1)
+    sx1 = length(indices(X,1))
     if !(i == 1 || i == sx1 || sx1 == 1)
         throw_setindex_mismatch(X, (i,j))
     end
@@ -481,7 +490,7 @@ for f in (:+, :-)
             r1l = length(r1)
             (r1l == length(r2) ||
              throw(DimensionMismatch("argument dimensions must match")))
-            range($f(r1.start,r2.start), $f(step(r1),step(r2)), r1l)
+            range($f(first(r1),first(r2)), $f(step(r1),step(r2)), r1l)
         end
 
         function $f{T<:AbstractFloat}(r1::FloatRange{T}, r2::FloatRange{T})
@@ -528,48 +537,36 @@ end
 macro vectorize_1arg(S,f)
     S = esc(S); f = esc(f); T = esc(:T)
     quote
-        ($f){$T<:$S}(x::AbstractArray{$T,1}) = [ ($f)(elem) for elem in x ]
-        ($f){$T<:$S}(x::AbstractArray{$T,2}) =
-            [ ($f)(x[i,j]) for i=1:size(x,1), j=1:size(x,2) ]
-        ($f){$T<:$S}(x::AbstractArray{$T}) =
-            reshape([ ($f)(y) for y in x ], size(x))
+        ($f){$T<:$S}(x::AbstractArray{$T}) = [ ($f)(elem) for elem in x ]
     end
 end
 
 macro vectorize_2arg(S,f)
     S = esc(S); f = esc(f); T1 = esc(:T1); T2 = esc(:T2)
     quote
-        ($f){$T1<:$S, $T2<:$S}(x::($T1), y::AbstractArray{$T2}) =
-            reshape([ ($f)(x, z) for z in y ], size(y))
-        ($f){$T1<:$S, $T2<:$S}(x::AbstractArray{$T1}, y::($T2)) =
-            reshape([ ($f)(z, y) for z in x ], size(x))
-
-        function ($f){$T1<:$S, $T2<:$S}(x::AbstractArray{$T1}, y::AbstractArray{$T2})
-            shp = promote_shape(size(x),size(y))
-            reshape([ ($f)(xx, yy) for (xx, yy) in zip(x, y) ], shp)
-        end
+        ($f){$T1<:$S, $T2<:$S}(x::($T1), y::AbstractArray{$T2}) = [ ($f)(x, z) for z in y ]
+        ($f){$T1<:$S, $T2<:$S}(x::AbstractArray{$T1}, y::($T2)) = [ ($f)(z, y) for z in x ]
+        ($f){$T1<:$S, $T2<:$S}(x::AbstractArray{$T1}, y::AbstractArray{$T2}) =
+            [ ($f)(xx, yy) for (xx, yy) in zip(x, y) ]
     end
 end
 
 # vectorized ifelse
 
 function ifelse(c::AbstractArray{Bool}, x, y)
-    reshape([ifelse(ci, x, y) for ci in c], size(c))
+    [ifelse(ci, x, y) for ci in c]
 end
 
 function ifelse(c::AbstractArray{Bool}, x::AbstractArray, y::AbstractArray)
-    shp = promote_shape(size(c), promote_shape(size(x), size(y)))
-    reshape([ifelse(c_elem, x_elem, y_elem) for (c_elem, x_elem, y_elem) in zip(c, x, y)], shp)
+    [ifelse(c_elem, x_elem, y_elem) for (c_elem, x_elem, y_elem) in zip(c, x, y)]
 end
 
 function ifelse(c::AbstractArray{Bool}, x::AbstractArray, y)
-    shp = promote_shape(size(c), size(c))
-    reshape([ifelse(c_elem, x_elem, y) for (c_elem, x_elem) in zip(c, x)], shp)
+    [ifelse(c_elem, x_elem, y) for (c_elem, x_elem) in zip(c, x)]
 end
 
 function ifelse(c::AbstractArray{Bool}, x, y::AbstractArray)
-    shp = promote_shape(size(c), size(y))
-    reshape([ifelse(c_elem, x, y_elem) for (c_elem, y_elem) in zip(c, y)], shp)
+    [ifelse(c_elem, x, y_elem) for (c_elem, y_elem) in zip(c, y)]
 end
 
 # Pair

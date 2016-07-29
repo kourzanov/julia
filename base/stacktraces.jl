@@ -11,7 +11,36 @@ export StackTrace, StackFrame, stacktrace, catch_stacktrace
 """
     StackFrame
 
-Stack information representing execution context.
+Stack information representing execution context, with the following fields:
+
+- `func::Symbol`
+
+  The name of the function containing the execution context.
+
+- `linfo::Nullable{LambdaInfo}`
+
+  The LambdaInfo containing the execution context (if it could be found).
+
+- `file::Symbol`
+
+  The path to the file containing the execution context.
+
+- `line::Int`
+
+  The line number in the file containing the execution context.
+
+- `from_c::Bool`
+
+  True if the code is from C.
+
+- `inlined::Bool`
+
+  True if the code is from an inlined frame.
+
+- `pointer::Int64`
+
+  Representation of the pointer to the execution context as returned by `backtrace`.
+
 """
 immutable StackFrame # this type should be kept platform-agnostic so that profiles can be dumped on one machine and read on another
     "the name of the function containing the execution context"
@@ -24,6 +53,7 @@ immutable StackFrame # this type should be kept platform-agnostic so that profil
     linfo::Nullable{LambdaInfo}
     "true if the code is from C"
     from_c::Bool
+    "true if the code is from an inlined frame"
     inlined::Bool
     "representation of the pointer to the execution context as returned by `backtrace`"
     pointer::Int64  # Large enough to be read losslessly on 32- and 64-bit machines.
@@ -162,10 +192,10 @@ function show_spec_linfo(io::IO, frame::StackFrame)
         end
     else
         linfo = get(frame.linfo)
-        if isdefined(linfo, :specTypes)
-            Base.show_lambda_types(io, linfo.specTypes.parameters)
+        if isdefined(linfo, :def)
+            Base.show_lambda_types(io, linfo)
         else
-            print(io, linfo.name)
+            Base.show(io, linfo)
         end
     end
 end

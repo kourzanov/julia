@@ -203,7 +203,7 @@ function tempdir()
         error("GetTempPath failed: $(Libc.FormatMessage())")
     end
     resize!(temppath,lentemppath)
-    return String(transcode(UInt8, temppath))
+    return transcode(String, temppath)
 end
 tempname(uunique::UInt32=UInt32(0)) = tempname(tempdir(), uunique)
 const temp_prefix = cwstring("jl_")
@@ -216,7 +216,7 @@ function tempname(temppath::AbstractString,uunique::UInt32)
         error("GetTempFileName failed: $(Libc.FormatMessage())")
     end
     resize!(tname,lentname)
-    return String(transcode(UInt8, tname))
+    return transcode(String, tname)
 end
 function mktemp(parent=tempdir())
     filename = tempname(parent, UInt32(0))
@@ -422,6 +422,16 @@ end
 if is_windows()
     const UV_FS_SYMLINK_JUNCTION = 0x0002
 end
+
+"""
+    symlink(target, link)
+
+Creates a symbolic link to `target` with the name `link`.
+
+!!! note
+    This function raises an error under operating systems that do not support
+    soft symbolic links, such as Windows XP.
+"""
 function symlink(p::AbstractString, np::AbstractString)
     @static if is_windows()
         if Sys.windows_version() < Sys.WINDOWS_VISTA_VER
