@@ -732,7 +732,12 @@ function testset_forloop(args, testloop)
         pop_testset()
         finish(ts)
     end
-    Expr(:comprehension, blk, [esc(v) for v in loopvars]...)
+    quote
+        arr = Array{Any,1}(0)
+        $(Expr(:for, Expr(:block, [esc(v) for v in loopvars]...),
+               :(push!(arr, $blk))))
+        arr
+    end
 end
 
 """
@@ -913,6 +918,9 @@ julia> @inferred max(1,2)
 ```
 """
 macro inferred(ex)
+    if Meta.isexpr(ex, :ref)
+        ex = Expr(:call, :getindex, ex.args...)
+    end
     Meta.isexpr(ex, :call)|| error("@inferred requires a call expression")
 
     Base.remove_linenums!(quote

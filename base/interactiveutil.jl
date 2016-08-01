@@ -338,11 +338,23 @@ function gen_call_with_extracted_types(fcn, ex0)
     exret
 end
 
-for fname in [:which, :less, :edit, :functionloc, :code_typed, :code_warntype,
-              :code_lowered, :code_llvm, :code_llvm_raw, :code_native]
+for fname in [:which, :less, :edit, :functionloc, :code_warntype,
+              :code_llvm, :code_llvm_raw, :code_native]
     @eval begin
         macro ($fname)(ex0)
             gen_call_with_extracted_types($(Expr(:quote,fname)), ex0)
+        end
+    end
+end
+
+for fname in [:code_typed, :code_lowered]
+    @eval begin
+        macro ($fname)(ex0)
+            thecall = gen_call_with_extracted_types($(Expr(:quote,fname)), ex0)
+            quote
+                results = $thecall
+                length(results) == 1 ? results[1] : results
+            end
         end
     end
 end
@@ -430,6 +442,17 @@ function type_close_enough(x::ANY, t::ANY)
 end
 
 # `methodswith` -- shows a list of methods using the type given
+"""
+    methodswith(typ[, module or function][, showparents])
+
+Return an array of methods with an argument of type `typ`.
+
+The optional second argument restricts the search to a particular module or function
+(the default is all modules, starting from Main).
+
+If optional `showparents` is `true`, also return arguments with a parent type of `typ`,
+excluding type `Any`.
+"""
 function methodswith(t::Type, f::Function, showparents::Bool=false, meths = Method[])
     for d in methods(f)
         if any(x -> (type_close_enough(x, t) ||
@@ -458,10 +481,10 @@ end
 
 function methodswith(t::Type, showparents::Bool=false)
     meths = Method[]
-    mainmod = current_module()
+    mainmod = Main
     # find modules in Main
     for nm in names(mainmod)
-        if isdefined(mainmod,nm)
+        if isdefined(mainmod, nm)
             mod = getfield(mainmod, nm)
             if isa(mod, Module)
                 append!(meths, methodswith(t, mod, showparents))

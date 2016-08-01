@@ -202,9 +202,11 @@ Getting Around
 
    .. Docstring generated from Julia source
 
-   Return an array of methods with an argument of type ``typ``\ . If optional ``showparents`` is ``true``\ , also return arguments with a parent type of ``typ``\ , excluding type ``Any``\ .
+   Return an array of methods with an argument of type ``typ``\ .
 
-   The optional second argument restricts the search to a particular module or function.
+   The optional second argument restricts the search to a particular module or function (the default is all modules, starting from Main).
+
+   If optional ``showparents`` is ``true``\ , also return arguments with a parent type of ``typ``\ , excluding type ``Any``\ .
 
 .. function:: @show
 
@@ -1250,7 +1252,7 @@ Errors
 
    Returns a lambda that retries function ``f`` up to ``n`` times in the event of an exception. If ``retry_on`` is a ``Type`` then retry only for exceptions of that type. If ``retry_on`` is a function ``test_error(::Exception) -> Bool`` then retry only if it is true.
 
-   The first retry happens after a gap of 50 milliseconds or ``max_delay``\ , whichever is lower. Subsequently, the delays between retries are exponentially increased with a random factor upto ``max_delay``\ .
+   The first retry happens after a gap of 50 milliseconds or ``max_delay``\ , whichever is lower. Subsequently, the delays between retries are exponentially increased with a random factor up to ``max_delay``\ .
 
    **Examples**
 
