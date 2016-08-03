@@ -3,15 +3,6 @@
 # Base
 
 """
-    @time
-
-A macro to execute an expression, printing the time it took to execute, the number of
-allocations, and the total number of bytes its execution caused to be allocated, before
-returning the value of the expression.
-"""
-:@time
-
-"""
     systemerror(sysfunc, iftrue)
 
 Raises a `SystemError` for `errno` with the descriptive string `sysfunc` if `iftrue` is `true`
@@ -1196,25 +1187,6 @@ bin
 Return ``\\exp(iz)``.
 """
 cis
-
-"""
-    isapprox(x, y; rtol::Real=sqrt(eps), atol::Real=0)
-
-Inexact equality comparison: `true` if `norm(x-y) <= atol + rtol*max(norm(x), norm(y))`. The
-default `atol` is zero and the default `rtol` depends on the types of `x` and `y`.
-
-For real or complex floating-point values, `rtol` defaults to
-`sqrt(eps(typeof(real(x-y))))`. This corresponds to requiring equality of about half of the
-significand digits. For other types, `rtol` defaults to zero.
-
-`x` and `y` may also be arrays of numbers, in which case `norm` defaults to `vecnorm` but
-may be changed by passing a `norm::Function` keyword argument. (For numbers, `norm` is the
-same thing as `abs`.)
-
-The binary operator `≈` is equivalent to `isapprox` with the default arguments, and `x ≉ y`
-is equivalent to `!isapprox(x,y)`.
-"""
-isapprox
 
 """
     sinh(x)
@@ -4830,13 +4802,6 @@ Compile the given function `f` for the argument tuple (of types) `args`, but do 
 precompile
 
 """
-    toc()
-
-Print and return the time elapsed since the last [`tic`](:func:`tic`).
-"""
-toc
-
-"""
     asinh(x)
 
 Compute the inverse hyperbolic sine of `x`.
@@ -5206,7 +5171,7 @@ julia> deleteat!([6, 5, 4, 3, 2, 1], 1:2:5)
 
 julia> deleteat!([6, 5, 4, 3, 2, 1], (2, 2))
 ERROR: ArgumentError: indices must be unique and sorted
- in deleteat!(::Array{Int64,1}, ::Tuple{Int64,Int64}) at ./array.jl:534
+ in deleteat!(::Array{Int64,1}, ::Tuple{Int64,Int64}) at ./array.jl:537
  ...
 ```
 """
@@ -5235,15 +5200,6 @@ Open a file and read its contents. `args` is passed to `read`: this is equivalen
 `open(io->read(io, args...), filename)`.
 """
 read(filename, args...)
-
-"""
-    @timev
-
-This is a verbose version of the `@time` macro. It first prints the same information as
-`@time`, then any non-zero memory allocation counters, and then returns the value of the
-expression.
-"""
-:@timev
 
 """
     isopen(object) -> Bool
@@ -5312,15 +5268,6 @@ Get the next valid string index after `i`. Returns a value greater than `endof(s
 after the end of the string.
 """
 nextind
-
-"""
-    @timed
-
-A macro to execute an expression, and return the value of the expression, elapsed time,
-total bytes allocated, garbage collection time, and an object with various memory allocation
-counters.
-"""
-:@timed
 
 """
     symdiff(s1,s2...)
@@ -6005,13 +5952,6 @@ Get the number of fields of a `DataType`.
 nfields
 
 """
-    toq()
-
-Return, but do not print, the time elapsed since the last [`tic`](:func:`tic`).
-"""
-toq
-
-"""
     show(stream, mime, x)
 
 The `display` functions ultimately call `show` in order to write an object `x` as a
@@ -6606,17 +6546,6 @@ by `show` generally includes Julia-specific formatting and type information.
 """
 show(x)
 
-"""
-    @allocated
-
-A macro to evaluate an expression, discarding the resulting value, instead returning the
-total number of bytes allocated during evaluation of the expression. Note: the expression is
-evaluated inside a local function, instead of the current context, in order to eliminate the
-effects of compilation, however, there still may be some allocations due to JIT compilation.
-This also makes the results inconsistent with the `@time` macros, which do not try to adjust
-for the effects of compilation.
-"""
-:@allocated
 
 """
     Array(dims)
@@ -8064,14 +7993,6 @@ Return the index of the last element of `A` for which `predicate` returns `true`
 findlast(::Function, A)
 
 """
-    @elapsed
-
-A macro to evaluate an expression, discarding the resulting value, instead returning the
-number of seconds it took to execute as a floating-point number.
-"""
-:@elapsed
-
-"""
     findnext(A, i)
 
 Find the next index >= `i` of a non-zero element of `A`, or `0` if not found.
@@ -8112,14 +8033,6 @@ fetch
 Compute the phase angle in radians of a complex number `z`.
 """
 angle
-
-"""
-    tic()
-
-Set a timer to be read by the next call to [`toc`](:func:`toc`) or [`toq`](:func:`toq`). The
-macro call `@time expr` can also be used to time evaluation.
-"""
-tic
 
 """
     LoadError(file::AbstractString, line::Int, error)

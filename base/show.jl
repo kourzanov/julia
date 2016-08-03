@@ -653,6 +653,10 @@ function show_generator(io, ex, indent)
         show_unquoted(io, ex.args[1], indent)
         print(io, " for ")
         show_unquoted(io, ex.args[2], indent)
+        for i = 3:length(ex.args)
+            print(io, ", ")
+            show_unquoted(io, ex.args[i], indent)
+        end
     end
 end
 
@@ -792,7 +796,7 @@ function show_unquoted(io::IO, ex::Expr, indent::Int, prec::Int)
         show_generator(io, args[1], indent)
         print(io, ']')
 
-    elseif head === :generator && length(args) == 2
+    elseif (head === :generator && length(args) >= 2) || (head === :flatten && length(args) == 1)
         print(io, '(')
         show_generator(io, ex, indent)
         print(io, ')')
@@ -801,9 +805,6 @@ function show_unquoted(io::IO, ex::Expr, indent::Int, prec::Int)
         show_unquoted(io, args[2], indent)
         print(io, " if ")
         show_unquoted(io, args[1], indent)
-
-    elseif head === :flatten && length(args) == 1
-        show_generator(io, ex, indent)
 
     elseif is(head, :ccall)
         show_unquoted(io, :ccall, indent)
@@ -1476,13 +1477,16 @@ e.g. `10-element Array{Int64,1}`.
 summary(x) = string(typeof(x)) # e.g. Int64
 
 # sizes such as 0-dimensional, 4-dimensional, 2x3
-dims2string(d) = isempty(d) ? "0-dimensional" :
-                 length(d) == 1 ? "$(d[1])-element" :
-                 join(map(string,d), '×')
+dims2string(d::Dims) = isempty(d) ? "0-dimensional" :
+                       length(d) == 1 ? "$(d[1])-element" :
+                       join(map(string,d), '×')
+
+inds2string(inds::Indices) = join(map(string,inds), '×')
 
 # anything array-like gets summarized e.g. 10-element Array{Int64,1}
-summary(a::AbstractArray) =
-    string(dims2string(size(a)), " ", typeof(a))
+summary(a::AbstractArray) = _summary(a, to_shape(indices(a)))
+_summary(a, dims::Dims) = string(dims2string(dims), " ", typeof(a))
+_summary(a, inds) = string(typeof(a), " with indices ", inds2string(inds))
 
 # n-dimensional arrays
 function show_nd(io::IO, a::AbstractArray, print_matrix, label_slices)
@@ -1657,8 +1661,8 @@ function show_vector(io::IO, v, opn, cls)
         io = IOContext(io, :compact => compact)
     end
     print(io, prefix)
-    if limited && length(v) > 20
-        inds = _indices1(v)
+    if limited && _length(v) > 20
+        inds = indices1(v)
         show_delim_array(io, v, opn, ",", "", false, inds[1], inds[1]+9)
         print(io, "  \u2026  ")
         show_delim_array(io, v, "", ",", cls, false, inds[end-9], inds[end])
@@ -1666,8 +1670,6 @@ function show_vector(io::IO, v, opn, cls)
         show_delim_array(io, v, opn, ",", cls, false)
     end
 end
-_indices1(v::AbstractArray) = indices(v,1)
-_indices1(iter) = 1:length(iter)
 
 # printing BitArrays
 
