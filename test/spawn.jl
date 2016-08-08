@@ -154,8 +154,7 @@ yield()
 put!(r,11)
 yield()
 
-# Test marking of AsyncStream
-
+# Test marking of IO
 r = Channel(1)
 @async begin
     port, server = listenany(2327)
@@ -266,9 +265,9 @@ let bad = "bad\0name"
 end
 
 # issue #12829
-let out = Pipe(), echo = `$exename --startup-file=no -e 'print(STDOUT, " 1\t", readstring(STDIN))'`, ready = Condition()
+let out = Pipe(), echo = `$exename --startup-file=no -e 'print(STDOUT, " 1\t", readstring(STDIN))'`, ready = Condition(), t
     @test_throws ArgumentError write(out, "not open error")
-    @async begin # spawn writer task
+    t = @async begin # spawn writer task
         open(echo, "w", out) do in1
             open(echo, "w", out) do in2
                 notify(ready)
@@ -283,10 +282,18 @@ let out = Pipe(), echo = `$exename --startup-file=no -e 'print(STDOUT, " 1\t", r
         @test isreadable(out)
         @test iswritable(out)
         close(out.in)
+        @test !isopen(out.in)
+        is_windows() || @test !isopen(out.out) # it takes longer to propagate EOF through the Windows event system
         @test_throws ArgumentError write(out, "now closed error")
         @test isreadable(out)
         @test !iswritable(out)
-        @test isopen(out)
+        if is_windows()
+            # WINNT kernel does not provide a fast mechanism for async propagation
+            # of EOF for a blocking stream, so just wait for it to catch up.
+            # This shouldn't take much more than 32ms.
+            Base.wait_close(out)
+        end
+        @test !isopen(out)
     end
     wait(ready) # wait for writer task to be ready before using `out`
     @test nb_available(out) == 0
@@ -309,6 +316,7 @@ let out = Pipe(), echo = `$exename --startup-file=no -e 'print(STDOUT, " 1\t", r
     @test isempty(read(out))
     @test eof(out)
     @test desc == "Pipe(open => active, 0 bytes waiting)"
+    wait(t)
 end
 
 # issue #8529

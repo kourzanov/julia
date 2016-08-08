@@ -45,7 +45,7 @@ const NaN = NaN64
 ## conversions to floating-point ##
 convert(::Type{Float16}, x::Integer) = convert(Float16, convert(Float32,x))
 for t in (Int8,Int16,Int32,Int64,Int128,UInt8,UInt16,UInt32,UInt64,UInt128)
-    @eval promote_rule(::Type{Float16}, ::Type{$t}) = Float32
+    @eval promote_rule(::Type{Float16}, ::Type{$t}) = Float16
 end
 promote_rule(::Type{Float16}, ::Type{Bool}) = Float16
 
@@ -229,6 +229,8 @@ promote_rule(::Type{Float64}, ::Type{Float32}) = Float64
 
 widen(::Type{Float16}) = Float32
 widen(::Type{Float32}) = Float64
+
+_default_type(T::Union{Type{Real},Type{AbstractFloat}}) = Float64
 
 ## floating point arithmetic ##
 -(x::Float32) = box(Float32,neg_float(unbox(Float32,x)))

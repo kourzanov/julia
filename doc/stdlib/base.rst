@@ -309,7 +309,7 @@ All Objects
 
    .. Docstring generated from Julia source
 
-   Get a unique integer id for ``x``\ . ``object_id(x)==object_id(y)`` if and only if ``is(x,y)``\ .
+   Get a hash value for ``x`` based on object identity. ``object_id(x)==object_id(y)`` if ``x === y``\ .
 
 .. function:: hash(x[, h::UInt])
 
@@ -1354,6 +1354,12 @@ Reflection
    .. Docstring generated from Julia source
 
    Determine the module containing the definition of a ``DataType``\ .
+
+.. function:: Base.datatype_name(t::DataType) -> Symbol
+
+   .. Docstring generated from Julia source
+
+   Get the name of a ``DataType`` (without its parent module) as a symbol.
 
 .. function:: isconst([m::Module], s::Symbol) -> Bool
 

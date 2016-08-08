@@ -90,10 +90,10 @@ Keyword arguments:
   + `topology=:all_to_all`  :  All processes are connected to each other.
                       This is the default.
 
-  + `topology=:master_slave`  :  Only the driver process, i.e. pid 1 connects to the
+  + `topology=:master_slave`  :  Only the driver process, i.e. `pid` 1 connects to the
                         workers. The workers do not connect to each other.
 
-  + `topology=:custom`  :  The `launch` method of the cluster manager specifes the
+  + `topology=:custom`  :  The `launch` method of the cluster manager specifies the
                   connection topology via fields `ident` and `connect_idents` in
                   `WorkerConfig`. A worker with a cluster manager identity `ident`
                   will connect to all workers specified in `connect_idents`.
@@ -104,7 +104,7 @@ Environment variables :
 If the master process fails to establish a connection with a newly launched worker within
 60.0 seconds, the worker treats it as a fatal situation and terminates.
 This timeout can be controlled via environment variable `JULIA_WORKER_TIMEOUT`.
-The value of JULIA_WORKER_TIMEOUT` on the master process specifies the number of seconds a
+The value of `JULIA_WORKER_TIMEOUT` on the master process specifies the number of seconds a
 newly launched worker waits for connection establishment.
 """
 function addprocs(machines::AbstractVector; tunnel=false, sshflags=``, max_parallel=10, kwargs...)

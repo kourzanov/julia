@@ -172,6 +172,12 @@ for (fname, felt) in ((:zeros,:zero), (:ones,:one))
     end
 end
 
+"""
+    eye([T::Type=Float64,] m::Integer, n::Integer)
+
+`m`-by-`n` identity matrix.
+The default element type is `Float64`.
+"""
 function eye(T::Type, m::Integer, n::Integer)
     a = zeros(T,m,n)
     for i = 1:min(m,n)
@@ -181,7 +187,35 @@ function eye(T::Type, m::Integer, n::Integer)
 end
 eye(m::Integer, n::Integer) = eye(Float64, m, n)
 eye(T::Type, n::Integer) = eye(T, n, n)
+"""
+    eye([T::Type=Float64,] n::Integer)
+
+`n`-by-`n` identity matrix.
+The default element type is `Float64`.
+"""
 eye(n::Integer) = eye(Float64, n)
+
+"""
+    eye(A)
+
+Constructs an identity matrix of the same dimensions and type as `A`.
+
+```jldoctest
+julia> A = [1 2 3; 4 5 6; 7 8 9]
+3×3 Array{Int64,2}:
+ 1  2  3
+ 4  5  6
+ 7  8  9
+
+julia> eye(A)
+3×3 Array{Int64,2}:
+ 1  0  0
+ 0  1  0
+ 0  0  1
+```
+
+Note the difference from [`ones`](:func:`ones`).
+"""
 eye{T}(x::AbstractMatrix{T}) = eye(T, size(x, 1), size(x, 2))
 
 function one{T}(x::AbstractMatrix{T})
@@ -211,7 +245,7 @@ The result has the same shape and number of dimensions as `collection`.
 collect{T}(::Type{T}, itr) = _collect(T, itr, iteratorsize(itr))
 
 _collect{T}(::Type{T}, itr, isz::HasLength) = copy!(Array{T,1}(Int(length(itr)::Integer)), itr)
-_collect{T}(::Type{T}, itr, isz::HasShape)  = copy!(Array{T}(convert(Dims,size(itr))), itr)
+_collect{T}(::Type{T}, itr, isz::HasShape)  = copy!(similar(Array{T}, indices(itr)), itr)
 function _collect{T}(::Type{T}, itr, isz::SizeUnknown)
     a = Array{T,1}(0)
     for x in itr
@@ -259,7 +293,7 @@ end
 _default_eltype{I,T}(::Type{Generator{I,Type{T}}}) = T
 
 _array_for(T, itr, ::HasLength) = Array{T,1}(Int(length(itr)::Integer))
-_array_for(T, itr, ::HasShape) = Array{T}(convert(Dims,size(itr)))
+_array_for(T, itr, ::HasShape) = similar(Array{T}, indices(itr))
 
 function collect(itr::Generator)
     isz = iteratorsize(itr.iter)
@@ -667,6 +701,7 @@ function hcat{T}(V::Vector{T}...)
     end
     return [ V[j][i]::T for i=1:length(V[1]), j=1:length(V) ]
 end
+
 function vcat{T}(arrays::Vector{T}...)
     n = 0
     for a in arrays
@@ -794,7 +829,7 @@ function findn(A::AbstractMatrix)
     I = similar(A, Int, nnzA)
     J = similar(A, Int, nnzA)
     count = 1
-    for j=1:size(A,2), i=1:size(A,1)
+    for j=indices(A,2), i=indices(A,1)
         if A[i,j] != 0
             I[count] = i
             J[count] = j
@@ -811,7 +846,7 @@ function findnz{T}(A::AbstractMatrix{T})
     NZs = Array{T,1}(nnzA)
     count = 1
     if nnzA > 0
-        for j=1:size(A,2), i=1:size(A,1)
+        for j=indices(A,2), i=indices(A,1)
             Aij = A[i,j]
             if Aij != 0
                 I[count] = i
@@ -824,6 +859,17 @@ function findnz{T}(A::AbstractMatrix{T})
     return (I, J, NZs)
 end
 
+"""
+    findmax(itr) -> (x, index)
+
+Returns the maximum element and its index.
+The collection must not be empty.
+
+```jldoctest
+julia> findmax([8,0.1,-9,pi])
+(8.0,1)
+```
+"""
 function findmax(a)
     if isempty(a)
         throw(ArgumentError("collection must be non-empty"))
@@ -842,6 +888,17 @@ function findmax(a)
     return (m, mi)
 end
 
+"""
+    findmin(itr) -> (x, index)
+
+Returns the minimum element and its index.
+The collection must not be empty.
+
+```jldoctest
+julia> findmin([8,0.1,-9,pi])
+(-9.0,3)
+```
+"""
 function findmin(a)
     if isempty(a)
         throw(ArgumentError("collection must be non-empty"))
@@ -860,16 +917,87 @@ function findmin(a)
     return (m, mi)
 end
 
+"""
+    indmax(itr) -> Integer
+
+Returns the index of the maximum element in a collection.
+```jldoctest
+julia> indmax([8,0.1,-9,pi])
+1
+```
+"""
 indmax(a) = findmax(a)[2]
+
+"""
+    indmin(itr) -> Integer
+
+Returns the index of the minimum element in a collection.
+```jldoctest
+julia> indmin([8,0.1,-9,pi])
+3
+```
+"""
 indmin(a) = findmin(a)[2]
 
 # similar to Matlab's ismember
-# returns a vector containing the highest index in b for each value in a that is a member of b
+"""
+    indexin(a, b)
+
+Returns a vector containing the highest index in `b` for
+each value in `a` that is a member of `b` . The output
+vector contains 0 wherever `a` is not a member of `b`.
+
+```jldoctest
+julia> a = ['a', 'b', 'c', 'b', 'd', 'a'];
+
+julia> b = ['a','b','c'];
+
+julia> indexin(a,b)
+6-element Array{Int64,1}:
+ 1
+ 2
+ 3
+ 2
+ 0
+ 1
+
+julia> indexin(b,a)
+3-element Array{Int64,1}:
+ 6
+ 4
+ 3
+```
+"""
 function indexin(a::AbstractArray, b::AbstractArray)
     bdict = Dict(zip(b, 1:length(b)))
     [get(bdict, i, 0) for i in a]
 end
 
+"""
+    findin(a, b)
+
+Returns the indices of elements in collection `a` that appear in collection `b`.
+
+```jldoctest
+julia> a = collect(1:3:15)
+5-element Array{Int64,1}:
+  1
+  4
+  7
+ 10
+ 13
+
+julia> b = collect(2:4:10)
+3-element Array{Int64,1}:
+  2
+  6
+ 10
+
+julia> findin(a,b) # 10 is the only common element
+1-element Array{Int64,1}:
+ 4
+```
+"""
 function findin(a, b)
     ind = Array{Int,1}(0)
     bset = Set(b)

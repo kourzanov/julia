@@ -168,11 +168,17 @@ General I/O
 
    See ``read`` for a description of the ``all`` option.
 
-.. function:: read(stream::IO, nb=typemax(Int); all=true)
+.. function:: read(s::IO, nb=typemax(Int))
 
    .. Docstring generated from Julia source
 
-   Read at most ``nb`` bytes from ``stream``\ , returning a ``Vector{UInt8}`` of the bytes read.
+   Read at most ``nb`` bytes from ``s``\ , returning a ``Vector{UInt8}`` of the bytes read.
+
+.. function:: read(s::IOStream, nb::Integer; all=true)
+
+   .. Docstring generated from Julia source
+
+   Read at most ``nb`` bytes from ``s``\ , returning a ``Vector{UInt8}`` of the bytes read.
 
    If ``all`` is ``true`` (the default), this function will block repeatedly trying to read all requested bytes, until an error or end-of-file occurs. If ``all`` is ``false``\ , at most one ``read`` call is performed, and the amount of data returned is device-dependent. Note that not all stream types support the ``all`` option.
 
@@ -618,7 +624,7 @@ Text I/O
 
    The columns are assumed to be separated by one or more whitespaces. The end of line delimiter is taken as ``\n``\ . If all data is numeric, the result will be a numeric array. If some elements cannot be parsed as numbers, a heterogeneous array of numbers and strings is returned.
 
-.. function:: writedlm(f, A, delim='\\t')
+.. function:: writedlm(f, A, dl='\\t'; opts)
 
    .. Docstring generated from Julia source
 
@@ -632,7 +638,7 @@ Text I/O
 
    Equivalent to ``readdlm`` with ``delim`` set to comma.
 
-.. function:: writecsv(filename, A)
+.. function:: writecsv(filename, A; opts)
 
    .. Docstring generated from Julia source
 
